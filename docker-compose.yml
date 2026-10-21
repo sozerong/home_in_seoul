@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_USER: seoul
+      POSTGRES_DB: seoul
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    ports:
+      # 5432는 이 PC의 Windows PostgreSQL 서비스가 이미 쓰고 있어서 5433으로 노출한다.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
