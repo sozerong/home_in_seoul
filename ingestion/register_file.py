@@ -1,7 +1,7 @@
 """사이트에서 손으로 받은 zip을 검사한 뒤 레이크의 정해진 자리에 복사한다.
 
-사용법: python ingestion/register_file.py {출처} 받은파일경로
-예:     python ingestion/register_file.py sgis_boundary "C:\\Users\\me\\Downloads\\bnd_dong_00_2025_2Q.zip"
+사용법: python -m ingestion.register_file {출처} 받은파일경로
+예:     python -m ingestion.register_file sgis_boundary "C:\\Users\\me\\Downloads\\bnd_dong_00_2025_2Q.zip"
 """
 import argparse
 import datetime
@@ -11,7 +11,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+from common import ROOT
 
 
 def has_shapefile(names):
@@ -28,15 +28,6 @@ SOURCES = {
     "sbiz_store": ("sbiz_store", ["소상공인시장진흥공단_상가(상권)정보_*.zip"], "이름에 '서울'이 든 CSV",
                    lambda names: any("서울" in n and n.endswith(".csv") for n in names)),
 }
-
-def member_names(zf):
-    names = []
-    for info in zf.infolist():
-        name = info.filename
-        if not info.flag_bits & 0x800:  # UTF-8 표시가 없는 zip은 한글 이름이 CP949로 들어 있다
-            name = name.encode("cp437").decode("cp949", errors="replace")
-        names.append(name)
-    return names
 
 
 def sha256(path):

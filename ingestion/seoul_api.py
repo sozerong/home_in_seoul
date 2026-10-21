@@ -1,6 +1,6 @@
 """서울 열린데이터광장 Open API 응답을 받은 그대로 레이크에 저장한다.
 
-사용법: python ingestion/seoul_api.py {station_master|congestion}
+사용법: python -m ingestion.seoul_api {station_master|congestion}
 """
 import argparse
 import datetime
@@ -12,7 +12,8 @@ from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parent.parent
+from common import ROOT, read_env
+
 # 이름: (서비스명, 레이크 폴더)
 SERVICES = {
     "station_master": ("subwayStationMaster", "seoul_station_master"),
@@ -22,14 +23,6 @@ ROWS_PER_PAGE = 1000
 MAX_TRIES = 3
 PAUSE_SECONDS = 0.5
 RETRY_CODES = {"ERROR-500", "ERROR-600"}  # 명세서상 서버 오류, DB 연결 오류
-
-
-def read_env(name):
-    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == name:
-            return value.strip()
-    raise SystemExit(f".env에 {name}가 없습니다")
 
 
 def parse(body):

@@ -1,7 +1,7 @@
 """국토교통부 전월세 실거래가 API 응답을 받은 그대로 레이크에 저장한다.
 
-사용법: python ingestion/molit_rent.py {offi|rh} 구코드5자리 계약년월YYYYMM
-예:     python ingestion/molit_rent.py offi 11680 202609
+사용법: python -m ingestion.molit_rent {offi|rh} 구코드5자리 계약년월YYYYMM
+예:     python -m ingestion.molit_rent offi 11680 202609
 """
 import argparse
 import datetime
@@ -13,19 +13,12 @@ from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parent.parent
+from common import ROOT, read_env
+
 SERVICES = {"offi": "RTMSDataSvcOffiRent", "rh": "RTMSDataSvcRHRent"}
 ROWS_PER_PAGE = 1000
 MAX_TRIES = 3
 PAUSE_SECONDS = 0.5
-
-
-def read_env(name):
-    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
-        key, sep, value = line.partition("=")
-        if sep and key.strip() == name:
-            return value.strip()
-    raise SystemExit(f".env에 {name}가 없습니다")
 
 
 def get_page(service, params):
