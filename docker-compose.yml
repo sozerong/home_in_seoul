@@ -10,6 +10,36 @@ services:
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # DB가 접속을 받을 준비가 됐는지 10초마다 본다. Airflow는 이게 통과할 때까지 기다렸다 켜진다.
+      test: ["CMD-SHELL", "pg_isready -U seoul -d seoul"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow:
+    build: .
+    image: seoul-airflow:3.3.2
+    # 개발용 한 컨테이너 실행: 스케줄러, 화면(API 서버), DAG 처리기, 트리거러를 함께 띄운다 (결정 19).
+    command: standalone
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # 컨테이너 기본 시간대는 UTC라 한국 새벽 4시가 전날 19시가 된다. 수집일 폴더가 하루 어긋나지 않게 한다.
+      TZ: Asia/Seoul
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://seoul:${POSTGRES_PASSWORD}@db:5432/airflow
+      # 내 PC에서만 여는 개발용이라 로그인 없이 모두 관리자로 둔다. 포트를 127.0.0.1에만 열어 다른 기기에서는 접속할 수 없다.
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      # 컨테이너 안에서 스크립트가 쓸 데이터 DB 주소. .env의 localhost:5433을 덮어쓴다 (common.read_env).
+      DATABASE_URL: postgresql://seoul:${POSTGRES_PASSWORD}@db:5432/seoul
+    volumes:
+      - ./:/opt/project
+      - ./dags:/opt/airflow/dags
+    ports:
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:

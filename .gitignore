@@ -6,3 +6,7 @@ lake/
 .venv/
 # Python이 자동으로 만드는 캐시
 __pycache__/
+# Airflow 실패 알림 기록 (dags/alerting.py)
+logs/
+# 데이터 상품 출력물 (warehouse/export_product.py). 버전마다 다시 만들 수 있다.
+product/

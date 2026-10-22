@@ -1,0 +1,4 @@
+# 이미지를 만들 때 requirements.txt 말고는 아무것도 Docker에 보내지 않는다.
+# lake/(수 GB), .venv/, .git/, 그리고 비밀이 든 .env가 이미지에 들어가지 않게 한다.
+*
+!requirements.txt

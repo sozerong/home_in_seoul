@@ -1,3 +1,4 @@
 requests==2.34.2
 psycopg[binary]==3.3.6
 pyshp==3.1.6
+pyarrow==26.0.0

@@ -62,11 +62,13 @@ def fetch(url):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("name", choices=SERVICES)
+    parser.add_argument("--collected-date", type=datetime.date.fromisoformat, default=datetime.date.today(),
+                        help="레이크 수집일 폴더 날짜. 안 주면 오늘. Airflow가 정제와 같은 날짜를 넘길 때 쓴다")
     args = parser.parse_args()
 
     service, folder = SERVICES[args.name]
     key = read_env("SEOUL_OPEN_API_KEY")
-    today = datetime.date.today().isoformat()
+    today = args.collected_date.isoformat()
     out_dir = ROOT / "lake" / folder / f"collected_date={today}"
 
     with tempfile.TemporaryDirectory() as tmp:

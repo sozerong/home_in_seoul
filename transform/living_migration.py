@@ -1,6 +1,6 @@
 """서울 생활이동(행정동) 레이크 zip을 정제·검증해 stg.living_migration과 stg.living_migration_quarantine에 넣는다.
 
-규칙은 docs/rules_living_migration.md. 범위 C(HW, 월~금, 도착 07·08·09시, 출발·도착 모두 서울 행정동)만 넣는다.
+규칙은 docs/rules.md 4절. 범위 C(HW, 월~금, 도착 07·08·09시, 출발·도착 모두 서울 행정동)만 넣는다.
 처리 단위(수집일, 대상연월)마다 두 테이블의 기존 행을 지우고 다시 넣는다(멱등).
 사용법: python -m transform.living_migration 수집일YYYY-MM-DD 대상연월YYYYMM
 예:     python -m transform.living_migration 2026-10-21 202607

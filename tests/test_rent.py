@@ -38,7 +38,10 @@ check({"excluUseAr": "300.01"}, ["V5"])                           # 면적 상�
 check({"floor": "81"}, ["V6"])                                    # 층 상한 초과
 check({"contractType": "기타"}, ["V7"])                           # 모르는 계약 종류
 check({"umdNm": "없는동"}, ["V8"])                                # 법정동 코드를 못 찾음
-check({"jibun": "산12"}, ["V9"])                                  # 지번 모양이 아님
+assert check({"jibun": "산12"}, [])["pnu"] == "1168010100200120000"  # 산 지번: 대지구분 2
+assert check({"jibun": "산10-22"}, [])["pnu"] == "1168010100200100022"
+check({"jibun": "12가"}, ["V9"])                                  # 지번 모양이 아님
+check({"jibun": "산"}, ["V9"])                                    # 본번이 없음
 check({"deposit": "abc"}, ["C3"])                                 # 금액 칸에 숫자가 아님
 check({"deposit": " ", "umdNm": "없는동"}, ["V1", "V8"])          # 여러 규칙에 함께 걸림
 

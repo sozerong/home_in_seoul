@@ -1,6 +1,6 @@
 """상가(상권)정보 레이크 zip의 서울 CSV를 정제·검증해 stg.sbiz_store와 stg.sbiz_store_quarantine에 넣는다.
 
-규칙은 docs/rules_sbiz_store.md. 범위는 생활 편의 필수 5종 소분류 6코드만(결정 초안 1).
+규칙은 docs/rules.md 5절. 범위는 생활 편의 필수 5종 소분류 6코드만.
 처리 단위는 수집일 하나(zip 하나)이고, 그 수집일의 기존 행을 지우고 다시 넣는다(멱등).
 사용법: python -m transform.sbiz_store 수집일YYYY-MM-DD
 예:     python -m transform.sbiz_store 2026-10-21

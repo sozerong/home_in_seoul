@@ -42,6 +42,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("name", choices=SOURCES)
     parser.add_argument("path")
+    parser.add_argument("--collected-date", type=datetime.date.fromisoformat, default=datetime.date.today(),
+                        help="레이크 수집일 폴더 날짜. 안 주면 오늘. Airflow가 정제와 같은 날짜를 넘길 때 쓴다")
     args = parser.parse_args()
 
     folder, patterns, required, has_required = SOURCES[args.name]
@@ -63,7 +65,7 @@ def main():
     if not has_required(names):
         raise SystemExit(f"zip 구성이 예상과 다릅니다. 필요한 것: {required}")
 
-    today = datetime.date.today().isoformat()
+    today = args.collected_date.isoformat()
     dest = ROOT / "lake" / folder / f"collected_date={today}" / src.name
     digest = sha256(src)
     if dest.exists():

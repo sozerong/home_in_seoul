@@ -2,6 +2,7 @@
 
 사용법: python -m ingestion.molit_rent {offi|rh} 구코드5자리 계약년월YYYYMM
 예:     python -m ingestion.molit_rent offi 11680 202609
+        python -m ingestion.molit_rent offi 11680 202609 --collected-date 2026-10-21
 """
 import argparse
 import datetime
@@ -56,10 +57,12 @@ def main():
     parser.add_argument("kind", choices=SERVICES)
     parser.add_argument("lawd_cd")
     parser.add_argument("deal_ymd")
+    parser.add_argument("--collected-date", type=datetime.date.fromisoformat, default=datetime.date.today(),
+                        help="레이크 수집일 폴더 날짜. 안 주면 오늘. Airflow가 정제와 같은 날짜를 넘길 때 쓴다")
     args = parser.parse_args()
 
     key = read_env("DATA_GO_KR_SERVICE_KEY")
-    today = datetime.date.today().isoformat()
+    today = args.collected_date.isoformat()
     out_dir = ROOT / "lake" / f"molit_{args.kind}_rent" / f"collected_date={today}"
     prefix = f"{args.lawd_cd}_{args.deal_ymd}"
 

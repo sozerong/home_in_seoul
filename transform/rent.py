@@ -25,7 +25,7 @@ EXPECTED_FIELDS = {"offi": COMMON_FIELDS | {"offiNm", "sggNm"},     # F1: data_s
                    "rh": COMMON_FIELDS | {"mhouseNm", "houseType"}}  # F1: data_sources.md 2절
 NAME_FIELD = {"offi": "offiNm", "rh": "mhouseNm"}                   # C1
 REQUIRED = ("deposit", "monthlyRent", "dealYear", "dealMonth", "dealDay", "excluUseAr", "umdNm", "jibun")  # V1
-JIBUN = re.compile(r"(\d+)(?:-(\d+))?")                              # V9: 본번 또는 본번-부번
+JIBUN = re.compile(r"(산)?(\d+)(?:-(\d+))?")                          # V9: [산]본번 또는 [산]본번-부번
 MAX_QUARANTINE_RATIO = 0.05                                          # F2
 
 META = ["source_type", "collected_date", "source_file", "item_no", "deal_ymd", "sgg_cd"]
@@ -38,7 +38,10 @@ QUARANTINE_COLUMNS = META + ["reasons", "raw"]
 def load_bjd_codes():
     """가장 최근 상가정보 zip의 서울 파일에서 (시군구코드, 법정동명) -> 법정동코드 대응표를 만든다 (C6)."""
     # ponytail: 실행마다 상가정보 서울 CSV(약 300MB)를 읽는다. 단계 5 지역 차원 테이블이 생기면 그것으로 바꾼다.
-    path = sorted(ROOT.glob("lake/sbiz_store/collected_date=*/*.zip"))[-1]
+    paths = sorted(ROOT.glob("lake/sbiz_store/collected_date=*/*.zip"))
+    if not paths:
+        raise SystemExit("법정동 코드표가 없습니다: 상가정보를 먼저 넣으세요 (DAG file_sbiz_store)")
+    path = paths[-1]
     with zipfile.ZipFile(path, metadata_encoding="cp949") as zf:
         name = next(n for n in zf.namelist() if "서울" in n and n.endswith(".csv"))
         rows = csv.DictReader(io.TextIOWrapper(zf.open(name), encoding="utf-8", newline=""))
@@ -117,8 +120,9 @@ def clean(raw, kind, deal_ymd, sgg_cd, bjd_codes):
         if match is None:
             reasons.add("V9")
         elif row["bjd_cd"] is not None:
-            main_no, sub_no = match.groups()
-            row["pnu"] = row["bjd_cd"] + "1" + main_no.zfill(4) + (sub_no or "0").zfill(4)  # C6: 대지구분 1
+            san, main_no, sub_no = match.groups()
+            land = "2" if san else "1"  # C6: 대지구분. 산 지번이면 2, 아니면 1 (2026-10-21 정정)
+            row["pnu"] = row["bjd_cd"] + land + main_no.zfill(4) + (sub_no or "0").zfill(4)
 
     return row, sorted(reasons)
 
