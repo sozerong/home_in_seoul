@@ -20,6 +20,8 @@ flowchart LR
     AF{{Airflow 3<br>출처별 DAG, 센서, Asset}} -.-> 수집
     AF -.-> S
     AF -.-> W
+    AF -.-> M
+    AF -.-> P
 ```
 
 | 층 | 무엇 | 어디 |
@@ -29,7 +31,7 @@ flowchart LR
 | 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | `warehouse/sql/07_wh.sql`, `08_wh_load.sql`, [docs/erd.md](docs/erd.md) |
 | 마트 | 동네 요약, 출발 × 직장 출퇴근 표, 최근 6개월 신규 계약 | `warehouse/sql/09_mart.sql` |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
-| 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 자동 재구성 | `dags/` |
+| 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
 
 ## 데이터 소스
 | 영역 | 데이터 | 받는 곳 | 갱신 | 받는 방법 |
@@ -96,6 +98,7 @@ docker compose exec airflow airflow backfill create --dag-id molit_rent --from-d
 ```
 
 ### 5. 마트와 데이터 상품
+스테이징이 바뀔 때마다 `wh_load` DAG가 웨어하우스(08), 마트(09), 내보내기를 차례로 돌린다. 손으로 다시 만들 때:
 ```
 python -m warehouse.run_sql warehouse/sql/09_mart.sql
 python -m warehouse.export_product
@@ -110,7 +113,7 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 `demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
 
 ## 결과 예시
-`demo.sql` 기본값: 직장 역삼1동(강남구), 월세, 보증금 3,000만 원·월세 80만 원 이하, 전용 40㎡ 이하, 출퇴근 50분 이하 **또는** 직선거리 3km 이내, 예산 안 신규 계약(202606~202609) 3건 이상. 데이터 상품 v2026.10.22 기준 직선거리 순 앞 8개:
+`demo.sql` 기본값: 직장 역삼1동(강남구), 월세, 보증금 3,000만 원·월세 80만 원 이하, 전용 40㎡ 이하, 출퇴근 50분 이하 **또는** 직선거리 3km 이내, 예산 안 신규 계약(202606~202609) 3건 이상. 2026-10-22 02시 마트 기준, 직선거리 순 앞 8개 (매주 수집되면 숫자가 조금씩 바뀐다):
 
 | 동네 | 이동 시간(분) | 직선거리(km) | 예산 안 계약 | 월세 중앙값(만 원) | 가까운 역 | 아침 최대 혼잡도(%) |
 |---|---|---|---|---|---|---|
@@ -146,5 +149,5 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | [docs/erd.md](docs/erd.md) | 웨어하우스 ERD와 grain |
 | [docs/decisions.md](docs/decisions.md) | 설계 결정 (상황, 선택지, 이유, 검증) |
 | [docs/measurements.md](docs/measurements.md) | 측정 기록 (신고 지연, Spark 필요성 등) |
-| [docs/data_flow.md](docs/data_flow.md) | 원본 모양에서 데이터 상품까지 출처별 흐름, 거래 한 건 따라가기 |
+| [docs/data_flow.md](docs/data_flow.md) | 데이터 흐름 한 장: 출처별 실제 원본 샘플, 조인 SQL과 결과, 서빙 파일 모양, 케이스 3개, 층별 스키마 |
 | [docs/data_contract.md](docs/data_contract.md) | 데이터 상품의 계약 (스키마, 갱신, 품질, 출처·이용조건, 한계) |

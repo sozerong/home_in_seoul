@@ -10,6 +10,7 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, Variable, task
 
 from alerting import notify_failure
+from assets import STG_RENT
 
 SEOUL_GU = ["11110", "11140", "11170", "11200", "11215", "11230", "11260", "11290", "11305", "11320",
             "11350", "11380", "11410", "11440", "11470", "11500", "11530", "11545", "11560", "11590",
@@ -46,10 +47,16 @@ with DAG(
         months = [this_month.subtract(months=i).format("YYYYMM") for i in range(1, n + 1)]
         return [{"KIND": kind, "GU": gu, "YM": ym} for ym in months for kind in KINDS for gu in SEOUL_GU]
 
-    BashOperator.partial(
+    cells = BashOperator.partial(
         task_id="collect_and_clean",
         bash_command=COMMAND,
         append_env=True,  # 컨테이너의 환경 변수(DATABASE_URL 등)를 지우지 않고 KIND, GU, YM만 더한다
         max_active_tis_per_dagrun=4,  # 공공데이터포털에 한꺼번에 몰리지 않게
         map_index_template="{{ task.env['KIND'] }}_{{ task.env['GU'] }}_{{ task.env['YM'] }}",
     ).expand(env=plan())
+
+    @task(outlets=[STG_RENT])
+    def rent_updated():
+        """모든 칸이 성공한 뒤 stg.rent 갱신을 한 번만 알린다. 칸마다 알리면 마트가 여러 번 돈다."""
+
+    cells >> rent_updated()

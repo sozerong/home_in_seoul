@@ -15,6 +15,8 @@ STG_LIVING_MIGRATION = _stg("living_migration")
 STG_SBIZ_STORE = _stg("sbiz_store")
 STG_SGIS_DONG = _stg("sgis_dong")
 STG_PARCEL = _stg("parcel")
+STG_RENT = _stg("rent")
 
 # 웨어하우스 테이블(wh.dim_*, wh.map_*, wh.fact_store)을 바꾸는 스테이징. stg.rent는 뷰(wh.fact_rent)로만 쓰여서 빠진다.
+# stg.rent는 마트(rent_listing)만 바꾸므로 wh_load 일정에 따로 더한다.
 WH_INPUTS = [STG_STATION_MASTER, STG_CONGESTION, STG_LIVING_MIGRATION, STG_SBIZ_STORE, STG_SGIS_DONG, STG_PARCEL]
