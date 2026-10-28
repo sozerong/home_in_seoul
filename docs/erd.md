@@ -101,6 +101,7 @@ erDiagram
 | `wh.map_dong_2021` | 2021 생활이동 코드 하나와 2025 행정동 하나의 짝. 분동된 동은 2행 | 앞 7자리 규칙 418행 + 손으로 2021 코드 6개, 8행(오류2동·상일동은 분동이라 2행씩) (data_sources.md 10절) |
 | `wh.dim_parcel` | 서울 필지 하나 | 연속지적도 (896,692행) |
 | `wh.dim_station` | 역(호선별) 하나, 가장 최근 스냅샷 | stg.station_master |
+| `wh.map_dong_mois` | 행정안전부 행정동 코드 하나와 그 코드가 속한 2025 행정동 (2026-10-23 추가, 결정 25) | 상가정보 업소 다수결. 동마다 대표 코드 + 어느 동의 대표도 아닌 코드 |
 | `wh.map_congestion_station` | 혼잡도의 (호선, 역번호) 하나와 역사_ID의 짝 | 0 채우기 + 손으로 6개 |
 | `wh.fact_rent` | 신고된 전월세 계약 한 건 (오피스텔, 연립다세대) | stg.rent + dim_parcel |
 | `wh.fact_commute` | 대상연월 × 출발 × 도착(2021 코드) × 요일 × 도착시간 × 성별 × 나이 하나 | stg.living_migration |

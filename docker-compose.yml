@@ -41,5 +41,26 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
 
+  pgadmin:
+    # 브라우저에서 DB에 SQL을 던져 보는 개발용 화면. 파이프라인은 쓰지 않는다.
+    image: dpage/pgadmin4:9.10
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # 데스크톱 모드: pgAdmin 로그인 없이 연다. Airflow처럼 127.0.0.1에만 열어 다른 기기에서는 접속할 수 없다.
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+      # 이미지가 시작할 때 요구하는 값. 데스크톱 모드에서는 로그인에 쓰이지 않는다.
+      PGADMIN_DEFAULT_EMAIL: dev@example.com
+      PGADMIN_DEFAULT_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # DB 서버(seoul)를 미리 등록해 둔다. DB 비밀번호는 처음 접속할 때 화면에서 한 번 입력한다.
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    ports:
+      - "127.0.0.1:5050:80"
+
 volumes:
   pgdata:
+  pgadmin_data:

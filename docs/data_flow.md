@@ -44,7 +44,7 @@ flowchart LR
         P2[commute_od]
         P3[rent_listing]
     end
-    OUT[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, GeoJSON, manifest]
+    OUT[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, manifest]
 
     R1 -->|ingestion/molit_rent.py| L1
     R2 -->|ingestion/seoul_api.py| L1
@@ -71,7 +71,7 @@ Airflow가 화살표마다 일정을 건다: API는 매주 월요일, 생활이�
 | 지하철 혼잡도 | 서울 Open API. XML 2페이지, 한 행 = 역 × 방향 × 요일구분, 시간대 39칸이 가로로 펼쳐짐. 역번호 3자리·4자리 섞임 | 위와 같음. `seoul_subway_congestion/collected_date=D/subwConfusion_p00N.xml` | `congestion.py`: 39칸을 세로로 풀기(한 행 = 역 × 방향 × 요일 × 30분). `stg.congestion` 65,169행 | `map_congestion_station` 282개: 역번호 0 채워 4자리 + 호선 일치, 특수번호 9001~9006 등 6개는 손 대응표. `fact_congestion` 뷰 | `dong_profile`의 평일 07~09시 최대 혼잡도 |
 | 서울 생활이동 (행정동) | 열린데이터광장 파일. 한 달 zip 약 1.1GB, 안에 도착시간별 CSV 24개(풀면 6.3GB, 1억 4,118만 행). CP949, 10열. **2021년 행정동 코드 7자리**, 이동인구 3명 이하는 "*" | 손으로 받아 `lake/_inbox/living_migration/`에 넣으면 센서가 발견 → `register_file.py`가 zip 검사(`testzip`, 필수 파일 24개, sha256)만 하고 그대로 복사. `seoul_living_migration/collected_date=D/생활이동_행정동_YYYYMM.zip` | `living_migration.py`: zip을 풀지 않고 스트리밍으로 읽어 **출근 범위만**(HW, 월~금, 도착 07~09시, 출발·도착 모두 서울) 넣음. 240분 초과는 격리. `stg.living_migration` 1,230만 행 (3개월), 격리 26,832행 | `map_dong_2021` 426개: 2021 코드 → 2025 동 (앞 7자리 규칙 + 바뀐 동 8개 손 대응). `fact_commute` 뷰 | `commute_od`(출발 동 × 직장 동, 20~34세 가중 평균 이동 시간, 직선거리) |
 | 상가(상권)정보 | 공공데이터포털 파일. zip 337MB, 안에 시도별 CSV. 서울 554,092행, UTF-8, 39열, 경도·위도, 행안부 행정동 코드, 법정동 코드 | inbox → `register_file.py`. `sbiz_store/collected_date=D/소상공인시장진흥공단_상가(상권)정보_20260630.zip` | `sbiz_store.py`: 필수 5종(편의점, 슈퍼, 약국, 내과·소아과, 세탁)만. `stg.sbiz_store` 30,394행. **같은 zip이 전월세의 법정동 코드표로도 쓰인다** | `fact_store`: 4326 → 5179, 행정동에 공간 조인. 업소가 가진 행안부 코드로 **통계청 ↔ 행안부 행정동 코드 대응을 다수결로 만듦**(426/426) | `dong_profile`의 업소 수와 ㎢당 밀도 |
-| SGIS 행정동 경계 | 통계청 파일. zip 76MB, shp, EPSG:5179, UTF-8, 2025년 코드 8자리(통계청식, 강남 11230) | inbox → `register_file.py`. `sgis_boundary/collected_date=D/bnd_dong_00_2025_2Q.zip` | `boundary.py`: 좌표계 숫자 검사(.prj), 서울만, 꼬인 도형 `ST_MakeValid`. `stg.sgis_dong` 426행 | **`dim_dong` 426행: 모든 출처가 모이는 중심 축** | 모든 마트 테이블의 키 `dong_id`, `dong_boundary.geojson` |
+| SGIS 행정동 경계 | 통계청 파일. zip 76MB, shp, EPSG:5179, UTF-8, 2025년 코드 8자리(통계청식, 강남 11230) | inbox → `register_file.py`. `sgis_boundary/collected_date=D/bnd_dong_00_2025_2Q.zip` | `boundary.py`: 좌표계 숫자 검사(.prj), 서울만, 꼬인 도형 `ST_MakeValid`. `stg.sgis_dong` 426행 | **`dim_dong` 426행: 모든 출처가 모이는 중심 축** | 모든 마트 테이블의 키 `dong_id`. 도형 자체는 상품에 넣지 않는다(결정 26) |
 | 연속지적도 | 브이월드 파일. zip 96MB, shp, **EPSG:5186**(경계와 다름), EUC-KR, 896,692 필지, PNU 중복 0 | inbox → `register_file.py`. `parcel_boundary/collected_date=D/LSMD_CONT_LDREG_서울.zip` | `boundary.py`: 좌표계 검사, `ST_MakeValid`. `stg.parcel` 896,692행 | `dim_parcel`: 필지 안 대표점(`ST_PointOnSurface`)을 5179로 바꿔 행정동에 넣음. 동에 안 들어간 필지 19개 | 전월세 → 행정동 연결에만 쓰임 (직접 내보내지 않음) |
 
 레이크에는 있지만 처리하지 않는 출처: 지하철 시간대별·일별 승하차, 버스 시간대별 승하차, 버스정류소 위치, BIS 정류장, 단독·다가구 전월세. 단계 1에서 탐색했지만 승인된 질문의 지표에 쓰이지 않는다(결정 6). 탐색 결과는 [data_sources.md](data_sources.md).
@@ -195,7 +195,7 @@ SGIS   속성: BASE_DATE=20250630 ADM_CD=11230640 ADM_NM=역삼1동
 | J1 | 필지 → 행정동 | 공간: 필지 안 대표점을 5186 → 5179로 바꿔 경계 안에 드는지 | 896,692 중 896,673 붙음 (19개는 경계 밖) |
 | J2 | 전월세 → 필지 | 등호: `pnu` | 전월세 한 건 → 행정동 |
 | J3 | 업소, 역 → 행정동 | 공간: 경위도(4326) → 5179 점 → 경계 안 | 업소 30,394 모두, 서울 안 역 401 / 784 |
-| J4 | 통계청 동 ↔ 행안부 동 코드 | 다수결: J3으로 동에 붙은 업소들이 가진 행안부 코드 중 가장 많은 것 | 426 / 426. 3개 동은 90% 미만 |
+| J4 | 통계청 동 ↔ 행안부 동 코드 | 다수결: J3으로 동에 붙은 업소들이 가진 행안부 코드 중 가장 많은 것. 어느 동의 1위도 아닌 코드는 업소가 가장 많은 동에 | 대표 코드 426 / 426, 대응표 427행. 대표 코드 이름 대조 425 / 426 같음(용신동 = 신설동 + 용두동) |
 | J5 | 생활이동 2021 코드 → 2025 동 | 규칙 `code || '0'` + 손 대응 8행 | 규칙 418 + 손 8 |
 | J6 | 혼잡도 역번호 → 역사_ID | `lpad(역번호, 4, '0')` + 호선 같음 + 손 대응 6행 | 276 + 6 |
 | J7 | 행정동 → 가장 가까운 역 | KNN: `ORDER BY s.point <-> 대표점 LIMIT 1` (GiST 인덱스) | 426개 동 모두 |
@@ -289,13 +289,14 @@ sum(population * avg_minutes) FILTER (WHERE age IN ('20','25','30') AND populati
 ## 8. 서빙: 받는 쪽이 받는 것
 
 ```
-product/v2026.10.22/
-├─ manifest.json            1.7KB   버전, 파일별 행 수와 sha256, 원천 기준, 품질
+product/v2026.10.23/
+├─ manifest.json            1.8KB   버전, 파일별 행 수와 sha256, 원천 기준, 품질
 ├─ dong_profile.parquet     41KB    426행     (csv 73KB)
 ├─ commute_od.parquet       1.8MB   131,035행 (csv 11.4MB)
-├─ rent_listing.parquet     401KB   50,593행  (csv 4.4MB)
-└─ dong_boundary.geojson    5.2MB   426개 MultiPolygon (경위도, EPSG:4326)
+├─ rent_listing.parquet     402KB   50,696행  (csv 4.4MB)
+└─ dong_mois_map.parquet    11KB    427행     (csv 19KB)
 ```
+경계 도형(geojson)은 v2026.10.22까지 있었지만 SGIS 이용약관 때문에 v2026.10.23부터 뺐다(결정 26).
 Parquet는 타입(날짜, 소수)을 지키고 같은 내용의 csv보다 1.8~11배 작다(dong_profile 73KB → 41KB, rent_listing 4.4MB → 401KB). csv는 엑셀로 바로 열어 보는 사람을 위해 같이 준다(UTF-8 BOM).
 
 ### manifest.json (일부)
@@ -323,13 +324,13 @@ rent_listing (역삼1동, 2026-09-18 계약 중 하나):
   dong_id=11230640 dong_nm=역삼1동 source_type=offi lease_type=월세 deal_date=2026-09-18
   deposit_10k_won=3000 monthly_rent_10k_won=160 excl_area_m2=47.96 floor=3 build_year=2006
 
-dong_boundary.geojson:
-  {"type":"Feature","properties":{"dong_id":"11230640","mois_dong_cd":"11680640","dong_nm":"역삼1동"},
-   "geometry":{"type":"MultiPolygon","coordinates":[[[[127.032597,37.489713],[127.032303,37.489622], ...
+dong_mois_map (용신동):
+  mois_dong_cd=11230515 dong_id=11060810 dong_nm=용신동 is_primary=true  stores=90 share=0.536   (상가정보 이름: 신설동)
+  mois_dong_cd=11230533 dong_id=11060810 dong_nm=용신동 is_primary=false stores=78 share=0.464   (상가정보 이름: 용두동)
 ```
 
 ### 받는 쪽이 쓰는 방법
-`dong_id`(또는 플랫폼이 쓰는 행안부 코드 `mois_dong_cd`)로 네 파일을 잇는다. 사용자 입력(직장, 예산, 한도)을 받아 거르고 정렬하는 일은 받는 쪽이 한다. 예는 [warehouse/sql/demo.sql](../warehouse/sql/demo.sql):
+`dong_id`로 파일을 잇는다. 플랫폼이 행안부 코드를 쓰면 `dong_mois_map`으로 `dong_id`를 찾는다(용신동은 행안부 코드 둘이 같은 dong_id로 간다). 사용자 입력(직장, 예산, 한도)을 받아 거르고 정렬하는 일은 받는 쪽이 한다. 예는 [warehouse/sql/demo.sql](../warehouse/sql/demo.sql):
 1. 직장 동을 `dong_profile`에서 찾는다.
 2. `rent_listing`을 예산·면적으로 걸러 동별 건수와 중앙값을 낸다.
 3. `commute_od`에서 직장 동으로 가는 행 중 `avg_minutes <= 한도 OR distance_km <= 3`을 남긴다.
@@ -405,6 +406,7 @@ erDiagram
     dim_dong ||--o{ dim_station : "역 점이 들어감"
     dim_dong ||--o{ fact_store : "업소 점이 들어감"
     dim_dong ||--|{ map_dong_2021 : "2021 코드가 가리킴"
+    dim_dong ||--|{ map_dong_mois : "행안부 코드가 가리킴"
     dim_station ||--o{ map_congestion_station : "혼잡도 역번호가 가리킴"
     dim_parcel ||--o{ fact_rent : "pnu"
     map_dong_2021 ||--o{ fact_commute : "origin_cd, dest_cd"
@@ -500,6 +502,7 @@ erDiagram
 | `dim_parcel` | 차원 | 필지 하나 | PK pnu, FK dong_id → dim_dong. GiST(point), btree(dong_id) | 896,692 (동 없음 19) | 180MB |
 | `dim_station` | 차원 | 역(호선별) 하나 | PK bldn_id, FK dong_id. GiST(point) | 784 (서울 안 401) | 0.2MB |
 | `map_dong_2021` | 대응표 | 2021 코드 × 2025 동 짝 | PK (dong_cd_2021, dong_id), FK dong_id, CHECK method ∈ {prefix, manual} | 426 (prefix 418, manual 8) | |
+| `map_dong_mois` | 대응표 | 행정안전부 행정동 코드 하나 | PK mois_dong_cd, FK dong_id. 동마다 대표 코드 1개(is_primary) + 어느 동의 대표도 아닌 코드 | 427 (대표 426, 추가 1: 용신동의 용두동 코드) | |
 | `map_congestion_station` | 대응표 | 혼잡도 (호선, 역번호) 하나 | PK (line, sttn_no), FK bldn_id → dim_station, CHECK method ∈ {padded, manual} | 282 (padded 276, manual 6) | |
 | `fact_store` | 사실 | 수집일 × 업소 | PK (collected_date, store_id), FK dong_id. btree(dong_id) | 30,394 | 5.5MB |
 | `fact_rent` | 사실 (뷰) | 계약 한 건, 최신 수집분 | | 70,708 | |
@@ -522,6 +525,7 @@ erDiagram
 | `dong_rent_summary` | 행정동 × 월세/전세 | 814 | dong_profile로 |
 | `dong_station` | 행정동 하나: 가장 가까운 역, 혼잡도 역 | 426 | dong_profile로 |
 | `dong_amenity` | 행정동 하나: 필수 5종 업소 수 | 426 | dong_profile로 |
+| `dong_mois_map` | 행정안전부 행정동 코드 하나 → 통계청 동 | 427 | O |
 
 `dong_profile` 컬럼 묶음 (28개):
 

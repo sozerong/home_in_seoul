@@ -16,7 +16,7 @@ flowchart LR
     L[(레이크<br>lake/출처/collected_date=YYYY-MM-DD/<br>받은 그대로)] --> S
     S[(스테이징 stg<br>정제·검증, 격리 테이블)] --> W
     W[(웨어하우스 wh<br>행정동 차원 + 공간 조인<br>EPSG:5179)] --> M
-    M[(마트 mart)] --> P[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, GeoJSON, manifest]
+    M[(마트 mart)] --> P[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, manifest]
     AF{{Airflow 3<br>출처별 DAG, 센서, Asset}} -.-> 수집
     AF -.-> S
     AF -.-> W
@@ -80,6 +80,8 @@ docker build -t seoul-airflow:3.3.2 .
 docker compose up -d
 ```
 http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG는 처음에 일시정지 상태다.
+
+DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
 
 ### 4. 데이터 넣기
 손으로 받는 파일은 받은 zip 그대로 `lake\_inbox\{출처}\`에 넣고 해당 `file_*` DAG를 실행한다. 스테이징이 바뀔 때마다 `wh_load`가 자동으로 돌기 때문에 **아래 순서대로** 넣는다(순서를 어기면 `wh_load`가 "행정안전부 코드를 정하지 못한 행정동"으로 실패하고, 전월세 정제는 "법정동 코드표가 없습니다"로 실패한다).
