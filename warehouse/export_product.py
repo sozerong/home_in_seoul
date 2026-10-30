@@ -1,11 +1,12 @@
-"""데이터 상품 내보내기 (단계 9, 결정 12). 마트 테이블을 버전 폴더에 Parquet + CSV로, 경계를 GeoJSON으로 내보낸다.
+"""데이터 상품 내보내기 (단계 9, 결정 12). 마트 테이블을 버전 폴더에 Parquet + CSV로 내보낸다.
 
 출력: product/v{YYYY.MM.DD}/ (git에 올리지 않는다). 같은 날 다시 실행하면 그 폴더를 새로 만든다(멱등).
   dong_profile.*   행정동 하나 = 한 행. 시세 요약, 가장 가까운 역과 아침 혼잡, 필수 5종 편의 밀도
   commute_od.*     출발 행정동 x 직장 행정동 = 한 행. 평일 아침 출근 평균 이동 시간
   rent_listing.*   최근 6개월 신규 전월세 계약 한 건 = 한 행
-  dong_boundary.geojson  행정동 경계 (WGS84 경위도, 받는 쪽 지도에 바로 올리게)
+  dong_mois_map.*  행정안전부 행정동 코드 하나 = 한 행. 통계청 dong_id로 잇는 대응표(결정 25)
   manifest.json    버전, 파일마다 행 수와 sha256, 원천 수집일, 품질 지표
+경계 도형(geojson)은 내보내지 않는다: SGIS 이용약관이 사전 승낙 없는 제3자 제공을 막는다(결정 26).
 CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 쓴다. 계약 내용은 docs/data_contract.md.
 사용법: python -m warehouse.export_product
 """
@@ -25,6 +26,7 @@ TABLES = {  # 파일 이름: 정렬 기준
     "dong_profile": "dong_id",
     "commute_od": "origin_dong_id, dest_dong_id",
     "rent_listing": "dong_id, deal_date, source_type",
+    "dong_mois_map": "mois_dong_cd",
 }
 
 
@@ -54,15 +56,6 @@ def main():
                 writer.writerows(rows)
             for ext in ("parquet", "csv"):
                 manifest["files"][f"{name}.{ext}"] = {"rows": len(rows), "sha256": sha256(out / f"{name}.{ext}")}
-
-        geojson = conn.execute(
-            "SELECT json_build_object('type', 'FeatureCollection', 'features', json_agg(json_build_object("
-            " 'type', 'Feature', 'geometry', ST_AsGeoJSON(ST_Transform(geom, 4326), 6)::json,"
-            " 'properties', json_build_object('dong_id', dong_id, 'mois_dong_cd', mois_dong_cd, 'dong_nm', dong_nm))"
-            " ORDER BY dong_id)) FROM wh.dim_dong").fetchone()[0]
-        (out / "dong_boundary.geojson").write_text(json.dumps(geojson, ensure_ascii=False), encoding="utf-8")
-        manifest["files"]["dong_boundary.geojson"] = {"rows": len(geojson["features"]),
-                                                      "sha256": sha256(out / "dong_boundary.geojson")}
 
         manifest["sources"] = dict(conn.execute("""
             SELECT 'rent_months', string_agg(DISTINCT deal_ymd, ',' ORDER BY deal_ymd) FROM mart.rent_listing

@@ -3,7 +3,7 @@
 -- 설계: docs/erd.md, 결정 13(행정동 기준), 16(대표점), 17(혼잡도 대응표).
 BEGIN;
 
-TRUNCATE wh.fact_store, wh.map_congestion_station, wh.dim_station, wh.dim_parcel, wh.map_dong_2021, wh.dim_dong;
+TRUNCATE wh.fact_store, wh.map_congestion_station, wh.dim_station, wh.dim_parcel, wh.map_dong_2021, wh.map_dong_mois, wh.dim_dong;
 
 -- 1. 행정동 차원: SGIS 경계의 가장 최근 수집분
 INSERT INTO wh.dim_dong (dong_id, dong_nm, sgg_cd, boundary_base_date, source_collected_date, area_km2, geom)
@@ -35,6 +35,15 @@ GROUP BY dong_id, mois_dong_cd;
 UPDATE wh.dim_dong d SET mois_dong_cd = v.mois_dong_cd
 FROM dong_mois_vote v
 WHERE v.dong_id = d.dong_id AND v.rank = 1;
+
+-- 2-1. 행정안전부 코드 -> 행정동 대응표(결정 25): 동마다 1위 코드 + 어느 동에서도 1위가 아닌 코드는 업소가 가장 많은 동에.
+--      1위가 아닌 나머지(경계 근처 업소의 이웃 동 코드)는 넣지 않는다. 그래서 코드 하나는 동 하나에만 이어진다.
+INSERT INTO wh.map_dong_mois (mois_dong_cd, dong_id, stores, share, is_primary)
+SELECT mois_dong_cd, dong_id, stores, round(share, 3), rank = 1
+FROM (SELECT v.*, row_number() OVER (PARTITION BY mois_dong_cd ORDER BY stores DESC, dong_id) AS rank_in_code
+      FROM dong_mois_vote v) v
+WHERE rank = 1
+   OR (rank_in_code = 1 AND mois_dong_cd NOT IN (SELECT mois_dong_cd FROM dong_mois_vote WHERE rank = 1));
 
 -- 3. 2021 생활이동 코드 -> 2025 행정동 (data_sources.md 10절)
 --    바뀐 6개는 손으로, 나머지는 "2021 코드 + '0' = 2025 코드" 규칙. 앞 7자리로 자르지 않아 11230510/11230511 충돌을 피한다.
@@ -104,6 +113,11 @@ BEGIN
 
     SELECT count(*) INTO n FROM wh.dim_dong WHERE mois_dong_cd IS NULL;
     IF n > 0 THEN RAISE EXCEPTION '행정안전부 코드를 정하지 못한 행정동 % 개', n; END IF;
+
+    SELECT count(*) INTO n FROM (SELECT DISTINCT mois_dong_cd FROM wh.fact_store f JOIN store_point p USING (collected_date, store_id)
+                                 WHERE f.dong_id IS NOT NULL) c
+    WHERE c.mois_dong_cd NOT IN (SELECT mois_dong_cd FROM wh.map_dong_mois);
+    IF n > 0 THEN RAISE EXCEPTION '행정동에 잇지 못한 행정안전부 코드 % 개', n; END IF;
 END $$;
 
 COMMIT;

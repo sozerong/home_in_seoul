@@ -47,6 +47,16 @@ CREATE TABLE IF NOT EXISTS wh.dim_station (
 CREATE INDEX IF NOT EXISTS dim_station_point_idx ON wh.dim_station USING gist (point);
 
 -- 한 행 = 혼잡도의 (호선, 원래 역번호) 하나와 역사_ID의 짝 (결정 17).
+-- 한 행 = 행정안전부 행정동 코드 하나와 그 코드가 속한 2025 행정동(결정 25). 상가정보 업소 다수결로 만든다.
+-- 동마다 1위 코드는 is_primary. 어느 동에서도 1위가 아닌 코드는 그 코드 업소가 가장 많은 동에 붙인다(용신동 = 신설동 + 용두동).
+CREATE TABLE IF NOT EXISTS wh.map_dong_mois (
+    mois_dong_cd char(8)      PRIMARY KEY,
+    dong_id      char(8)      NOT NULL REFERENCES wh.dim_dong,
+    stores       integer      NOT NULL,          -- 그 동 경계 안에 있는, 이 코드를 가진 업소 수
+    share        numeric(4,3) NOT NULL,          -- 그 동 업소 중 이 코드의 비율
+    is_primary   boolean      NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS wh.map_congestion_station (
     line    text    NOT NULL,
     sttn_no text    NOT NULL,

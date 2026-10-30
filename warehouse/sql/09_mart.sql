@@ -54,7 +54,7 @@ split AS (SELECT dong_cd_2021, count(*) > 1 AS is_split FROM wh.map_dong_2021 GR
 SELECT mo.dong_id AS origin_dong_id, md.dong_id AS dest_dong_id,
        round(b.avg_minutes_age20_34, 1) AS avg_minutes_age20_34, round(b.population_age20_34, 2) AS population_age20_34,
        round(b.avg_minutes_all_ages, 1) AS avg_minutes_all_ages, round(b.population_all_ages, 2) AS population_all_ages,
-       -- 권장 값: 20~34세 가려지지 않은 이동인구 합이 30 이상이면 20~34세, 아니면 전체 나이 (기준 30은 잠정, decisions.md 결정 22)
+       -- 권장 값: 20~34세 가려지지 않은 이동인구 합이 30 이상이면 20~34세, 아니면 전체 나이 (기준 30, 결정 22. 2026-10-22 민감도 확인 후 유지)
        round(CASE WHEN b.population_age20_34 >= 30 AND b.avg_minutes_age20_34 IS NOT NULL
                   THEN b.avg_minutes_age20_34 ELSE b.avg_minutes_all_ages END, 1) AS avg_minutes,
        CASE WHEN b.population_age20_34 >= 30 AND b.avg_minutes_age20_34 IS NOT NULL THEN 'age20_34' ELSE 'all_ages' END AS basis,
@@ -132,6 +132,12 @@ LEFT JOIN mart.dong_rent_summary mr ON mr.dong_id = d.dong_id AND mr.lease_type 
 LEFT JOIN mart.dong_rent_summary jr ON jr.dong_id = d.dong_id AND jr.lease_type = '전세'
 LEFT JOIN mart.dong_station st ON st.dong_id = d.dong_id
 LEFT JOIN mart.dong_amenity a ON a.dong_id = d.dong_id;
+
+-- 7. 한 행 = 행정안전부 행정동 코드 하나 (결정 25). 받는 쪽이 행정안전부 코드로 이을 때 쓴다. 용신동만 코드가 둘이다.
+DROP TABLE IF EXISTS mart.dong_mois_map;
+CREATE TABLE mart.dong_mois_map AS
+SELECT m.mois_dong_cd, m.dong_id, d.dong_nm, m.is_primary, m.stores, m.share
+FROM wh.map_dong_mois m JOIN wh.dim_dong d USING (dong_id);
 
 -- ===== 구조 검사 =====
 DO $$
