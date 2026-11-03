@@ -1,0 +1,473 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2660" height="2056" viewBox="0 0 2660 2056" font-family="'Noto Sans KR', 'Nanum Gothic', sans-serif">
+<defs><marker id="a-dark" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#3C4043"/></marker><marker id="a-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#1A56DB"/></marker><marker id="a-grey" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#8C959F"/></marker><marker id="a-sub" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="#5F6368"/></marker></defs>
+<rect width="2660" height="2056" fill="#FFFFFF"/>
+<text x="40" y="58" font-size="30" font-weight="700" fill="#1F2328" text-anchor="start">서울 동네 찾기 데이터 파이프라인 · 아키텍처</text>
+<text x="40" y="90" font-size="14" font-weight="400" fill="#5F6368" text-anchor="start">공공데이터 7종을 2025년 행정동 하나의 기준(dim_dong 426개)으로 맞춰 부동산 플랫폼용 데이터 상품으로 내보낸다. 2026-11-03 기준 운영 구조 + 고도화 설계(결정 28~31)</text>
+<rect x="1890" y="34" width="730" height="80" rx="8" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="1906" y="48" width="30" height="18" rx="4" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1944" y="62" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">운영 중</text>
+<rect x="2084" y="48" width="30" height="18" rx="4" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="2122" y="62" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">고도화로 바뀜 · 진행 중</text>
+<rect x="2262" y="48" width="30" height="18" rx="4" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="2300" y="62" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">계획 (아직 없음)</text>
+<rect x="2440" y="48" width="30" height="18" rx="4" fill="#FFFFFF" stroke="#B45309" stroke-width="1.4"/>
+<text x="2478" y="62" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">알려진 문제</text>
+<path d="M1906,92 L1940,92" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<text x="1950" y="96" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">데이터 흐름</text>
+<path d="M2142,92 L2176,92" fill="none" stroke="#1A56DB" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#a-blue)"/>
+<text x="2186" y="96" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">Asset 알림 (스테이징 갱신)</text>
+<path d="M2378,92 L2412,92" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<text x="2422" y="96" font-size="12.5" font-weight="400" fill="#1F2328" text-anchor="start">계획된 흐름</text>
+<rect x="40" y="140" width="360" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="64" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="64" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">1</text>
+<text x="86" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">출처</text>
+<text x="130.0" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">공공데이터 7종</text>
+<line x1="54" y1="186" x2="386" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="430" y="140" width="360" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="454" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="454" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">2</text>
+<text x="476" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">수집 · 레이크</text>
+<text x="586.3" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">받은 그대로</text>
+<line x1="444" y1="186" x2="776" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="820" y="140" width="350" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="844" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="844" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">3</text>
+<text x="866" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">스테이징</text>
+<text x="944.0" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">stg 스키마</text>
+<line x1="834" y1="186" x2="1156" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="1200" y="140" width="560" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="1224" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="1224" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">4</text>
+<text x="1246" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">웨어하우스</text>
+<text x="1341.0" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">wh 스키마 · EPSG:5179</text>
+<line x1="1214" y1="186" x2="1746" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="1790" y="140" width="360" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="1814" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="1814" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">5</text>
+<text x="1836" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">마트</text>
+<text x="1880.0" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">mart 스키마</text>
+<line x1="1804" y1="186" x2="2136" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="2180" y="140" width="440" height="1010" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="2204" cy="165" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="2204" y="170" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">6</text>
+<text x="2226" y="171" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">데이터 상품</text>
+<text x="2325.76" y="171" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">부동산 플랫폼용</text>
+<line x1="2194" y1="186" x2="2606" y2="186" stroke="#D0D7DE" stroke-width="1"/>
+<text x="56" y="212" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">API · 자동 수집</text>
+<rect x="56" y="222" width="328" height="110" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">국토교통부 전월세 실거래가</text>
+<text x="68" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">오피스텔 · 연립다세대 (공공데이터포털)</text>
+<text x="68" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">XML · 구(행안부 5자리) × 계약월</text>
+<text x="68" y="300" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">법정동 이름 + 지번, 좌표·동호 없음</text>
+<text x="68" y="318" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">신고 지연: 계약 후 30일 안</text>
+<rect x="56" y="344" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="365" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">서울시 역사마스터</text>
+<text x="68" y="386" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">서울 Open API · XML · 역 784개</text>
+<text x="68" y="404" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">위도 · 경도 (WGS84)</text>
+<rect x="56" y="430" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="451" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">서울교통공사 지하철 혼잡도</text>
+<text x="68" y="472" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">서울 Open API · XML · 1~8호선</text>
+<text x="68" y="490" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">30분 단위 39칸 가로 배치 · 분기</text>
+<text x="68" y="508" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">역번호 3자리 · 4자리 섞임</text>
+<text x="56" y="552" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">파일 · 손으로 받아 lake/_inbox에 넣음</text>
+<rect x="56" y="562" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="583" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">서울 생활이동 (행정동)</text>
+<text x="68" y="604" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">zip 1.1GB · CSV 24개 · CP949</text>
+<text x="68" y="622" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">한 달 1억 4,118만 행 · 매월 21일 이후</text>
+<text x="68" y="640" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">2021년 행정동 코드 7자리</text>
+<rect x="56" y="666" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="687" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">소상공인 상가(상권)정보</text>
+<text x="68" y="708" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">zip 337MB · 서울 554,092행 · 분기</text>
+<text x="68" y="726" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">좌표 + 행안부 행정동 · 법정동 코드</text>
+<rect x="56" y="752" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="773" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">SGIS 행정동 경계</text>
+<text x="68" y="794" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">shp · EPSG:5179 · 2025 코드 8자리</text>
+<text x="68" y="812" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">연 1회 (기준일 20250630)</text>
+<rect x="56" y="838" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="859" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">브이월드 연속지적도</text>
+<text x="68" y="880" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">shp · EPSG:5186 · 필지 896,692</text>
+<text x="68" y="898" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">PNU 19자리 · 수시</text>
+<rect x="446" y="222" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="458" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">ingestion/molit_rent.py</text>
+<text x="458" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">구 × 계약월 페이지별 저장</text>
+<text x="458" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">일시 오류만 3회 재시도</text>
+<text x="458" y="300" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">0건 · 오류 코드는 실패</text>
+<rect x="446" y="354" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="458" y="375" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">ingestion/seoul_api.py</text>
+<text x="458" y="396" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">역사마스터 · 혼잡도 스냅샷 저장</text>
+<text x="458" y="414" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">같은 날 다시 받으면 임시 폴더 후 교체</text>
+<rect x="446" y="562" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="458" y="583" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">lake/_inbox/{출처}/ + 센서</text>
+<text x="458" y="604" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">파일 도착을 기다림 (reschedule)</text>
+<text x="458" y="622" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">생활이동 매월 21일, 나머지 수동</text>
+<rect x="446" y="650" width="328" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="458" y="671" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">ingestion/register_file.py</text>
+<text x="458" y="692" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">testzip · 필수 파일 · sha256</text>
+<text x="458" y="710" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">같은 파일이면 건너뜀, 다르면 실패</text>
+<path d="M446,770 L446,874 A164.0,12 0 0 0 774,874 L774,770" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.6"/>
+<ellipse cx="610.0" cy="770" rx="164.0" ry="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.6"/>
+<text x="460" y="804" font-size="15" font-weight="700" fill="#1F2328" text-anchor="start">데이터 레이크  lake/</text>
+<text x="460" y="826" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">{출처}/collected_date=YYYY-MM-DD/</text>
+<text x="460" y="844" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">받은 바이트 그대로 · 수정하지 않음</text>
+<text x="460" y="862" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">4.5GB (생활이동 3.8GB) · git 제외</text>
+<rect x="446" y="916" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="458" y="937" font-size="14.5" font-weight="700" fill="#5F6368" text-anchor="start">레이크하우스</text>
+<rect x="723.84" y="923" width="42.16" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="744.92" y="936" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">4단계</text>
+<text x="458" y="958" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">객체 저장소 + Iceberg 테이블</text>
+<text x="458" y="976" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">과거 시점 조회 · 스키마 변경 추적</text>
+<text x="458" y="994" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">생활이동 여러 달 적재</text>
+<path d="M384,277.0 L446,268.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,381.0 L415.0,381.0 L415.0,376 L446,376" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,476.0 L415.0,476.0 L415.0,398 L446,398" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,608.0 L428,608.0 L428,599.0 L446,599.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,703.0 L428,703.0 L428,599.0 L446,599.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,789.0 L428,789.0 L428,599.0 L446,599.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M384,875.0 L428,875.0 L428,599.0 L446,599.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M610.0,636 L610.0,650" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M774,268.0 L782,268.0 L782,798 L774,798" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M774,391.0 L782,391.0 L782,798 L774,798" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M610.0,724 L610.0,758" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M610.0,886 L610.0,916" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<rect x="836" y="222" width="318" height="110" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="848" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">transform/*.py  (Python 정제)</text>
+<text x="848" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">출처별 모듈 6개 · 규칙은 docs/rules.md</text>
+<text x="848" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">처리 단위마다 지우고 다시 넣기</text>
+<text x="848" y="300" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">= 한 트랜잭션 (멱등)</text>
+<text x="848" y="318" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">생활이동: zip 스트리밍, 출근(HW)만</text>
+<rect x="836" y="368" width="318" height="196" rx="6" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="848" y="390" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">stg 테이블</text>
+<text x="1142" y="390" font-size="12" font-weight="500" fill="#5F6368" text-anchor="end">행 수</text>
+<line x1="848" y1="400" x2="1142" y2="400" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="416" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.rent</text>
+<text x="1142" y="416" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">121,019</text>
+<line x1="848" y1="422" x2="1142" y2="422" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="438" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.station_master</text>
+<text x="1142" y="438" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">784</text>
+<line x1="848" y1="444" x2="1142" y2="444" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="460" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.congestion</text>
+<text x="1142" y="460" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">65,169</text>
+<line x1="848" y1="466" x2="1142" y2="466" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="482" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.living_migration</text>
+<text x="1142" y="482" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">1,230만</text>
+<line x1="848" y1="488" x2="1142" y2="488" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="504" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.sbiz_store</text>
+<text x="1142" y="504" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">30,394</text>
+<line x1="848" y1="510" x2="1142" y2="510" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="526" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.sgis_dong</text>
+<text x="1142" y="526" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">426</text>
+<line x1="848" y1="532" x2="1142" y2="532" stroke="#EAEEF2" stroke-width="1"/>
+<text x="848" y="548" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="start">stg.parcel</text>
+<text x="1142" y="548" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="end">896,692</text>
+<rect x="836" y="580" width="318" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="848" y="601" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">*_quarantine  (격리)</text>
+<text x="848" y="622" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">어긋난 행은 버리지 않고</text>
+<text x="848" y="640" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">사유(reasons) + 원본(raw)으로 보관</text>
+<rect x="836" y="666" width="318" height="74" rx="6" fill="#FFFFFF" stroke="#B45309" stroke-width="1.4"/>
+<text x="848" y="687" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">파일 단위로 실패시키는 조건</text>
+<text x="848" y="708" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">스키마 변경 · 0건 · 격리 5% 초과</text>
+<text x="848" y="726" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">직전 수집보다 10% 넘게 감소</text>
+<rect x="836" y="752" width="318" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="848" y="773" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">PostgreSQL 17 + PostGIS 3.5</text>
+<text x="848" y="794" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">스키마: stg · wh · mart</text>
+<text x="848" y="812" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">wh_build · mart_build (dbt)</text>
+<text x="848" y="830" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">airflow (메타 DB)</text>
+<path d="M774,822.0 L814,822.0 L814,277.0 L836,277.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M995.0,332 L995.0,368" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M1055.0,564 L1055.0,580" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="1216" y="222" width="528" height="92" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="1228" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">dbt build  ·  warehouse/dbt</text>
+<rect x="1668.54" y="229" width="67.46000000000001" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="1702.27" y="242" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">결정 30·31</text>
+<text x="1228" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">dbt-core 1.12.6 + dbt-postgres 1.11.0 (Airflow 이미지 안 전용 가상환경)</text>
+<text x="1228" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">source: stg.sgis_dong, stg.sbiz_store  ·  스테이징은 Python이 계속 채움</text>
+<text x="1228" y="300" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">seed: map_dong_2021_manual, congestion_station_manual (코드는 문자로)</text>
+<rect x="1216.0" y="328" width="161.33333333333334" height="40" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.4"/>
+<text x="1296.6666666666667" y="353" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="middle">① _build 스키마에 빌드</text>
+<rect x="1399.3333333333333" y="328" width="161.33333333333334" height="40" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.4"/>
+<text x="1480.0" y="353" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="middle">② 테스트 24개</text>
+<path d="M1377.3333333333333,348.0 L1399.3333333333333,348.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="1582.6666666666667" y="328" width="161.33333333333334" height="40" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.4"/>
+<text x="1663.3333333333335" y="353" font-size="12.5" font-weight="500" fill="#1F2328" text-anchor="middle">③ 통과 시 교체</text>
+<path d="M1560.6666666666665,348.0 L1582.6666666666667,348.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<text x="1216" y="390" font-size="12" font-weight="400" fill="#1A56DB" text-anchor="start">wh_build → wh, mart_build → mart. 검사 실패 시 이전 상태 유지 (전부 아니면 전무)</text>
+<rect x="1216" y="404" width="528" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1228" y="425" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">08_wh_load.sql  (현재 운영 경로)</text>
+<text x="1228" y="446" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">한 트랜잭션 · 구조 검사 실패 시 RAISE로 멈춤</text>
+<text x="1228" y="464" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">dbt로 옮기는 중: 테이블 7개 중 3개 완료, 결과 차이 0행</text>
+<text x="1216" y="500" font-size="12" font-weight="700" fill="#5F6368" text-anchor="start">wh 테이블  (모든 출처가 dim_dong 하나로 모인다)</text>
+<rect x="1360.0" y="512" width="240" height="74" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="1372.0" y="533" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">dim_dong · 426</text>
+<rect x="1559.52" y="519" width="32.480000000000004" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="1575.76" y="532" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">dbt</text>
+<text x="1372.0" y="554" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">2025 SGIS 행정동 · 경계 · 면적</text>
+<text x="1372.0" y="572" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">dong_id = 통계청 8자리</text>
+<rect x="1216" y="602" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="1228" y="623" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">map_dong_mois · 427</text>
+<rect x="1431.52" y="609" width="32.480000000000004" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="1447.76" y="622" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">dbt</text>
+<text x="1228" y="644" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">통계청 ↔ 행안부 동 코드 (업소 다수결)</text>
+<rect x="1488.0" y="602" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1500.0" y="623" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">dim_station · 784</text>
+<rect x="1709.68" y="609" width="26.32" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="1722.84" y="622" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">08</text>
+<text x="1500.0" y="644" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">역 좌표 → 행정동, 가까운 역 KNN</text>
+<rect x="1216" y="668" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="1228" y="689" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">fact_store · 30,394</text>
+<rect x="1431.52" y="675" width="32.480000000000004" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="1447.76" y="688" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">dbt</text>
+<text x="1228" y="710" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">필수 업종 업소 → 행정동, +mois_dong_cd</text>
+<rect x="1488.0" y="668" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1500.0" y="689" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">map_dong_2021 · 426</text>
+<rect x="1709.68" y="675" width="26.32" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="1722.84" y="688" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">08</text>
+<text x="1500.0" y="710" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">생활이동 2021 코드 → 2025 동</text>
+<rect x="1216" y="734" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1228" y="755" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">dim_parcel · 896,692</text>
+<rect x="1437.68" y="741" width="26.32" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="1450.84" y="754" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">08</text>
+<text x="1228" y="776" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">필지 대표점 → 행정동 (전월세 연결용)</text>
+<rect x="1488.0" y="734" width="256.0" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1500.0" y="755" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">map_congestion_station</text>
+<rect x="1709.68" y="741" width="26.32" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="1722.84" y="754" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">08</text>
+<text x="1500.0" y="776" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">혼잡도 역번호 → 역사_ID · 282</text>
+<rect x="1216" y="802" width="528" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1228" y="823" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">뷰: fact_rent · fact_commute · fact_congestion</text>
+<text x="1228" y="844" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">처리 단위(파티션)마다 가장 최근 수집분만 보여 줌 → 늦은 신고가 자동 반영</text>
+<line x1="1480.0" y1="586" x2="1344.0" y2="602" stroke="#D0D7DE" stroke-width="1"/>
+<line x1="1480.0" y1="586" x2="1616.0" y2="602" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="1216" y="872" width="528" height="164" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1228" y="893" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">행정동에 붙이는 방법  (조인 J1~J7)</text>
+<text x="1228" y="914" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J1 필지 대표점 5186→5179, 경계 안에 드는가  (896,673 / 896,692)</text>
+<text x="1228" y="932" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J2 전월세 → 필지: 지번으로 만든 PNU 등호 조인</text>
+<text x="1228" y="950" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J3 업소 · 역 경위도 4326→5179 점, 경계 안  (업소 30,394 전부)</text>
+<text x="1228" y="968" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J4 통계청 ↔ 행안부 동 코드: 업소가 가진 코드 다수결  (426 / 426)</text>
+<text x="1228" y="986" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J5 생활이동 2021→2025: 규칙(code||&#x27;0&#x27;) 418 + 손 대응 8</text>
+<text x="1228" y="1004" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J6 혼잡도 역번호 → 역사_ID: 4자리 채움 + 호선 276 + 손 6</text>
+<text x="1228" y="1022" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">J7 행정동 → 가장 가까운 역: GiST 인덱스 KNN (426 전부)</text>
+<rect x="1216" y="1050" width="528" height="56" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="1228" y="1071" font-size="13.5" font-weight="700" fill="#5F6368" text-anchor="start">같은 dbt 모델을 다른 엔진으로</text>
+<rect x="1683.94" y="1057" width="52.06" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="1709.97" y="1070" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">4·5단계</text>
+<text x="1228" y="1092" font-size="12" font-weight="400" fill="#8C959F" text-anchor="start">Spark 또는 Trino(레이크하우스), Snowflake와 같은 데이터로 비교</text>
+<path d="M1154,466.0 L1178,466.0 L1178,272 L1200,272" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M1154,466.0 L1178,466.0 L1178,441.0 L1200,441.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="1806" y="222" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1818" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">09_mart.sql</text>
+<text x="1818" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">한 트랜잭션 · dbt 이전 예정 (2단계)</text>
+<text x="1818" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">전월세: 25개 구 × 2개 출처가</text>
+<text x="1818" y="300" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">모두 들어온 계약월만</text>
+<rect x="1806" y="344" width="328" height="314" rx="6" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="1818" y="366" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">mart 테이블  (grain)</text>
+<line x1="1818" y1="376" x2="2122" y2="376" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="394" font-size="13" font-weight="700" fill="#1F2328" text-anchor="start">mart.dong_profile</text>
+<text x="1818" y="411" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">행정동 1개 = 1행 · 426</text>
+<line x1="1818" y1="416" x2="2122" y2="416" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="434" font-size="13" font-weight="700" fill="#1F2328" text-anchor="start">mart.commute_od</text>
+<text x="1818" y="451" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">출발 동 × 직장 동</text>
+<line x1="1818" y1="456" x2="2122" y2="456" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="474" font-size="13" font-weight="700" fill="#1F2328" text-anchor="start">mart.rent_listing</text>
+<text x="1818" y="491" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">최근 6개월 신규 계약 1건</text>
+<line x1="1818" y1="496" x2="2122" y2="496" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="514" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">mart.dong_rent_summary</text>
+<text x="1818" y="531" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">동별 월세 · 전세 중앙값</text>
+<line x1="1818" y1="536" x2="2122" y2="536" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="554" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">mart.dong_station</text>
+<text x="1818" y="571" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">가까운 역 · 아침 혼잡도</text>
+<line x1="1818" y1="576" x2="2122" y2="576" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="594" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">mart.dong_amenity</text>
+<text x="1818" y="611" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">필수 5종 업소 수 · 밀도</text>
+<line x1="1818" y1="616" x2="2122" y2="616" stroke="#EAEEF2" stroke-width="1"/>
+<text x="1818" y="634" font-size="13" font-weight="700" fill="#1F2328" text-anchor="start">mart.dong_mois_map</text>
+<text x="1818" y="651" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">행안부 코드 대응 · 427</text>
+<rect x="1806" y="674" width="328" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1818" y="695" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">질문 계산 방식</text>
+<text x="1818" y="716" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">docs/question.md (승인본)</text>
+<text x="1818" y="734" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">출퇴근 한도 이하 또는 3km 이내</text>
+<text x="1818" y="752" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">(결정 22, 23)</text>
+<path d="M1744,441.0 L1784,441.0 L1784,268.0 L1806,268.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M1970.0,314 L1970.0,344" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="2196" y="222" width="408" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="2208" y="243" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">warehouse/export_product.py</text>
+<text x="2208" y="264" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">마트를 날짜 버전 폴더로 내보냄</text>
+<text x="2208" y="282" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">같은 날 다시 내보내면 그 버전을 새로 만듦</text>
+<rect x="2196" y="326" width="408" height="216" rx="6" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="2208" y="348" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">product/vYYYY.MM.DD/</text>
+<line x1="2208" y1="359" x2="2592" y2="359" stroke="#EAEEF2" stroke-width="1"/>
+<text x="2208" y="376" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">dong_profile</text>
+<text x="2592" y="376" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">.parquet  .csv</text>
+<line x1="2208" y1="383" x2="2592" y2="383" stroke="#EAEEF2" stroke-width="1"/>
+<text x="2208" y="400" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">commute_od</text>
+<text x="2592" y="400" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">.parquet  .csv</text>
+<line x1="2208" y1="407" x2="2592" y2="407" stroke="#EAEEF2" stroke-width="1"/>
+<text x="2208" y="424" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">rent_listing</text>
+<text x="2592" y="424" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">.parquet  .csv</text>
+<line x1="2208" y1="431" x2="2592" y2="431" stroke="#EAEEF2" stroke-width="1"/>
+<text x="2208" y="448" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">dong_mois_map</text>
+<text x="2592" y="448" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end">.parquet  .csv</text>
+<line x1="2208" y1="455" x2="2592" y2="455" stroke="#EAEEF2" stroke-width="1"/>
+<text x="2208" y="472" font-size="13" font-weight="500" fill="#1F2328" text-anchor="start">manifest.json</text>
+<text x="2592" y="472" font-size="12" font-weight="400" fill="#5F6368" text-anchor="end"></text>
+<text x="2208" y="508" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">manifest: 파일별 행 수 · sha256 · 원천 기준일 · 품질 지표</text>
+<text x="2208" y="528" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">csv는 UTF-8 BOM(엑셀용) · 경계 도형은 넣지 않음 (결정 26)</text>
+<rect x="2196" y="558" width="408" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="2208" y="579" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">데이터 계약  docs/data_contract.md</text>
+<text x="2208" y="600" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">스키마 · 갱신 주기 · 품질 지표 · 출처와 이용조건 · 한계</text>
+<text x="2208" y="618" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">주 1회 권장 (출퇴근 월 1회, 편의 분기, 경계 연 1회)</text>
+<rect x="2196" y="646" width="408" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="2208" y="667" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">받는 쪽: 부동산 플랫폼</text>
+<text x="2208" y="688" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">행정동 지표 파일을 가져가 자기 서비스에 붙임</text>
+<text x="2208" y="706" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">manifest의 sha256으로 받은 파일을 검증</text>
+<rect x="2196" y="734" width="408" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="2208" y="755" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">확인용 시연  warehouse/sql/demo.sql</text>
+<text x="2208" y="776" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">직장 동 · 예산 · 면적 · 출퇴근 한도를 넣고</text>
+<text x="2208" y="794" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">조건에 맞는 동네 목록을 봄 (대시보드 없음)</text>
+<rect x="2196" y="822" width="408" height="56" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="2208" y="843" font-size="14.5" font-weight="700" fill="#5F6368" text-anchor="start">상품 전달 방식 다시 고르기</text>
+<rect x="2553.84" y="829" width="42.16" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="2574.92" y="842" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">5단계</text>
+<text x="2208" y="864" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">로컬 폴더 → Snowflake 공유 등 (5단계에서 결정)</text>
+<path d="M2134,501.0 L2174,501.0 L2174,259.0 L2196,259.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M2400.0,296 L2400.0,326" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M2400.0,542 L2400.0,558" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<path d="M2400.0,632 L2400.0,646" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="40" y="1180" width="2580" height="330" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="64" cy="1205" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="64" y="1210" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">7</text>
+<text x="86" y="1211" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">오케스트레이션</text>
+<text x="215.0" y="1211" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">Airflow 3.3.2 · LocalExecutor · standalone · 출처별 DAG, 실행 기간은 data interval</text>
+<line x1="54" y1="1226" x2="2606" y2="1226" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="56" y="1246" width="520" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="1267" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">molit_rent  ·  매주 월 04:00</text>
+<rect x="507.14" y="1253" width="60.86" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="537.57" y="1266" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">stg.rent</text>
+<text x="68" y="1288" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">plan: data interval로 처리할 (구 × 계약월) 목록을 만듦</text>
+<text x="68" y="1306" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">collect_and_clean: 동적 매핑, 칸마다 수집 → 정제</text>
+<text x="68" y="1324" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">rent_updated: 전부 성공하면 Asset 알림</text>
+<rect x="56" y="1350" width="520" height="74" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="68" y="1371" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">seoul_api  ·  매주 월 05:00</text>
+<rect x="516.6" y="1357" width="51.400000000000006" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="542.3" y="1370" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">결정 29</text>
+<text x="68" y="1392" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">collect_and_clean_station_master / _congestion (따로 돎)</text>
+<text x="68" y="1410" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">stg_updated: 둘 다 끝난 뒤 알림 2개를 한 번에 냄</text>
+<rect x="596" y="1246" width="520" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="608" y="1267" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">file_*  ·  4개 (living_migration · sbiz_store · …)</text>
+<rect x="1065.62" y="1253" width="42.38" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="1086.81" y="1266" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">stg.*</text>
+<text x="608" y="1288" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">wait_for_file: 센서, reschedule (기다리는 동안 자리 비움)</text>
+<text x="608" y="1306" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">register_and_clean: register_file.py → 정제 → Asset 알림</text>
+<text x="608" y="1324" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">file_living_migration 매월 21일 06:00, 나머지 수동</text>
+<rect x="596" y="1350" width="520" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="608" y="1371" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">실패 알림  dags/alerting.py</text>
+<text x="608" y="1392" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">on_failure_callback → logs/alerts.log (DAG, 작업, 처리 단위, 원인)</text>
+<text x="608" y="1410" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">재시도는 스크립트 안에서 일시 오류만, 영구 오류는 바로 실패</text>
+<rect x="1176" y="1246" width="1444" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1188" y="1267" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">wh_load  ·  schedule = AssetAny(스테이징 Asset 7개)</text>
+<text x="1188" y="1288" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">스테이징이 바뀌면 웨어하우스 → 마트 → 상품까지 자동으로 다시 만듦</text>
+<text x="1188" y="1306" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">중복 실행 정리: seoul_api 한 번에 wh_load 2번 → 1번 (11-03 확인, 정기 실행은 11-09 확인)</text>
+<rect x="1176.0" y="1338" width="461.3333333333333" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1188.0" y="1359" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">rebuild_warehouse</text>
+<text x="1188.0" y="1380" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">08_wh_load.sql</text>
+<rect x="1667.3333333333333" y="1338" width="461.3333333333333" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1679.3333333333333" y="1359" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">build_mart</text>
+<text x="1679.3333333333333" y="1380" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">09_mart.sql</text>
+<path d="M1637.3333333333333,1366.0 L1667.3333333333333,1366.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="2158.6666666666665" y="1338" width="461.3333333333333" height="56" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="2170.6666666666665" y="1359" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">export_product</text>
+<text x="2170.6666666666665" y="1380" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">export_product.py</text>
+<path d="M2128.6666666666665,1366.0 L2158.6666666666665,1366.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="1176" y="1420" width="1444" height="56" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="1188" y="1441" font-size="13.5" font-weight="700" fill="#1F2328" text-anchor="start">dbt build 작업으로 교체 중  (BashOperator, dbt 전용 가상환경)</text>
+<rect x="2569.84" y="1427" width="42.16" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="2590.92" y="1440" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">2단계</text>
+<text x="1188" y="1462" font-size="12" font-weight="400" fill="#5F6368" text-anchor="start">rebuild_warehouse · build_mart 두 작업이 dbt build 하나 + 교체 단계로 바뀜. 완료 기준: 결과 테이블 차이 0, 소요 시간 비교</text>
+<path d="M1406.6666666666667,1394 L1406.6666666666667,1420" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<path d="M1898.0,1394 L1898.0,1420" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<path d="M516,1246 L516,1236 L1154,1236 L1154,1272 L1176,1272" fill="none" stroke="#1A56DB" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#a-blue)"/>
+<path d="M1056,1246 L1056,1236" fill="none" stroke="#1A56DB" stroke-width="1.4" stroke-dasharray="5 4"/>
+<path d="M576,1387.0 L586,1387.0 L586,1236" fill="none" stroke="#1A56DB" stroke-width="1.4" stroke-dasharray="5 4"/>
+<text x="1146" y="1230" font-size="12" font-weight="500" fill="#1A56DB" text-anchor="end">Asset 알림</text>
+<rect x="40" y="1540" width="2580" height="236" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="64" cy="1565" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="64" y="1570" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">8</text>
+<text x="86" y="1571" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">실행 환경</text>
+<text x="168.76" y="1571" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">Docker Compose · 개인 PC (Ryzen 7 7800X3D · RAM 63GB · Windows 11)</text>
+<line x1="54" y1="1586" x2="2606" y2="1586" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="56" y="1606" width="400" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68" y="1627" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">db  ·  postgis/postgis:17-3.5</text>
+<text x="68" y="1648" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">포트 5433 (5432는 PC의 PostgreSQL이 사용)</text>
+<text x="68" y="1666" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">볼륨 pgdata · healthcheck pg_isready</text>
+<rect x="472" y="1606" width="440" height="92" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="484" y="1627" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">airflow  ·  seoul-airflow:3.3.2</text>
+<rect x="852.6" y="1613" width="51.400000000000006" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="878.3" y="1626" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">결정 30</text>
+<text x="484" y="1648" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">127.0.0.1:8080 · TZ Asia/Seoul</text>
+<text x="484" y="1666" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">프로젝트 폴더를 /opt/project로 연결</text>
+<text x="484" y="1684" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">+ /opt/airflow/dbt-venv (2단계에서 추가)</text>
+<rect x="928" y="1606" width="360" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="940" y="1627" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">pgadmin  ·  dpage/pgadmin4:9.10</text>
+<text x="940" y="1648" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">127.0.0.1:5050 · 개발용 DB 조회</text>
+<text x="940" y="1666" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">파이프라인은 쓰지 않음</text>
+<rect x="1304" y="1606" width="260" height="74" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="1316" y="1627" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">.env</text>
+<text x="1316" y="1648" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">인증키 · DB 비밀번호</text>
+<text x="1316" y="1666" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">git에 올리지 않음</text>
+<rect x="1580" y="1606" width="1024" height="74" rx="6" fill="#FFFFFF" stroke="#B45309" stroke-width="1.4"/>
+<text x="1592" y="1627" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">PC 절전이면 정기 실행이 밀림</text>
+<rect x="2550.76" y="1613" width="45.24" height="18" rx="9" fill="#FFFFFF" stroke="#B45309" stroke-width="1"/>
+<text x="2573.38" y="1626" font-size="11" font-weight="500" fill="#B45309" text-anchor="middle">측정 7</text>
+<text x="1592" y="1648" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">10-26 6시간 23분, 11-02 6시간 39분 늦게 시작</text>
+<text x="1592" y="1666" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">예정 시각에 돈 정기 실행 0회 (3주 연속)</text>
+<rect x="56" y="1702" width="2548" height="32" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="68" y="1723" font-size="13.5" font-weight="700" fill="#5F6368" text-anchor="start">운영 고도화: CI(테스트 자동 실행) + 항상 켜진 실행 환경  ·  큰 구조 변경 전에 회귀를 잡는 장치를 먼저 둔다  ·  실행 환경 비용 [확인 필요]</text>
+<rect x="2553.84" y="1709" width="42.16" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="2574.92" y="1722" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">3단계</text>
+<rect x="40" y="1806" width="2580" height="210" rx="10" fill="#FFFFFF" stroke="#D0D7DE" stroke-width="1.2"/>
+<circle cx="64" cy="1831" r="12" fill="#FFFFFF" stroke="#1F2328" stroke-width="1.4"/>
+<text x="64" y="1836" font-size="13" font-weight="700" fill="#1F2328" text-anchor="middle">9</text>
+<text x="86" y="1837" font-size="17" font-weight="700" fill="#1F2328" text-anchor="start">고도화 로드맵</text>
+<text x="202.76" y="1837" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">결정 28 · 학습 목적임을 밝히고, 기록된 문제(P1~P6)에 연결해 도입 전후를 실측한다 · docs/advancement.md</text>
+<line x1="54" y1="1852" x2="2606" y2="1852" stroke="#D0D7DE" stroke-width="1"/>
+<rect x="56.0" y="1872" width="487.2" height="92" rx="6" fill="#FFFFFF" stroke="#3C4043" stroke-width="1.2"/>
+<text x="68.0" y="1893" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">1  wh_load 중복 실행 정리</text>
+<rect x="499.20000000000005" y="1879" width="36.0" height="18" rx="9" fill="#FFFFFF" stroke="#3C4043" stroke-width="1"/>
+<text x="517.2" y="1892" font-size="11" font-weight="500" fill="#3C4043" text-anchor="middle">완료</text>
+<text x="68.0" y="1914" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">P1 · 결정 29 · 측정 7</text>
+<text x="68.0" y="1932" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">seoul_api 알림을 한 작업으로</text>
+<text x="68.0" y="1950" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">wh_load 2번 → 1번</text>
+<rect x="571.2" y="1872" width="487.2" height="92" rx="6" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1.8"/>
+<text x="583.2" y="1893" font-size="14.5" font-weight="700" fill="#1F2328" text-anchor="start">2  dbt (PostgreSQL 그대로)</text>
+<rect x="1000.32" y="1879" width="50.080000000000005" height="18" rx="9" fill="#FFFFFF" stroke="#1A56DB" stroke-width="1"/>
+<text x="1025.3600000000001" y="1892" font-size="11" font-weight="500" fill="#1A56DB" text-anchor="middle">진행 중</text>
+<text x="583.2" y="1914" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">P2 · 결정 30, 31</text>
+<text x="583.2" y="1932" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">wh 모델 3/7, 테스트 24개</text>
+<text x="583.2" y="1950" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">블루/그린 교체로 원자성 유지</text>
+<path d="M543.2,1918.0 L571.2,1918.0" fill="none" stroke="#3C4043" stroke-width="1.4" marker-end="url(#a-dark)"/>
+<rect x="1086.4" y="1872" width="487.2" height="92" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="1098.4" y="1893" font-size="14.5" font-weight="700" fill="#5F6368" text-anchor="start">3  운영</text>
+<rect x="1529.6000000000001" y="1879" width="36.0" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="1547.6000000000001" y="1892" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">대기</text>
+<text x="1098.4" y="1914" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">P3 · CI, 항상 켜진 실행 환경</text>
+<text x="1098.4" y="1932" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">절전 지연 해소</text>
+<text x="1098.4" y="1950" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">도구 · 비용은 그 단계에서 결정</text>
+<path d="M1058.4,1918.0 L1086.4,1918.0" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<rect x="1601.6000000000001" y="1872" width="487.2" height="92" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="1613.6000000000001" y="1893" font-size="14.5" font-weight="700" fill="#5F6368" text-anchor="start">4  레이크하우스</text>
+<rect x="2044.8000000000002" y="1879" width="36.0" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="2062.8" y="1892" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">대기</text>
+<text x="1613.6000000000001" y="1914" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">P4 · P5 · 객체 저장소 + Iceberg</text>
+<text x="1613.6000000000001" y="1932" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">Spark 또는 Trino, 생활이동 여러 달</text>
+<text x="1613.6000000000001" y="1950" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">측정 5 재측정 (결정 24 재검토)</text>
+<path d="M1573.6000000000001,1918.0 L1601.6000000000001,1918.0" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<rect x="2116.8" y="1872" width="487.2" height="92" rx="6" fill="#FFFFFF" stroke="#8C959F" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="2128.8" y="1893" font-size="14.5" font-weight="700" fill="#5F6368" text-anchor="start">5  Snowflake 비교</text>
+<rect x="2560.0" y="1879" width="36.0" height="18" rx="9" fill="#FFFFFF" stroke="#8C959F" stroke-width="1"/>
+<text x="2578.0" y="1892" font-size="11" font-weight="500" fill="#8C959F" text-anchor="middle">대기</text>
+<text x="2128.8" y="1914" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">P6 · 4단계와 같은 데이터로 비교</text>
+<text x="2128.8" y="1932" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">전면 이전 / 역할 분담 / 상품 공유</text>
+<text x="2128.8" y="1950" font-size="12.5" font-weight="400" fill="#8C959F" text-anchor="start">중 하나를 그 단계에서 고름</text>
+<path d="M2088.8,1918.0 L2116.8,1918.0" fill="none" stroke="#8C959F" stroke-width="1.4" stroke-dasharray="6 4" marker-end="url(#a-grey)"/>
+<text x="56" y="2000" font-size="12.5" font-weight="400" fill="#5F6368" text-anchor="start">도구 판단: PostGIS 씀(공간 조인) · Airflow 씀(주기 · 센서 · 백필) · Kafka 안 씀(스트리밍 출처 없음) · Spark 지금 규모에선 안 씀(측정 5: 생활이동 한 달 DuckDB 5.5~6.1초, Spark 28.5~29.1초, 현재 방식 약 2분 20초) → 4단계에서 여러 달로 재측정</text>
+</svg>
