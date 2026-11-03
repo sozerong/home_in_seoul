@@ -1,0 +1,32 @@
+# 고도화 3단계 CI (결정 34 S3-1 B). 푸시와 PR마다 DB·레이크 없이 도는 검사를 돌린다.
+# 하나라도 실패하면 GitHub 커밋 옆에 빨간 X가 붙는다. DAG 문법과 모델 SQL 실행은 여기서 검사하지 않는다.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # Airflow 이미지와 같은 버전 (Dockerfile)
+
+      - name: 정제 규칙 단위 테스트
+        run: |
+          pip install -r requirements.txt
+          for t in tests/test_*.py; do python -m "tests.$(basename "$t" .py)"; done
+          python -m measure.rent_fingerprint --selftest
+
+      - name: dbt parse (ref 오타, YAML, 테스트 정의 오류)
+        working-directory: warehouse/dbt
+        env:
+          POSTGRES_PASSWORD: ci-unused  # parse는 DB에 접속하지 않는다 (2026-11-03 틀린 비밀번호로 확인)
+        run: |
+          python -m venv "$RUNNER_TEMP/dbt"
+          "$RUNNER_TEMP/dbt/bin/pip" install "dbt-core==1.12.6" "dbt-postgres==1.11.0"  # Dockerfile과 같은 버전
+          "$RUNNER_TEMP/dbt/bin/dbt" parse --no-partial-parse

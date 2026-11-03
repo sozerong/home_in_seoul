@@ -2,7 +2,7 @@
 
 사람은 받은 zip을 lake/_inbox/{출처}/에 넣기만 한다. DAG가 센서로 파일이 들어왔는지 기다렸다가(reschedule, 기다리는 동안
 작업 칸을 차지하지 않음) register_file로 검사·등록하고, 정제한 뒤 inbox에서 지운다.
-- 생활이동: 매월 21일 06:00 시작(기준월 다음 달 20일 공개, 매뉴얼). 최대 7일 기다리고, 안 오면 실패와 알림.
+- 생활이동: 매월 21일 13:00 시작(PC가 켜져 있는 시간, 결정 34)(기준월 다음 달 20일 공개, 매뉴얼). 최대 7일 기다리고, 안 오면 실패와 알림.
 - 나머지: 일정 없이 수동 실행. 파일을 넣고 실행하면 10분 안에 파일을 찾지 못하면 실패.
 수집일(D)은 작업이 도는 순간에 한 번 정해 등록과 정제에 같이 넘긴다.
 """
@@ -22,7 +22,7 @@ LIVING_CLEAN = ('for f in "${files[@]}"; do n=$(basename "$f"); case "$n" in 생
                 'ym=${n#생활이동_행정동_}; python -m transform.living_migration "$D" "${ym%.zip}";; esac; done')
 
 SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset)
-    "living_migration": ("0 6 21 * *", 7 * 24 * 3600, LIVING_CLEAN, STG_LIVING_MIGRATION),
+    "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, STG_LIVING_MIGRATION),
     "sbiz_store": (None, 600, 'python -m transform.sbiz_store "$D"', STG_SBIZ_STORE),
     "sgis_boundary": (None, 600, 'python -m transform.boundary sgis_dong "$D"', STG_SGIS_DONG),
     "parcel_boundary": (None, 600, 'python -m transform.boundary parcel "$D"', STG_PARCEL),

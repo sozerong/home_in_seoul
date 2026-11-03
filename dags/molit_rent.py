@@ -1,6 +1,6 @@
 """전월세 실거래가(오피스텔, 연립다세대) 주간 수집·정제 DAG. 결정 18, 21.
 
-매주 월요일 04:00(한국 시간)에 돈다. data interval이 끝나는 달의 **전달부터 N개월**을 서울 25개 구 x 2개 출처로
+매주 월요일 13:00(한국 시간)에 돈다(PC가 켜져 있는 시간, 결정 34). data interval이 끝나는 달의 **전달부터 N개월**을 서울 25개 구 x 2개 출처로
 다시 받아 정제한다. N은 Airflow Variable `rent_recent_months`(없으면 3). 이번 달은 아직 진행 중이라 뺀다.
 작업 하나 = 처리 단위 하나 (출처, 구, 계약년월). 실패하면 그 칸만 다시 돌린다.
 재시도는 스크립트 안에서만 한다(일시 오류만 3번). Airflow 재시도는 0번이라, 여기 도착한 실패는 바로 드러난다.
@@ -27,7 +27,7 @@ COMMAND = (
 
 with DAG(
     dag_id="molit_rent",
-    schedule="0 4 * * 1",
+    schedule="0 13 * * 1",
     start_date=pendulum.datetime(2026, 10, 1, tz="Asia/Seoul"),
     catchup=False,
     max_active_runs=1,
