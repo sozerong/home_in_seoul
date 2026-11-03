@@ -22,10 +22,13 @@ import pyarrow.parquet as pq
 
 from common import ROOT, read_env
 
-TABLES = {  # 파일 이름: 정렬 기준
+TABLES = {  # 파일 이름: 정렬 기준. 행마다 순서가 하나로 정해져야 같은 데이터가 같은 파일(sha256)이 된다
     "dong_profile": "dong_id",
     "commute_od": "origin_dong_id, dest_dong_id",
-    "rent_listing": "dong_id, deal_date, source_type",
+    # 거래 고유 키가 없어(동·호 미제공) 모든 컬럼으로 정렬한다. mois_dong_cd, dong_nm, deal_ymd는 dong_id, deal_date로 정해져 뺐다.
+    # 모든 컬럼이 같은 행은 바이트까지 같아 그 행들끼리 순서가 바뀌어도 파일은 같다 (측정 8).
+    "rent_listing": "dong_id, deal_date, source_type, house_type, lease_type, deposit_10k_won, monthly_rent_10k_won, "
+                    "excl_area_m2, floor, build_year",
     "dong_mois_map": "mois_dong_cd",
 }
 

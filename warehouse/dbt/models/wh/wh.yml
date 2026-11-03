@@ -1,0 +1,123 @@
+# 옛 07_wh.sql의 PK, FK, NOT NULL과 08의 구조 검사를 테스트로 옮긴다 (결정 31 E2). 07~09는 2026-11-03에 지웠다.
+models:
+  - name: dim_dong
+    columns:
+      - name: dong_id
+        data_tests:
+          - unique
+          - not_null
+          - relationships:  # 08 검사: 2021 코드가 하나도 가리키지 않는 2025 행정동
+              arguments: {to: ref('map_dong_2021'), field: dong_id}
+      - name: dong_nm
+        data_tests: [not_null]
+      - name: sgg_cd
+        data_tests: [not_null]
+      - name: mois_dong_cd  # 08 검사: 행정안전부 코드를 정하지 못한 행정동
+        data_tests: [not_null]
+      - name: boundary_base_date
+        data_tests: [not_null]
+      - name: source_collected_date
+        data_tests: [not_null]
+      - name: area_km2
+        data_tests: [not_null]
+      - name: geom
+        data_tests: [not_null]
+
+  - name: map_dong_mois
+    columns:
+      - name: mois_dong_cd
+        data_tests: [unique, not_null]
+      - name: dong_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_dong'), field: dong_id}
+      - name: stores
+        data_tests: [not_null]
+      - name: share
+        data_tests: [not_null]
+      - name: is_primary
+        data_tests: [not_null]
+
+  - name: fact_store
+    columns:
+      - name: store_id  # 가장 최근 수집일 하나만 담으므로 (수집일, 업소) 키는 업소 하나로 충분하다
+        data_tests: [unique, not_null]
+      - name: collected_date
+        data_tests: [not_null]
+      - name: sub_cd
+        data_tests: [not_null]
+      - name: base_ym
+        data_tests: [not_null]
+      - name: point
+        data_tests: [not_null]
+      - name: dong_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_dong'), field: dong_id}
+      - name: mois_dong_cd  # 08 검사: 행정동에 잇지 못한 행정안전부 코드
+        data_tests:
+          - relationships:
+              arguments: {to: ref('map_dong_mois'), field: mois_dong_cd}
+              config: {where: "dong_id is not null"}
+
+  - name: map_dong_2021
+    columns:
+      - name: dong_cd_2021
+        data_tests: [not_null]
+      - name: dong_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_dong'), field: dong_id}
+      - name: method
+        data_tests:
+          - accepted_values:
+              arguments: {values: ['prefix', 'manual']}
+
+  - name: dim_parcel
+    columns:
+      - name: pnu
+        data_tests: [unique, not_null]
+      - name: point
+        data_tests: [not_null]
+      - name: source_collected_date
+        data_tests: [not_null]
+      - name: dong_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_dong'), field: dong_id}
+
+  - name: dim_station
+    columns:
+      - name: bldn_id
+        data_tests: [unique, not_null]
+      - name: bldn_nm
+        data_tests: [not_null]
+      - name: route
+        data_tests: [not_null]
+      - name: point
+        data_tests: [not_null]
+      - name: source_collected_date
+        data_tests: [not_null]
+      - name: dong_id
+        data_tests:
+          - relationships:
+              arguments: {to: ref('dim_dong'), field: dong_id}
+
+  - name: map_congestion_station
+    columns:
+      - name: line
+        data_tests: [not_null]
+      - name: sttn_no
+        data_tests: [not_null]
+      - name: bldn_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments: {to: ref('dim_station'), field: bldn_id}
+      - name: method
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments: {values: ['padded', 'manual']}

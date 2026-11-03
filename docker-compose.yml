@@ -35,6 +35,8 @@ services:
       AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
       # 컨테이너 안에서 스크립트가 쓸 데이터 DB 주소. .env의 localhost:5433을 덮어쓴다 (common.read_env).
       DATABASE_URL: postgresql://seoul:${POSTGRES_PASSWORD}@db:5432/seoul
+      # dbt 접속 설정(warehouse/dbt/profiles.yml)이 읽는다. dbt-postgres는 주소 한 줄(URL)을 받지 않는다.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ./:/opt/project
       - ./dags:/opt/airflow/dags

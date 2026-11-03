@@ -1,0 +1,21 @@
+# 웨어하우스(wh)와 마트(mart) 변환. 스테이징(stg)은 Python 정제가 채우고 여기서는 읽기만 한다 (결정 30 D1).
+name: seoul_dong
+version: "1.0.0"
+profile: seoul
+
+models:
+  seoul_dong:
+    +materialized: table
+    wh:
+      +schema: wh
+    mart:  # 부동산 플랫폼에 줄 데이터 상품의 원천 (결정 12). wh만 읽는다
+      +schema: mart
+
+# 손으로 만든 대응표. 코드는 앞자리 0이 빠지지 않게 문자로 읽는다(CLAUDE.md 7절의 ARS-ID와 같은 함정: 0211 -> 211).
+seeds:
+  seoul_dong:
+    +schema: wh
+    map_dong_2021_manual:  # 2021 이후 바뀐 서울 행정동 6개 (data_sources.md 10절)
+      +column_types: {dong_cd_2021: char(7), dong_id: char(8), note: text}
+    congestion_station_manual:  # 혼잡도 특수 번호와 예외 6개 (결정 17)
+      +column_types: {line: text, sttn_no: text, bldn_id: char(4), note: text}

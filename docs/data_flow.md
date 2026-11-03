@@ -55,12 +55,12 @@ flowchart LR
     L2 -->|transform/living_migration.py| S4
     L2 -->|transform/sbiz_store.py| S5
     L2 -->|transform/boundary.py| S6 & S7
-    STG -->|08_wh_load.sql| WH
-    WH -->|09_mart.sql| MART
+    STG -->|dbt models/wh| WH
+    WH -->|dbt models/mart| MART
     MART -->|warehouse/export_product.py| OUT
 ```
 
-Airflow가 화살표마다 일정을 건다: API는 매주 월요일, 생활이동은 매월 21일부터 파일 도착을 기다리고, 나머지 파일은 손으로 넣으면 실행한다. 스테이징 테이블이 바뀌면(Asset) `wh_load`가 08(웨어하우스) → 09(마트) → 내보내기를 차례로 돈다. 그래서 매주 월요일 전월세 수집이 끝나면 그날 날짜의 상품 버전이 저절로 나온다.
+Airflow가 화살표마다 일정을 건다: API는 매주 월요일, 생활이동은 매월 21일부터 파일 도착을 기다리고, 나머지 파일은 손으로 넣으면 실행한다. 스테이징 테이블이 바뀌면(Asset) `wh_load`가 dbt 빌드(웨어하우스 → 마트, 테스트) → 스키마 교체 → 내보내기를 차례로 돈다(결정 30~32). 그래서 매주 월요일 전월세 수집이 끝나면 그날 날짜의 상품 버전이 저절로 나온다.
 
 ## 2. 출처별: 처음 모양 → 레이크 → 스테이징 → 웨어하우스 → 마트
 
@@ -200,7 +200,7 @@ SGIS   속성: BASE_DATE=20250630 ADM_CD=11230640 ADM_NM=역삼1동
 | J6 | 혼잡도 역번호 → 역사_ID | `lpad(역번호, 4, '0')` + 호선 같음 + 손 대응 6행 | 276 + 6 |
 | J7 | 행정동 → 가장 가까운 역 | KNN: `ORDER BY s.point <-> 대표점 LIMIT 1` (GiST 인덱스) | 426개 동 모두 |
 
-### J1. 필지 → 행정동 (08_wh_load.sql)
+### J1. 필지 → 행정동 (dbt `models/wh/dim_parcel.sql`)
 ```sql
 INSERT INTO wh.dim_parcel (pnu, point, dong_id, source_collected_date)
 SELECT p.pnu, p.point, d.dong_id, p.collected_date
@@ -214,7 +214,7 @@ pnu                 | x(5179)  | y(5179)   | dong_id  | dong_nm
 ```
 대표점을 `ST_Centroid`(무게중심)가 아니라 `ST_PointOnSurface`로 잡는 이유: ㄷ자 모양 필지는 무게중심이 필지 밖, 때로는 옆 동에 떨어진다(결정 16). `LEFT JOIN`이라 경계 밖 필지 19개도 사라지지 않고 `dong_id`가 빈 채로 남는다.
 
-### J2. 전월세 → 행정동 (09_mart.sql)
+### J2. 전월세 → 행정동 (dbt `models/mart/rent_listing.sql`)
 ```sql
 FROM wh.fact_rent r
 JOIN wh.dim_parcel p USING (pnu)
@@ -223,7 +223,7 @@ WHERE r.contract_type = '신규' AND r.deal_ymd IN (SELECT deal_ymd FROM rent_mo
 ```
 전월세에는 좌표가 없다. 그래서 지번으로 PNU를 만들고(스테이징), PNU로 필지를 찾고(J2), 필지는 이미 행정동을 알고 있다(J1). 거래마다 공간 연산을 하지 않고 필지 89만 개에 한 번만 한다.
 
-### J3, J4. 업소 → 행정동, 그리고 행안부 코드 다수결 (08_wh_load.sql)
+### J3, J4. 업소 → 행정동, 그리고 행안부 코드 다수결 (dbt `models/wh/fact_store.sql`, `map_dong_mois.sql`, `dim_dong.sql`)
 ```sql
 SELECT p.*, d.dong_id FROM store_point p LEFT JOIN wh.dim_dong d ON ST_Contains(d.geom, p.point);   -- J3
 
@@ -242,7 +242,7 @@ FROM store_in_dong WHERE dong_id IS NOT NULL GROUP BY dong_id, mois_dong_cd;
 ```
 GS25역삼상록점 하나로 보면: 경위도 (127.0440, 37.5041) → 5179 점 (959695.7, 1945076.8) → 역삼1동(통계청 11230640). 업소가 원래 가진 행안부 코드 11680640과 같은 동이다.
 
-### J5. 생활이동 2021 코드 → 2025 동 (08_wh_load.sql)
+### J5. 생활이동 2021 코드 → 2025 동 (dbt `models/wh/map_dong_2021.sql`, 손 대응표 `seeds/map_dong_2021_manual.csv`)
 ```sql
 INSERT INTO wh.map_dong_2021 VALUES ('1123074', '11230511', 'manual'), ...;   -- 일원2동 → 개포3동 등 8행
 INSERT INTO wh.map_dong_2021 (dong_cd_2021, dong_id, method)
@@ -258,7 +258,7 @@ JOIN wh.dim_dong d ON d.dong_id = c.code || '0';
 ```
 2025 → 2021로 자르지 않고 2021 → 2025로 `'0'`을 붙이는 방향이라 충돌이 없다.
 
-### J6. 혼잡도 역번호 → 역사_ID (08_wh_load.sql)
+### J6. 혼잡도 역번호 → 역사_ID (dbt `models/wh/map_congestion_station.sql`, 손 대응표 `seeds/congestion_station_manual.csv`)
 ```sql
 JOIN wh.dim_station s ON s.bldn_id = lpad(c.sttn_no, 4, '0') AND s.route = c.line;
 ```
@@ -268,7 +268,7 @@ JOIN wh.dim_station s ON s.bldn_id = lpad(c.sttn_no, 4, '0') AND s.route = c.lin
 2호선 9001 → 0211 성수   (manual, 원본 이름 성수E)   ← 9001은 역사마스터에서 광역급행철도 역 ID라 번호만으로 이으면 틀린 역에 붙는다
 ```
 
-### J7. 가장 가까운 역 (09_mart.sql)
+### J7. 가장 가까운 역 (dbt `models/mart/dong_station.sql`)
 ```sql
 CROSS JOIN LATERAL (SELECT s.* FROM wh.dim_station s ORDER BY s.point <-> c.p LIMIT 1) a
 ```
@@ -276,7 +276,7 @@ CROSS JOIN LATERAL (SELECT s.* FROM wh.dim_station s ORDER BY s.point <-> c.p LI
 역삼1동 대표점에서: 역삼(2호선) 400m, 강남(2호선) 418m, 강남(신분당선) 480m
 ```
 
-### 집계: 출퇴근 가중 평균 (09_mart.sql)
+### 집계: 출퇴근 가중 평균 (dbt `models/mart/commute_od.sql`)
 ```sql
 sum(population * avg_minutes) FILTER (WHERE age IN ('20','25','30') AND population IS NOT NULL)
   / NULLIF(sum(population) FILTER (WHERE age IN ('20','25','30') AND population IS NOT NULL), 0) AS avg_minutes_age20_34
@@ -386,14 +386,14 @@ dong_mois_map (용신동):
 
 ## 10. 스키마: 층마다 데이터를 어떻게 정리했나
 
-DB(`information_schema`, `pg_constraint`, `geometry_columns`)에서 그대로 뽑았다. 행 수와 크기는 2026-10-22 백필 직후 값. DDL 원문은 `warehouse/sql/01~09`.
+DB(`information_schema`, `pg_constraint`, `geometry_columns`)에서 그대로 뽑았다. 행 수와 크기는 2026-10-22 백필 직후 값. 스테이징 DDL 원문은 `warehouse/sql/01~06`, 웨어하우스·마트는 `warehouse/dbt/models/`. 2026-11-03부터 wh·mart의 기본키·외래키·CHECK는 DB 제약이 아니라 dbt 테스트로 검사한다(결정 31 E2). 아래 표의 "기본키 / 외래키"는 그 테스트가 지키는 규칙이다.
 
 ### 층마다 다른 정리 원칙
 
 | | 스테이징 `stg` | 웨어하우스 `wh` | 마트 `mart` |
 |---|---|---|---|
 | 모양 | 출처 하나 = 테이블 하나 + 격리 테이블 하나. 출처의 칸을 거의 그대로, 타입만 정함 | 행정동 차원(`dim_dong`)을 가운데 둔 별 모양. 차원(dim), 대응표(map), 사실(fact) | 받는 쪽 질문에 맞춘 넓은 표. 조인 없이 바로 읽힘 |
-| 키 | 기본키가 **수집일로 시작**한다. 같은 원본을 다른 날 다시 받아도 나란히 쌓이고, 처리 단위(수집일 …)로 지우고 다시 넣는다 | 코드 하나(`dong_id`, `pnu`, `bldn_id`)가 기본키. 수집일은 키에서 빠지고 "어느 수집분에서 왔나"(`source_collected_date`)로만 남는다 | 기본키 제약은 두지 않고 09 끝의 검사(`DO` 블록)로 중복과 행 수를 확인한다 |
+| 키 | 기본키가 **수집일로 시작**한다. 같은 원본을 다른 날 다시 받아도 나란히 쌓이고, 처리 단위(수집일 …)로 지우고 다시 넣는다 | 코드 하나(`dong_id`, `pnu`, `bldn_id`)가 기본키. 수집일은 키에서 빠지고 "어느 수집분에서 왔나"(`source_collected_date`)로만 남는다 | 기본키 제약은 두지 않고 dbt 테스트(`models/mart/mart.yml`, `tests/`)로 중복과 행 수를 확인한다 |
 | 위치 | 원본 좌표계 그대로(경계 5179, 지적도 5186, 역·업소는 위경도 숫자) | **모두 EPSG:5179 점·면**. GiST 인덱스 | 도형 없음. 거리(m, km)와 면적(㎢)만 숫자로 |
 | 추적 | 모든 행에 `source_file`과 파일 안 순번(`row_no`/`item_no`). 격리 행은 `reasons text[]` + 원본 `raw jsonb` | 대응표에 `method`(prefix/padded/manual)와 `note` | `basis`, `copied_from_2021_split_dong`, `target_months` 같은 출처 설명 칸 |
 | 단위 | 원본 단위 | 원본 단위 | **컬럼 이름에 단위**: `_10k_won`(만 원), `_m2`, `_m`, `_km`, `_per_km2` |
@@ -504,16 +504,16 @@ erDiagram
 | `map_dong_2021` | 대응표 | 2021 코드 × 2025 동 짝 | PK (dong_cd_2021, dong_id), FK dong_id, CHECK method ∈ {prefix, manual} | 426 (prefix 418, manual 8) | |
 | `map_dong_mois` | 대응표 | 행정안전부 행정동 코드 하나 | PK mois_dong_cd, FK dong_id. 동마다 대표 코드 1개(is_primary) + 어느 동의 대표도 아닌 코드 | 427 (대표 426, 추가 1: 용신동의 용두동 코드) | |
 | `map_congestion_station` | 대응표 | 혼잡도 (호선, 역번호) 하나 | PK (line, sttn_no), FK bldn_id → dim_station, CHECK method ∈ {padded, manual} | 282 (padded 276, manual 6) | |
-| `fact_store` | 사실 | 수집일 × 업소 | PK (collected_date, store_id), FK dong_id. btree(dong_id) | 30,394 | 5.5MB |
+| `fact_store` | 사실 | 수집일 × 업소 | PK (collected_date, store_id), FK dong_id, mois_dong_cd → map_dong_mois(동 안 업소만). btree(dong_id). 2026-11-03에 업소 원본의 mois_dong_cd 컬럼을 더함(결정 31 E1) | 30,394 | 5.5MB |
 | `fact_rent` | 사실 (뷰) | 계약 한 건, 최신 수집분 | | 70,708 | |
 | `fact_commute` | 사실 (뷰) | 생활이동 한 행, 최신 수집분 | | 12,308,331 | |
 | `fact_congestion` | 사실 (뷰) | 역 × 방향 × 요일 × 30분, 최신 수집분 | | 65,169 | |
 
 정리 방식에서 볼 것:
-- 외래키가 모두 `dim_dong`(과 `dim_station`)을 가리킨다. 모든 출처가 행정동 하나의 기준으로 모인다는 설계가 제약으로 강제된다. `dong_id`가 NULL을 허용하는 곳(`dim_parcel`, `dim_station`, `fact_store`)은 경계 밖 점을 버리지 않기 위해서다.
-- 대응표의 `method` CHECK 제약으로 "규칙으로 이은 것"과 "손으로 이은 것"이 데이터 안에서 구분된다.
+- 외래키가 모두 `dim_dong`(과 `dim_station`)을 가리킨다. 모든 출처가 행정동 하나의 기준으로 모인다는 설계가 dbt `relationships` 테스트로 검사된다. `dong_id`가 NULL을 허용하는 곳(`dim_parcel`, `dim_station`, `fact_store`)은 경계 밖 점을 버리지 않기 위해서다.
+- 대응표의 `method` 값 검사(dbt `accepted_values`)로 "규칙으로 이은 것"과 "손으로 이은 것"이 데이터 안에서 구분된다.
 - 공간 조인에 쓰는 칸마다 GiST 인덱스가 있다. 필지 89만 개를 경계 426개에 넣는 J1과 가장 가까운 역 찾기 J7이 이 인덱스를 쓴다.
-- 웨어하우스 테이블은 08을 돌 때마다 `TRUNCATE` 후 다시 만든다. 스테이징이 원본 이력을 들고 있으므로 웨어하우스는 언제든 다시 만들 수 있는 "현재 상태"다.
+- 웨어하우스 테이블은 `wh_load`마다 빌드용 스키마에 새로 만들고, 테스트를 모두 통과하면 통째로 교체한다(결정 30 D2, 32). 스테이징이 원본 이력을 들고 있으므로 웨어하우스는 언제든 다시 만들 수 있는 "현재 상태"다. 손 대응표 원본(seed) 두 개(`map_dong_2021_manual`, `congestion_station_manual`)도 wh에 테이블로 보인다.
 
 ### 마트 `mart`
 

@@ -1,0 +1,13 @@
+# Airflow 컨테이너 안에서 돌리는 접속 설정 (결정 30 D3). 비밀번호는 환경 변수로만 받는다.
+seoul:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: db
+      port: 5432
+      user: seoul
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      dbname: seoul
+      schema: wh_build  # 빌드용 스키마 (결정 30 D2). 검사를 모두 통과하면 실제 스키마와 교체한다
+      threads: 4

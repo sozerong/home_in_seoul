@@ -28,8 +28,8 @@ flowchart LR
 |---|---|---|
 | 레이크 | 받은 그대로의 원본. 출처별·수집일별 폴더. 수정하지 않는다 | `lake/` (git 제외) |
 | 스테이징 | 출처마다 정제·검증. 어긋난 행은 사유와 함께 격리 | `transform/`, `stg` 스키마, 규칙은 [docs/rules.md](docs/rules.md) |
-| 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | `warehouse/sql/07_wh.sql`, `08_wh_load.sql`, [docs/erd.md](docs/erd.md) |
-| 마트 | 동네 요약, 출발 × 직장 출퇴근 표, 최근 6개월 신규 계약 | `warehouse/sql/09_mart.sql` |
+| 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | dbt `warehouse/dbt/models/wh/`, 손 대응표 `warehouse/dbt/seeds/`, [docs/erd.md](docs/erd.md) |
+| 마트 | 동네 요약, 출발 × 직장 출퇴근 표, 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
 
@@ -67,10 +67,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-DB 구조 만들기 (00은 psql 전용 명령이 있어 컨테이너 안 psql로, 01~07은 순서대로 실행기로):
+DB 구조 만들기 (00은 psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
-for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_wh) do python -m warehouse.run_sql warehouse/sql/%f.sql
+for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary) do python -m warehouse.run_sql warehouse/sql/%f.sql
 ```
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
@@ -84,7 +84,7 @@ http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG
 DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
 
 ### 4. 데이터 넣기
-손으로 받는 파일은 받은 zip 그대로 `lake\_inbox\{출처}\`에 넣고 해당 `file_*` DAG를 실행한다. 스테이징이 바뀔 때마다 `wh_load`가 자동으로 돌기 때문에 **아래 순서대로** 넣는다(순서를 어기면 `wh_load`가 "행정안전부 코드를 정하지 못한 행정동"으로 실패하고, 전월세 정제는 "법정동 코드표가 없습니다"로 실패한다).
+손으로 받는 파일은 받은 zip 그대로 `lake\_inbox\{출처}\`에 넣고 해당 `file_*` DAG를 실행한다. 스테이징이 바뀔 때마다 `wh_load`가 자동으로 돌기 때문에 **아래 순서대로** 넣는다(순서를 어기면 `wh_load`의 dbt 테스트 `not_null_dim_dong_mois_dong_cd`(행정안전부 코드를 정하지 못한 행정동)가 실패하고, 전월세 정제는 "법정동 코드표가 없습니다"로 실패한다).
 
 | 순서 | inbox 폴더 | 파일 이름 | DAG |
 |---|---|---|---|
@@ -100,11 +100,14 @@ docker compose exec airflow airflow backfill create --dag-id molit_rent --from-d
 ```
 
 ### 5. 마트와 데이터 상품
-스테이징이 바뀔 때마다 `wh_load` DAG가 웨어하우스(08), 마트(09), 내보내기를 차례로 돌린다. 손으로 다시 만들 때:
+스테이징이 바뀔 때마다 `wh_load` DAG가 dbt 빌드(빌드용 스키마 `wh_build`·`mart_build`에 모델과 테스트), 스키마 교체(테스트를 모두 통과하면 `wh`·`mart`로), 내보내기를 차례로 돌린다(결정 30~32). 테스트가 하나라도 실패하면 실제 `wh`·`mart`와 상품은 그대로다. 손으로 다시 만들 때:
 ```
-python -m warehouse.run_sql warehouse/sql/09_mart.sql
+docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt run-operation drop_build_schemas
+docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt build
+docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt run-operation swap_schemas
 python -m warehouse.export_product
 ```
+모델 사이의 관계 그림은 `dbt docs generate` 후 `dbt docs serve`로 볼 수 있다.
 결과: `product\vYYYY.MM.DD\` (파일 설명은 [docs/data_contract.md](docs/data_contract.md)).
 
 ### 6. 확인

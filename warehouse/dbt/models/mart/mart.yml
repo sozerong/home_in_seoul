@@ -1,0 +1,30 @@
+# 09의 구조 검사와 행 하나를 가리키는 키. 키 외의 지표 값은 검사하지 않는다(09와 같다).
+models:
+  - name: rent_listing
+    columns:
+      - name: dong_id
+        data_tests: [not_null]
+      - name: lease_type
+        data_tests:
+          - accepted_values:
+              arguments: {values: ['월세', '전세']}
+
+  - name: dong_station
+    columns:
+      - name: dong_id
+        data_tests: [unique, not_null]
+
+  - name: dong_amenity
+    columns:
+      - name: dong_id
+        data_tests: [unique, not_null]
+
+  - name: dong_profile
+    columns:
+      - name: dong_id
+        data_tests: [unique, not_null]
+
+  - name: dong_mois_map
+    columns:
+      - name: mois_dong_cd
+        data_tests: [unique, not_null]

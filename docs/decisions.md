@@ -296,3 +296,77 @@
 - 검증: 2026-10-28, `docker compose up -d pgadmin` 후 http://127.0.0.1:5050 응답 200, 왼쪽 트리에 `seoul (PostGIS)` 서버가 미리 등록되어 보임(pgadmin/servers.json). 포트는 127.0.0.1에만 열었고, 데스크톱 모드라 pgAdmin 로그인은 없다. DB 비밀번호는 파일에 넣지 않고 화면에서 입력한다.
 - 결과와 남은 것: DB 포트(5433)는 아직 0.0.0.0에 열려 있다. 127.0.0.1로 묶을지는 결정 대기.
 
+
+## 결정 28. 고도화 방향과 순서
+- 상황: 단계 0~10을 마친 뒤(2026-11-03) 다음 목표를 "실무에서 쓰는 대용량·분산 처리 기술 학습"으로 정했다. 결정 24로 지금 규모(레이크 4.5GB, 생활이동 한 달 약 2분 20초)에서는 Spark·DuckDB가 필요 없다고 실측했으므로, 이번 고도화의 동기는 **학습**이라고 밝히고, 아래의 기록된 문제에 연결해 도입 전후를 실측한다.
+  - 생활이동이 202607 한 달만 처리됐다(측정 6). 여러 달 재집계는 결정 24의 재검토 조건이다.
+  - 데이터 상품을 로컬 폴더 파일로 전달하고, 버전은 폴더 이름뿐이다(결정 12, 26).
+  - 정기 실행이 PC 절전에 막힌다. 10-26 실행이 예정보다 6시간 23분 늦었다(측정 7).
+  - wh_load가 Asset 알림마다 돌아 같은 날 3번 중복 실행됐다(측정 7).
+  - warehouse/sql 01~09의 실행 순서와 품질 검사를 사람이 관리한다.
+- 선택지:
+  - A. Snowflake 도입부터. 장점: 실무 수요가 큰 관리형 웨어하우스, 상품 공유(Data Sharing). 단점: 지금 규모로는 이유가 약하고, PC 절전 문제는 그대로이며 비용이 든다.
+  - B. Snowflake 없이 고도화만(dbt, 운영, 레이크하우스, Spark 재측정). 장점: 비용 없이 저장·계산 분리 구조를 직접 만든다. 단점: 관리형 서비스 경험이 빠진다.
+  - C. 모두 하되 작은 것부터, 엔진에 덜 묶인 것부터. 장점: 앞 단계 결과(dbt 모델, 여러 달 데이터)를 뒤 단계가 그대로 쓰고, 레이크하우스와 Snowflake를 같은 데이터로 비교할 수 있다. 단점: 기간이 가장 길다.
+- 결정과 이유: C (2026-11-03 사용자 결정, "어차피 다 해야 될 것 같다"). 순서와 이유:
+  1. wh_load 중복 실행 정리: 작은 버그라 먼저 닫는다.
+  2. dbt(PostgreSQL 그대로): SQL을 모델과 테스트로 옮겨 두면 뒤의 엔진(Spark/Trino, Snowflake)으로 옮길 때 다시 쓴다.
+  3. 운영: CI(테스트 자동 실행)와 항상 켜진 실행 환경. 큰 구조 변경 전에 회귀를 잡는 장치를 먼저 둔다.
+  4. 레이크하우스(객체 저장소 + Iceberg + Spark 또는 Trino)와 생활이동 여러 달 적재, 측정 5 재측정(결정 24 재검토).
+  5. Snowflake: 4와 같은 데이터로 관리형 웨어하우스를 비교한다. 역할(전면 이전 / 역할 분담 / 상품 공유만)은 그 단계에서 고른다.
+  각 단계의 세부 선택(도구, 이미지 버전, 비용)은 그 단계에서 따로 결정으로 남긴다.
+- 검증: 단계마다 끝날 때 채운다. 과정 서술은 docs/advancement.md.
+- 결과와 남은 것: 4는 생활이동 202608 이후 파일이 필요하다(손으로 받는 출처, 측정 6). 3의 실행 환경 비용은 [확인 필요].
+
+## 결정 29. seoul_api의 Asset 알림을 한 작업으로 묶는다 (고도화 1단계)
+- 상황: wh_load가 10-26, 11-02 모두 3번 돌았다(측정 7). Airflow 기록(`dagrun_asset_event`)을 보니 실행마다 알림 하나씩이었다: stg.station_master, stg.congestion(4초 뒤), stg.rent. 앞의 둘은 seoul_api 한 번의 실행에서 작업 두 개가 각자 알린 것이라 중복이고, 전월세는 다른 데이터의 도착이라 필요한 실행이다.
+- 선택지:
+  - A. 그대로 두고 기록만. 장점: 변경 없음, 결과는 멱등이라 같다. 단점: 매주 약 1.8분짜리 중복 1번.
+  - B. seoul_api 끝에 알림 작업 하나를 두고 두 Asset을 함께 알린다. 장점: 3회 → 2회, seoul_api.py 하나만 바뀌고 molit_rent의 rent_updated와 같은 방식이다. 단점: 한쪽이 실패하면 성공한 쪽 알림도 나가지 않는다(실패 알림은 간다).
+  - C. wh_load를 시간 일정으로. 장점: 1회. 단점: 출처 실행이 늦어지면 이전 데이터로 돌고, 생활이동이 도착 즉시 반영되지 않는다.
+- 결정과 이유: B (2026-11-03 사용자 결정). 진짜 중복만 없애고, 데이터 도착에 반응하는 구조는 유지한다.
+- 검증: 2026-11-03 13:47 seoul_api 수동 실행. 작업 3개(collect_and_clean_station_master 2.1초, collect_and_clean_congestion 5.4초, stg_updated 0.5초) 성공. 알림 두 개가 같은 시각(13:47:55)에 나왔고 wh_load는 **1번**(13:47:56 시작, 110.7초, 성공) 돌았으며 그 실행에 두 알림이 함께 묶였다. 한 작업이 낸 두 알림이 실행 하나로 묶이는지는 이 실행으로 확인했다(1회 관찰).
+- 결과와 남은 것: 정기 실행 기준으로 주 3회 → 2회가 되는지는 11-09 실행으로 확인한다(측정 7). PC 절전으로 molit_rent와 seoul_api가 같이 밀려 돌면 2회 사이 간격이 몇 분으로 줄 뿐 횟수는 같다.
+
+## 결정 30. 웨어하우스·마트 변환을 dbt로 (고도화 2단계)
+- 상황: warehouse/sql 07~09가 wh 테이블 7개, mart 테이블 7개, 검사 8개를 SQL 파일 세 개에 담고 있다. 실행 순서와 의존, 검사는 사람이 관리한다. 결정 28의 2단계로 dbt를 들인다. 08·09는 각각 한 트랜잭션이라 검사 하나가 실패하면 전체가 이전 상태로 돌아가는데, dbt는 모델마다 따로 커밋한다.
+- 선택지:
+  - D1 범위. A. 07~09만 dbt로, 스테이징(01~06)은 source로 읽는다. 장점: 스테이징은 Python이 파티션 단위로 지우고 넣는 테이블이라 역할이 겹치지 않는다. 단점: 스키마 정의가 두 곳에 남는다. B. 01~09 전부. 장점: 한곳에서 관리. 단점: Python 적재와 dbt가 같은 테이블을 만진다.
+  - D2 실패 시 원자성. A. dbt 기본(`dbt build`, 테스트 실패 시 하류만 중단). 장점: 단순. 단점: 실패하면 wh는 새 데이터, mart는 옛 데이터로 섞인다. B. 빌드용 스키마에 모두 만들고 테스트를 모두 통과하면 실제 스키마와 교체(blue/green). 장점: 지금의 "전부 아니면 전무"를 유지한다. 단점: 교체 매크로를 직접 쓴다.
+  - D3 실행 위치. A. Airflow 이미지에 그대로 설치. 장점: 단순. 단점: Airflow와 라이브러리 버전 충돌 가능. B. 같은 이미지 안 dbt 전용 가상환경 + BashOperator. 장점: 충돌 없음, wh_load 구조가 거의 그대로. 단점: 이미지가 커진다. C. Cosmos로 모델마다 Airflow 작업. 장점: 화면에서 모델별 상태가 보인다. 단점: 의존성 추가, 모델 20개 안팎에서는 이득이 작다.
+- 결정과 이유: D1 A, D2 B, D3 B (2026-11-03 사용자 결정).
+- 검증: 단계마다 채운다. 마지막에 dbt 결과와 지금 08·09 결과가 테이블별로 같은지, wh_load 소요 시간(지금 약 1.8분)을 비교한다.
+  - 2026-11-03 설치: dbt v2가 새 설치의 기본값이 됐지만 v2 업그레이드 안내의 지원 목록(BigQuery, Databricks, Redshift, Snowflake, ClickHouse, Spark, DuckDB)에 PostgreSQL이 없어 v1을 쓴다. `pip install dbt-postgres==1.11.0`만 하면 베타(dbt-core 1.13.0b1)가 딸려 와서 dbt-core 1.12.6(안정판)을 함께 고정했다. `pip check` 충돌 없음. Airflow 컨테이너에서 `dbt debug` 연결 확인 통과.
+- 결과와 남은 것: 5단계에서 Snowflake를 붙일 때는 v2가 Snowflake를 지원하므로 v1과 v2 중 무엇을 쓸지 다시 본다. v2 라이선스 조건은 [확인 필요].
+
+## 결정 31. dbt로 옮길 때의 중간 결과와 제약 (고도화 2단계)
+- 상황: 08은 dim_dong을 먼저 넣고, 업소 30,394개를 경계에 공간 조인한 임시 테이블(store_in_dong)로 다수결을 내 `UPDATE`로 mois_dong_cd를 채운다. 같은 임시 테이블로 map_dong_mois와 fact_store도 만든다. dbt 모델은 SELECT 하나로 테이블 하나를 만들어 UPDATE가 없다. 또 dbt는 `CREATE TABLE AS`로 만들어서 07의 PK, FK, NOT NULL이 사라지고 타입이 계산식을 따라간다(`left()`는 text, `round()`는 자릿수 없는 numeric).
+- 선택지:
+  - E1 업소 공간 조인 결과. A. 교체하지 않는 별도 스키마의 중간 테이블. 장점: 지금과 비슷. 단점: 쓰는 곳이 wh 내부뿐인 테이블이 는다. B. fact_store에 업소 원본의 mois_dong_cd를 더하고 dim_dong, map_dong_mois가 fact_store를 읽는다. 장점: 중간 테이블이 없고 코드는 업소 자신의 속성이다. 단점: fact_store 컬럼이 하나 는다. C. ephemeral로 쓰는 곳마다 다시 계산. 장점: 테이블이 늘지 않는다. 단점: 같은 공간 조인을 3번 한다.
+  - E2 제약. A. SQL에 타입 변환을 적고, 제약은 dbt test, GiST 인덱스는 dbt `indexes` 설정. 장점: 가장 짧고 blue/green이라 검사를 통과하지 못한 결과는 교체되지 않는다. 단점: DB 자체의 PK/FK가 없어 손으로 넣는 잘못된 행을 DB가 막지 못한다. B. model contract로 모든 컬럼의 타입과 제약 선언. 장점: 지금 DDL과 같은 보장. 단점: 모든 컬럼을 YAML에 다시 적는다.
+- 결정과 이유: E1 B, E2 A (2026-11-03 사용자 결정).
+- 검증: 2026-11-03 `dbt build`로 wh_build에 fact_store, map_dong_mois, dim_dong 3개와 테스트 24개(PASS 27, 12.4초). 지금 wh와 두 방향 EXCEPT 대조(도형은 ST_AsBinary): dim_dong 426행, map_dong_mois 427행, fact_store 30,394행 모두 차이 0. 컬럼 타입(`format_type`, char 길이, numeric(8,3)·(4,3), geometry(MultiPolygon/Point, 5179) 포함)도 차이 0. 더한 컬럼 fact_store.mois_dong_cd는 character(8). GiST 인덱스(dim_dong.geom)와 btree(fact_store.dong_id) 생성 확인.
+  - 2026-11-03 wh 전체: seed 2개(손 대응표 map_dong_2021_manual 8행, congestion_station_manual 6행), 테이블 7개, 뷰 3개, 테스트 52개. `dbt build` PASS 64, 26.6초(threads 4). 지금 wh의 10개 모두와 두 방향 EXCEPT ALL(중복까지 비교, 도형은 ST_AsBinary)로 대조해 차이 0, 컬럼 타입 차이 0. 행 수: dim_dong 426, map_dong_mois 427, fact_store 30,394, map_dong_2021 426, dim_parcel 896,692, dim_station 784, map_congestion_station 282, fact_rent 83,364, fact_commute 12,308,331, fact_congestion 65,169.
+  - 2026-11-03 mart: 테이블 7개와 테스트 13개(09 검사 3개는 tests/의 단일 테스트, 나머지는 키의 unique·not_null과 lease_type 값). wh와 함께 `dbt build` PASS 84, 54.1초(commute_od 28.3초). 지금 mart 7개와 두 방향 EXCEPT ALL 차이 0, 컬럼 타입 차이 0, 컬럼 순서(ordinal_position) 차이 0. 행 수: rent_listing 59,693, dong_rent_summary 814, commute_od 131,035, dong_station·dong_amenity·dong_profile 426, dong_mois_map 427. 내보내기(export_product)가 `SELECT *`로 읽으므로 컬럼 순서까지 같아야 상품 파일의 스키마가 바뀌지 않는다.
+- 결과와 남은 것: 08의 구조 검사 5개를 모두 테스트로 옮겼다(not_null 1, relationships 3, 단일 테스트 1). 07의 복합 PK 2개는 tests/의 단일 테스트로 옮겼다. seed의 코드 컬럼은 문자로 고정했다(숫자로 추론하면 역사_ID 0211이 211이 된다). 교체 후 wh에는 seed 테이블 2개가 더 생긴다(손 대응표 원본이 DB에서 보인다). 26.6초는 08(약 65초, wh_load 주석)과 조건이 달라 아직 비교하지 않는다. 교체까지 붙인 뒤 wh_load 전체로 잰다.
+
+## 결정 32. 스키마 교체 뒤 옛 스키마는 바로 지운다 (고도화 2단계)
+- 상황: 결정 30 D2(blue/green)대로 `dbt build`가 모두 통과하면 wh_build → wh, mart_build → mart로 이름을 바꿔 교체한다. 2026-11-03 확인: wh·mart를 밖에서 참조하는 뷰와 FK는 0개, 네 스키마 모두 소유자 seoul. 크기는 wh 192MB, wh_build 130MB(dbt 테이블에는 07의 PK 인덱스가 없다), mart·mart_build 각 23MB.
+- 선택지:
+  - A. 교체한 트랜잭션 안에서 옛 스키마를 지운다. 장점: 가장 단순, 디스크가 늘지 않는다. wh·mart는 stg와 git 코드로 다시 만들 수 있고(멱등), 밖으로 나간 결과는 product/v{날짜}에 남는다. 단점: 테스트를 통과했지만 틀린 결과가 나가면 코드를 되돌려 다시 빌드해야 한다(약 1분).
+  - B. 옛 스키마를 wh_prev, mart_prev로 남기고 다음 교체 때 지운다. 장점: 즉시 되돌리기, 지난번과 이번 결과를 SQL로 비교. 단점: 디스크 약 150MB, 스키마가 둘 더 보인다.
+- 결정과 이유: A (2026-11-03 사용자 결정). 되돌리는 데 필요한 것이 이미 모두 남아 있다.
+- 검증: 2026-11-03 warehouse/dbt/macros/swap_schemas.sql을 실제 wh·mart가 아닌 시험 스키마(swaptest, swaptest_build)로 확인.
+  - 성공: `dbt run-operation swap_schemas --args '{schemas: [swaptest]}'` 종료 코드 0, swaptest.t가 'new', 남은 스키마는 swaptest 하나(옛 것과 _build 없음).
+  - 실패 주입: `{schemas: [swaptest, nobuild]}`(둘째의 _build가 없음) 종료 코드 1, "schema nobuild_build does not exist". 첫째 교체도 취소되어 swaptest.t가 'old', swaptest_build가 그대로, nobuild는 만들어지지 않았다. 문장 묶음 하나가 한 트랜잭션으로 실행됨을 확인했다.
+  - 처음 쓴 `adapter.commit()`은 "열린 트랜잭션이 없다" 오류를 냈다. run_query가 끝나며 이미 커밋하므로 지웠다.
+- 결과와 남은 것: 2026-11-03 14:49 wh_load(dbt_build → swap_schemas → export_product)에서 실제 wh·mart가 처음 교체됐다. 이후 wh에 PK·FK 0개(dbt 테이블), wh_build·mart_build·_old 스키마 없음. 3회 모두 성공(측정 8). 빌드 전에 지난번 실패로 남은 빌드 스키마를 지우는 drop_build_schemas를 더했다(지운 모델의 옛 테이블이 교체 때 함께 들어가지 않게).
+
+## 결정 33. rent_listing 내보내기를 모든 컬럼으로 정렬한다
+- 상황: dbt 전환 뒤 같은 데이터로 wh_load를 3번 돌렸더니 rent_listing csv·parquet의 sha256이 매번 달랐다(측정 8). 값은 같고 행 순서만 달랐다. 정렬 키(dong_id, deal_date, source_type)가 유일하지 않아(거래 고유 키 없음, CLAUDE.md 7절) 같은 키끼리는 DB 물리 순서를 따랐다. manifest의 sha256으로 "내용이 바뀌었나"를 판단할 수 없고, 설계 원칙 2(멱등)에 어긋난다. 데이터 계약에는 행 순서 약속이 없다.
+- 선택지:
+  - A. 정렬 키에 나머지 독립 컬럼을 모두 붙인다. 장점: 한 줄, 모든 컬럼이 같은 행은 바이트까지 같아 파일이 하나로 정해진다. 단점: 정렬이 조금 무거워진다(59,693행).
+  - B. 그대로 둔다. 장점: 변경 없음. 단점: 위 문제가 남는다.
+- 결정과 이유: A (2026-11-03 사용자 결정). dong_id, deal_date로 정해지는 mois_dong_cd, dong_nm, deal_ymd는 키에서 뺐다.
+- 검증: 수정 후 wh_load 2회, 상품 파일 8개 sha256이 두 번 같았다. rent_listing.csv는 정렬해 비교하면 전환 전 내용과 같다(측정 8).
+- 결과와 남은 것: 이번 버전부터 rent_listing의 행 순서가 이전 버전 파일과 다르다. 내용은 같다.

@@ -1,7 +1,7 @@
 """warehouse/sql/의 SQL 파일 하나를 DATABASE_URL의 DB에 그대로 실행한다. Airflow 컨테이너에는 psql이 없어서 쓴다.
 
 파일 안의 BEGIN/COMMIT과 RAISE가 그대로 동작하도록 autocommit으로 연결한다. 오류가 나면 종료 코드 1로 멈춘다.
-사용법: python -m warehouse.run_sql warehouse/sql/08_wh_load.sql
+사용법: python -m warehouse.run_sql warehouse/sql/01_stg_rent.sql (스테이징 DDL 01~06. wh·mart는 dbt가 만든다)
 """
 import sys
 import time
