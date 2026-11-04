@@ -1,15 +1,14 @@
-"""서울 생활이동(행정동) 레이크 zip을 정제·검증해 stg.living_migration과 stg.living_migration_quarantine에 넣는다.
+"""서울 생활이동(행정동) Iceberg 표의 한 달을 정제·검증해 stg.living_migration과 stg.living_migration_quarantine에 넣는다.
 
-규칙은 docs/rules.md 4절. 범위 C(HW, 월~금, 도착 07·08·09시, 출발·도착 모두 서울 행정동)만 넣는다.
-처리 단위(수집일, 대상연월)마다 두 테이블의 기존 행을 지우고 다시 넣는다(멱등).
-사용법: python -m transform.living_migration 수집일YYYY-MM-DD 대상연월YYYYMM
-예:     python -m transform.living_migration 2026-10-21 202607
+입력은 transform/living_iceberg.py가 레이크 zip에서 만든 lh.living.migration_rows(고도화 4단계, 결정 35). 그래서 Spark가 있는
+Airflow 컨테이너의 spark-venv에서 실행한다. 규칙은 docs/rules.md 4절. 범위 C(HW, 월~금, 도착 07·08·09시, 출발·도착 모두
+서울 행정동)만 넣는다. 처리 단위(수집일, 대상연월)마다 두 테이블의 기존 행을 지우고 다시 넣는다(멱등).
+사용법: /opt/airflow/spark-venv/bin/python -m transform.living_migration 수집일YYYY-MM-DD 대상연월YYYYMM
+예:     /opt/airflow/spark-venv/bin/python -m transform.living_migration 2026-10-21 202607
 """
 import argparse
 import collections
-import csv
 import datetime
-import io
 import xml.etree.ElementTree as ET
 import zipfile
 import math
@@ -102,46 +101,60 @@ def clean(raw, target_ym, hour, codes):
 
 
 
-def read_month(path, target_ym, codes):
-    """zip 안 07·08·09시 CSV를 읽어 (통과 행 목록, 격리 행 목록, 건수)를 돌려준다.
+def iceberg_rows(collected_date, target_ym, codes):
+    """Iceberg 표(transform/living_iceberg.py가 채움)에서 07·08·09시 행을 파일·줄 순서대로 (파일, 시, 줄 번호, 값 목록)으로 준다.
 
-    F1·F3을 어기면 바로 멈춘다. C4(완전 중복은 하나만)와 V8(키는 같은데 값이 다름 → 모두 격리)을 여기서 한다.
+    범위 밖이 확정되는 행(out_of_scope와 같은 조건)은 Spark에서 미리 뺀다. 1억 4천만 행을 Python으로 넘기지 않기 위해서다.
+    남은 행에도 read_rows가 out_of_scope를 다시 적용하므로, 두 조건이 어긋나도 범위 밖 행이 들어오지는 않는다.
+    """
+    from pyspark.sql import functions as F
+    from transform.iceberg import spark_session
+    from transform.living_iceberg import COLUMNS, TABLE
+    spark = spark_session("living_migration")
+    part = spark.table(TABLE).where(F.col("target_ym") == target_ym)
+    found = [r.collected_date for r in part.select("collected_date").distinct().collect()]
+    if found != [collected_date]:
+        raise SystemExit(f"Iceberg {TABLE}의 {target_ym} 수집일이 {found}입니다. 먼저 transform.living_iceberg {collected_date} {target_ym}")
+    not_seoul = [c for c in codes if not (len(c) == 7 and c.startswith("11"))]
+    out = (F.col("weekday").isin(*(WEEKDAYS - WORKDAYS)) | (F.col("move_type").isin(*MOVE_TYPES) & (F.col("move_type") != "HW"))
+           | F.col("origin_cd").isin(*not_seoul) | F.col("dest_cd").isin(*not_seoul))
+    rows = (part.where(F.col("file_hour").isin(*HOURS) & ((F.col("n_fields") != len(HEADER)) | ~out))
+            .orderBy("file_hour", "row_no").select("source_file", "file_hour", "row_no", "line", *COLUMNS))
+    for r in rows.toLocalIterator():
+        yield r.source_file, r.file_hour, r.row_no, r.line.split(",") if r.line is not None else [r[c] for c in COLUMNS]
+    spark.stop()
+
+
+def read_rows(rows, target_ym, codes):
+    """(파일, 시, 줄 번호, 값 목록)을 줄 순서대로 받아 (통과 행 목록, 격리 행 목록, 건수)를 돌려준다.
+
+    C4(완전 중복은 하나만)와 V8(키는 같은데 값이 다름 → 모두 격리)을 여기서 한다. 중복 중 먼저 온 줄을 남기므로 순서가 중요하다.
+    F1(헤더)·F3(시간대 파일)은 zip을 읽는 transform/living_iceberg.py가 검사한다.
     """
     good, conflicts, bad, counts = {}, {}, [], collections.Counter()
-    with zipfile.ZipFile(path, metadata_encoding="cp949") as zf:
-        for hour in HOURS:
-            names = [n for n in zf.namelist() if n.endswith(f"_{hour}시.csv")]
-            if len(names) != 1:  # F3
-                raise SystemExit(f"F3 {path.name} 안에 {hour}시 CSV가 {len(names)}개입니다")
-            name = names[0]
-            with zf.open(name) as f:
-                reader = csv.reader(io.TextIOWrapper(f, encoding="cp949", newline=""))  # C1
-                header = next(reader)
-                if header != HEADER:  # F1
-                    raise SystemExit(f"F1 스키마 변경: {name} 헤더 {header}")
-                for row_no, values in enumerate(reader, start=2):
-                    counts["읽은 행"] += 1
-                    if len(values) != len(HEADER):
-                        bad.append({"source_file": name, "row_no": row_no, "reasons": ["V1"], "raw": values})
-                        continue
-                    raw = dict(zip(HEADER, values))
-                    if out_of_scope(raw, codes):
-                        counts["범위 밖"] += 1
-                        continue
-                    row, reasons = clean(raw, target_ym, hour, codes)
-                    if reasons:
-                        bad.append({"source_file": name, "row_no": row_no, "reasons": reasons, "raw": raw})
-                        continue
-                    item = {"source_file": name, "row_no": row_no, **row}
-                    key = tuple(values[1:8])  # 요일 ~ 이동유형
-                    if key in conflicts:
-                        conflicts[key].append((item, values))
-                    elif key not in good:
-                        good[key] = (item, values)
-                    elif good[key][1] == values:  # C4
-                        counts["C4 완전 중복"] += 1
-                    else:  # V8
-                        conflicts[key] = [good.pop(key), (item, values)]
+    for name, hour, row_no, values in rows:
+        counts["읽은 행"] += 1
+        if len(values) != len(HEADER):
+            bad.append({"source_file": name, "row_no": row_no, "reasons": ["V1"], "raw": values})
+            continue
+        raw = dict(zip(HEADER, values))
+        if out_of_scope(raw, codes):
+            counts["범위 밖"] += 1
+            continue
+        row, reasons = clean(raw, target_ym, hour, codes)
+        if reasons:
+            bad.append({"source_file": name, "row_no": row_no, "reasons": reasons, "raw": raw})
+            continue
+        item = {"source_file": name, "row_no": row_no, **row}
+        key = tuple(values[1:8])  # 요일 ~ 이동유형
+        if key in conflicts:
+            conflicts[key].append((item, values))
+        elif key not in good:
+            good[key] = (item, values)
+        elif good[key][1] == values:  # C4
+            counts["C4 완전 중복"] += 1
+        else:  # V8
+            conflicts[key] = [good.pop(key), (item, values)]
     for pairs in conflicts.values():
         for item, values in pairs:
             bad.append({"source_file": item["source_file"], "row_no": item["row_no"], "reasons": ["V8"],
@@ -155,10 +168,8 @@ def main():
     parser.add_argument("target_ym")
     args = parser.parse_args()
 
-    path = LAKE / f"collected_date={args.collected_date}" / f"생활이동_행정동_{args.target_ym}.zip"
-    if not path.exists():
-        raise SystemExit(f"레이크에 파일이 없습니다: {path}")
-    good, bad, counts = read_month(path, args.target_ym, load_codes())
+    codes = load_codes()
+    good, bad, counts = read_rows(iceberg_rows(args.collected_date, args.target_ym, codes), args.target_ym, codes)
 
     total = len(good) + len(bad)
     if total == 0:

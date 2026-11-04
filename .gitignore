@@ -14,3 +14,5 @@ product/
 target/
 # dbt가 처음 실행할 때 만드는 익명 사용자 ID 파일
 .user.yml
+# Iceberg 표의 데이터·메타데이터 파일 (고도화 4단계). 레이크 원본에서 다시 만들 수 있다.
+lakehouse/

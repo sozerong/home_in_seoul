@@ -18,8 +18,11 @@ from assets import STG_LIVING_MIGRATION, STG_PARCEL, STG_SBIZ_STORE, STG_SGIS_DO
 INBOX = "/opt/project/lake/_inbox"
 
 # 생활이동은 행정동 zip만 정제한다(자치구 zip은 등록만). 파일 이름 생활이동_행정동_YYYYMM.zip에서 대상연월을 뗀다.
+# 고도화 4단계(결정 35): zip → Iceberg 표(전체 행) → stg. 둘 다 Spark가 있는 spark-venv에서 돈다.
+SPARK_PY = "/opt/airflow/spark-venv/bin/python"
 LIVING_CLEAN = ('for f in "${files[@]}"; do n=$(basename "$f"); case "$n" in 생활이동_행정동_*.zip) '
-                'ym=${n#생활이동_행정동_}; python -m transform.living_migration "$D" "${ym%.zip}";; esac; done')
+                f'ym=${{n#생활이동_행정동_}}; ym=${{ym%.zip}}; {SPARK_PY} -m transform.living_iceberg "$D" "$ym"; '
+                f'{SPARK_PY} -m transform.living_migration "$D" "$ym";; esac; done')
 
 SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset)
     "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, STG_LIVING_MIGRATION),

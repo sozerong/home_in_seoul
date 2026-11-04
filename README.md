@@ -14,6 +14,8 @@ flowchart LR
         F1[손으로 받는 파일<br>생활이동, 상가정보,<br>SGIS 경계, 연속지적도] -->|lake/_inbox + 센서| L
     end
     L[(레이크<br>lake/출처/collected_date=YYYY-MM-DD/<br>받은 그대로)] --> S
+    L -->|생활이동만, Spark| I[(레이크하우스 Iceberg<br>lh.living.migration_rows<br>24시간대 전체 행, 대상연월 파티션)]
+    I --> S
     S[(스테이징 stg<br>정제·검증, 격리 테이블)] --> W
     W[(웨어하우스 wh<br>행정동 차원 + 공간 조인<br>EPSG:5179)] --> M
     M[(마트 mart)] --> P[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, manifest]
@@ -27,9 +29,10 @@ flowchart LR
 | 층 | 무엇 | 어디 |
 |---|---|---|
 | 레이크 | 받은 그대로의 원본. 출처별·수집일별 폴더. 수정하지 않는다 | `lake/` (git 제외) |
+| 레이크하우스 | 가장 큰 출처(생활이동, 한 달 1억 4천만 행)만 Iceberg 표로. 과거 스냅샷 조회, 대상연월 파티션 덮어쓰기. 카탈로그는 PostgreSQL `iceberg` DB, 파일은 `lakehouse/` (git 제외) | `transform/living_iceberg.py`, `transform/iceberg.py` (결정 35) |
 | 스테이징 | 출처마다 정제·검증. 어긋난 행은 사유와 함께 격리 | `transform/`, `stg` 스키마, 규칙은 [docs/rules.md](docs/rules.md) |
 | 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | dbt `warehouse/dbt/models/wh/`, 손 대응표 `warehouse/dbt/seeds/`, [docs/erd.md](docs/erd.md) |
-| 마트 | 동네 요약, 출발 × 직장 출퇴근 표, 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
+| 마트 | 동네 요약, 출발 × 직장 출퇴근 표(생활이동 최근 6개 대상연월, 결정 36), 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
 
@@ -67,7 +70,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-DB 구조 만들기 (00은 psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
+DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
 for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary) do python -m warehouse.run_sql warehouse/sql/%f.sql
@@ -80,6 +83,10 @@ docker build -t seoul-airflow:3.3.2 .
 docker compose up -d
 ```
 http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG는 처음에 일시정지 상태다.
+이미지 안에 dbt(`/opt/airflow/dbt-venv`)와 Spark 3.5.9 + Iceberg 1.12.0(`/opt/airflow/spark-venv`, Java 17)이 각자 가상환경으로 들어 있다. Iceberg 연결 확인:
+```
+docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m transform.iceberg --selftest
+```
 
 DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
 
@@ -91,7 +98,7 @@ DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, �
 | 1 | `sbiz_store` | `소상공인시장진흥공단_상가(상권)정보_*.zip` | `file_sbiz_store` |
 | 2 | `sgis_boundary` | `bnd_dong_*.zip` | `file_sgis_boundary` |
 | 3 | `parcel_boundary` | `LSMD_CONT_LDREG_*.zip` (서울) | `file_parcel_boundary` |
-| 4 | `living_migration` | `생활이동_행정동_*.zip` | `file_living_migration` |
+| 4 | `living_migration` | `생활이동_행정동_*.zip` | `file_living_migration` (한 달에 약 6~7분: zip → Iceberg 약 4분, Iceberg → stg 약 2.5분) |
 | 5 | (API) | | `seoul_api`, `molit_rent` 일시정지 풀기. 켜는 순간 가장 최근 예정분이 한 번 돈다 |
 
 과거 기간이 필요하면 백필한다(예: 전월세 4주):
@@ -138,7 +145,8 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 |---|---|---|
 | PostGIS | 씀 | 필지·역·업소 좌표를 행정동에 붙이고 가장 가까운 역을 찾는다 |
 | Airflow | 씀 | 출처마다 갱신 주기가 다르고(매주, 매월 21일, 분기, 수시), 늦게 오는 파일을 기다리고(센서), 과거 기간을 다시 돌려야 한다(백필) |
-| Spark | 안 씀 | 가장 큰 입력(생활이동 한 달치 6.3GB, 1억 4,118만 행)을 재 보니 PC 한 대에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초, 지금 방식 약 2분 20초. 월 1회라 병목이 아니다([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)) |
+| Spark | 생활이동 Iceberg 적재에만 씀 (학습 목적, 결정 35) | 필요해서 넣은 것은 아니다. 한 달치(6.3GB)에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)), 10달(58GiB, 14억 행)에서도 DuckDB(CSV) 약 33초, Spark(CSV) 약 168초로 한 대에서는 DuckDB가 빨랐다. 같은 Spark가 Iceberg 표를 읽으면 약 29초([측정 10](docs/measurements.md), [결정 37](docs/decisions.md)) |
+| Iceberg | 씀 (생활이동) | 레이크에 표 개념이 없어 과거 시점 조회와 스키마 변경 추적이 안 됐다. 원본 58GiB → 11GB, 대상연월 파티션 덮어쓰기, 스냅샷([결정 35](docs/decisions.md), [측정 9](docs/measurements.md)) |
 | Kafka | 안 씀 | 스트리밍 출처가 없다 |
 
 ## 실패했을 때

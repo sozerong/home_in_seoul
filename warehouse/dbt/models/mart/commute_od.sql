@@ -1,7 +1,13 @@
 -- 한 행 = 출발 행정동(2025) x 직장 행정동(2025). 평일 07~09시 도착, 야간상주지 -> 주간상주지(HW) 이동의 평균 이동 시간.
 -- 2021 코드를 2025 동으로 옮길 때 분동된 동은 같은 값을 복사한다(결정 13). 평균만 복사하고, 이동 인구 합은 복사된 행에서 더하면 안 된다.
 
-with by_code as (
+-- 기간: 생활이동이 있는 최근 6개 대상연월 (결정 36, 전월세 rent_listing의 최근 6개월과 같은 기준).
+
+with commute_months as (
+    select distinct target_ym from {{ ref('fact_commute') }} order by target_ym desc limit 6
+),
+
+by_code as (
     select origin_cd, dest_cd,
            sum(population * avg_minutes) filter (where age in ('20', '25', '30') and population is not null)
              / nullif(sum(population) filter (where age in ('20', '25', '30') and population is not null), 0) as avg_minutes_age20_34,
@@ -11,6 +17,7 @@ with by_code as (
            coalesce(sum(population), 0) as population_all_ages,
            string_agg(distinct target_ym, ',' order by target_ym) as target_months
     from {{ ref('fact_commute') }}
+    where target_ym in (select target_ym from commute_months)
     group by origin_cd, dest_cd
 ),
 

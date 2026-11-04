@@ -63,7 +63,8 @@ def main():
         manifest["sources"] = dict(conn.execute("""
             SELECT 'rent_months', string_agg(DISTINCT deal_ymd, ',' ORDER BY deal_ymd) FROM mart.rent_listing
             UNION ALL SELECT 'rent_collected_date', max(collected_date)::text FROM wh.fact_rent
-            UNION ALL SELECT 'commute_months', string_agg(DISTINCT target_ym, ',' ORDER BY target_ym) FROM wh.fact_commute
+            UNION ALL SELECT 'commute_months', string_agg(DISTINCT m, ',' ORDER BY m)  -- 마트가 실제로 쓴 달 (결정 36)
+                      FROM mart.commute_od, unnest(string_to_array(target_months, ',')) m
             UNION ALL SELECT 'congestion_collected_date', max(collected_date)::text FROM wh.fact_congestion
             UNION ALL SELECT 'store_collected_date', max(collected_date)::text FROM wh.fact_store
             UNION ALL SELECT 'boundary_base_date', max(boundary_base_date)::text FROM wh.dim_dong""").fetchall())

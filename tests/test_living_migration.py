@@ -6,7 +6,8 @@ import pathlib
 import tempfile
 import zipfile
 
-from transform.living_migration import HEADER, clean, out_of_scope, read_month
+from transform.living_iceberg import extract
+from transform.living_migration import HEADER, clean, out_of_scope, read_rows
 
 CODES = {"1101053", "1123064", "3101154", "38000"}  # 코드표 대신 쓰는 작은 표 (서울 2, 경기 1, 경상남도 1)
 LINE = "202607,월,08,1101053,1123064,F,25,HW,40,3.32"  # 정상 행: 사직동 → 역삼1동, 월요일 08시 도착
@@ -51,18 +52,13 @@ assert not out_of_scope({**BASE, "요일": "?"}, CODES)                 # 깨진
 assert not out_of_scope({**BASE, "출발 행정동 코드": "9999999"}, CODES)
 
 
-def month(lines, header=",".join(HEADER), hours=("07", "08", "09")):
-    """08시 파일에 lines를 넣은 작은 zip을 임시 폴더에 만들어 read_month를 돌린다. 다른 시간 파일은 헤더만 있다."""
-    with tempfile.TemporaryDirectory() as folder:
-        path = pathlib.Path(folder) / "test.zip"
-        with zipfile.ZipFile(path, "w") as zf:
-            for hour in hours:
-                body = [header] + (lines if hour == "08" else [])
-                zf.writestr(f"생활이동_행정동_2026.07_{hour}시.csv", "\n".join(body).encode("cp949"))
-        return read_month(path, "202607", CODES)
+def month(lines):
+    """08시 파일의 2번 줄부터 lines가 있는 것처럼 read_rows를 돌린다(Iceberg에서 오는 행과 같은 모양)."""
+    name = "생활이동_행정동_2026.07_08시.csv"
+    return read_rows([(name, "08", i, line.split(",")) for i, line in enumerate(lines, start=2)], "202607", CODES)
 
 
-# read_month: C4, V8, 범위 밖, 열 수
+# read_rows: C4, V8, 범위 밖, 열 수
 other = LINE.replace(",25,", ",30,")       # 나이만 다름 = 다른 키
 conflict = LINE.replace(",40,", ",45,")    # 키는 같고 이동 시간만 다름
 saturday = LINE.replace(",월,", ",토,")
@@ -72,10 +68,20 @@ assert sorted(b["reasons"][0] for b in bad) == ["V1", "V8", "V8"]              #
 assert counts == {"읽은 행": 7, "C4 완전 중복": 2, "범위 밖": 1}
 
 
+def run_extract(header=",".join(HEADER), hours=range(24)):
+    """시간대마다 헤더만 있는 작은 zip을 만들어 transform.living_iceberg.extract를 돌린다."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = pathlib.Path(folder) / "test.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            for h in hours:
+                zf.writestr(f"생활이동_행정동_2026.07_{h:02d}시.csv", (header + "\n").encode("cp949"))
+        return extract(path, folder)
+
+
 def fails(rule, **kwargs):
     """zip 모양이 잘못되면 그 규칙 번호로 멈춰야 한다."""
     try:
-        month([], **kwargs)
+        run_extract(**kwargs)
     except SystemExit as e:
         assert str(e).startswith(rule), e
     else:
@@ -83,6 +89,7 @@ def fails(rule, **kwargs):
 
 
 fails("F1", header="a,b")             # 헤더가 다름
-fails("F3", hours=("07", "08"))       # 09시 파일 없음
+fails("F3", hours=range(23))          # 23시 파일 없음
+assert run_extract()["08"] == "생활이동_행정동_2026.07_08시.csv"  # 올바른 zip은 {시: zip 안 이름}을 돌려준다
 
 print("tests.test_living_migration: 모든 시험 통과")

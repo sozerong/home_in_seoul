@@ -1,12 +1,14 @@
-"""단계 8: 생활이동 행정동 한 달치에 같은 집계를 Python 표준 라이브러리, DuckDB, Spark로 돌려 시간과 메모리를 잰다.
+"""단계 8: 생활이동 행정동에 같은 집계를 Python 표준 라이브러리, DuckDB, Spark로 돌려 시간과 메모리를 잰다.
+측정 5는 한 달(202607, Windows), 측정 10은 10달(202510~202607, Airflow 컨테이너, 고도화 4단계 결정 35)이다.
 
 집계: (도착 행정동, 도착시간, 이동유형)마다 행 수, 가려지지 않은 이동인구 합, 이동인구 가중 평균 이동 시간.
-입력: 레이크 zip을 임시 폴더에 한 번 풀어 둔 CSV 24개(압축 해제 시간은 세지 않는다). 세 도구 모두 같은 파일을 읽는다.
+입력: 레이크 zip을 임시 폴더 아래 달마다 하위 폴더로 풀어 둔 CSV(압축 해제 시간은 세지 않는다). 세 도구 모두 같은 파일을 읽는다.
+spark_iceberg는 CSV 대신 Iceberg 표 lh.living.migration_rows 전체(transform/living_iceberg.py가 채움)를 읽는다.
 인코딩: 집계에 쓰는 열(코드, 숫자, 이동유형)은 모두 ASCII다. Python과 Spark는 latin-1로 읽는다(바이트를 그대로 읽어 깨지지 않음).
 DuckDB 2.0.0은 latin-1 지정 시 병렬 CSV 읽기가 실패해서("state machine reached an invalid state") 인코딩을 지정하지 않고
 strict_mode=false, ignore_errors=true로 읽는다. 빠진 행이 없는지는 세 도구의 행 수가 같은지로 확인한다.
 실행: python -m measure.stage8_compare 압축해제폴더 [반복 횟수, 기본 3]
-       압축 해제: python -m measure.stage8_compare --extract 압축해제폴더
+       압축 해제: python -m measure.stage8_compare --extract 압축해제폴더 zip경로...
 """
 import csv
 import glob
@@ -24,13 +26,16 @@ import psutil
 
 from common import ROOT
 
-ZIP = ROOT / "lake/seoul_living_migration/collected_date=2026-10-21/생활이동_행정동_202607.zip"
 # 열 순서: 대상연월, 요일, 도착시간, 출발, 도착, 성별, 나이, 이동유형, 평균 이동 시간, 이동인구
+
+
+def csv_files(folder):
+    return sorted(glob.glob(os.path.join(folder, "**", "*.csv"), recursive=True))
 
 
 def run_python(folder):
     acc = {}
-    for path in sorted(glob.glob(os.path.join(folder, "*.csv"))):
+    for path in csv_files(folder):
         with open(path, encoding="latin-1", newline="") as f:
             rows = csv.reader(f)
             next(rows)
@@ -56,7 +61,7 @@ def run_duckdb(folder):
           SELECT column4 AS dest, column2 AS hour, column7 AS move, count(*) AS n,
                  sum(TRY_CAST(column9 AS DOUBLE)) AS pop,
                  sum(TRY_CAST(column9 AS DOUBLE) * CAST(column8 AS INTEGER)) AS weighted
-          FROM read_csv('{folder.replace(os.sep, '/')}/*.csv', auto_detect = false, header = true, delim = ',',
+          FROM read_csv('{folder.replace(os.sep, '/')}/**/*.csv', auto_detect = false, header = true, delim = ',',
                         quote = '"', strict_mode = false, ignore_errors = true,
                         columns = {{'c0': 'VARCHAR', 'c1': 'VARCHAR', 'column2': 'VARCHAR', 'c3': 'VARCHAR',
                                     'column4': 'VARCHAR', 'c5': 'VARCHAR', 'c6': 'VARCHAR', 'column7': 'VARCHAR',
@@ -72,11 +77,24 @@ def run_spark(folder):
              .config("spark.driver.memory", "8g").config("spark.ui.enabled", "false").config("spark.ui.showConsoleProgress", "false").getOrCreate())
     spark.sparkContext.setLogLevel("ERROR")
     df = (spark.read.option("header", True).option("encoding", "ISO-8859-1")
-          .csv(sorted(glob.glob(os.path.join(folder, "*.csv"))))  # 파일 목록을 직접 넘긴다. "*.csv" 경로는 Spark가 Windows에서 hadoop.dll 없이 펼치지 못하고 JVM이 죽는다
+          .csv(csv_files(folder))  # 파일 목록을 직접 넘긴다. "*.csv" 경로는 Spark가 Windows에서 hadoop.dll 없이 펼치지 못하고 JVM이 죽는다
           .toDF("ym", "dow", "hour", "origin", "dest", "sex", "age", "move", "minutes", "pop"))
     pop = F.col("pop").cast("double")
     agg = df.groupBy("dest", "hour", "move").agg(F.count(F.lit(1)).alias("n"), F.sum(pop).alias("p"),
                                                  F.sum(pop * F.col("minutes").cast("int")).alias("w"))
+    out = agg.agg(F.count(F.lit(1)), F.sum("n")).collect()[0]
+    spark.stop()
+    return out[0], out[1]
+
+
+def run_spark_iceberg(folder):
+    from pyspark.sql import functions as F
+    from transform.iceberg import spark_session
+    spark = spark_session("stage8_iceberg")  # driver memory 8g로 run_spark와 같다
+    df = spark.table("lh.living.migration_rows")
+    pop = F.col("population_raw").cast("double")
+    agg = df.groupBy("dest_cd", "arrive_hour_raw", "move_type").agg(
+        F.count(F.lit(1)).alias("n"), F.sum(pop).alias("p"), F.sum(pop * F.col("avg_minutes_raw").cast("int")).alias("w"))
     out = agg.agg(F.count(F.lit(1)), F.sum("n")).collect()[0]
     spark.stop()
     return out[0], out[1]
@@ -102,7 +120,7 @@ def measure(tool, folder):
     watcher = threading.Thread(target=peak_rss_of_tree, args=(proc, stop, box))
     watcher.start()
     try:
-        out, err = proc.communicate(timeout=3600)  # 멈추면 조용히 기다리지 않고 실패시킨다
+        out, err = proc.communicate(timeout=3 * 3600)  # 멈추면 조용히 기다리지 않고 실패시킨다
     except subprocess.TimeoutExpired:
         proc.kill()
         out, err = proc.communicate()
@@ -115,20 +133,22 @@ def measure(tool, folder):
 
 def main():
     if sys.argv[1:2] == ["--run"]:  # 자식 프로세스: 도구 하나만 돌리고 결과를 JSON으로 출력
-        print("RESULT", json.dumps({"python": run_python, "duckdb": run_duckdb, "spark": run_spark}[sys.argv[2]](sys.argv[3])))
+        print("RESULT", json.dumps({"python": run_python, "duckdb": run_duckdb, "spark": run_spark,
+                                    "spark_iceberg": run_spark_iceberg}[sys.argv[2]](sys.argv[3])))
         return
     if sys.argv[1:2] == ["--extract"]:
         folder = Path(sys.argv[2])
-        folder.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(ZIP) as zf:
-            zf.extractall(folder)
-        print(f"압축 해제: {len(list(folder.glob('*.csv')))}개 파일, {sum(p.stat().st_size for p in folder.glob('*.csv')):,} B")
+        for zip_path in sys.argv[3:]:
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(folder / Path(zip_path).stem)  # 달마다 하위 폴더 (zip 안 이름이 달마다 다르지만 섞이지 않게)
+        files = csv_files(str(folder))
+        print(f"압축 해제: {len(files)}개 파일, {sum(os.path.getsize(f) for f in files):,} B")
         return
     folder, repeat = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 3
     import duckdb
     import pyspark
-    files = sorted(glob.glob(os.path.join(folder, "*.csv")))
-    print(f"입력: {ZIP.name}을 푼 CSV {len(files)}개, {sum(os.path.getsize(f) for f in files):,} B")
+    files = csv_files(folder)
+    print(f"입력: {folder}의 CSV {len(files)}개, {sum(os.path.getsize(f) for f in files):,} B")
     print(f"환경: {platform.processor()}, 논리 코어 {os.cpu_count()}, RAM {psutil.virtual_memory().total / 2**30:.1f}GiB, "
           f"{platform.platform()}, Python {platform.python_version()}, duckdb {duckdb.__version__}, pyspark {pyspark.__version__}")
     for tool in os.environ.get("STAGE8_TOOLS", "python,duckdb,spark").split(","):  # 일부만 다시 잴 때 STAGE8_TOOLS=duckdb,spark

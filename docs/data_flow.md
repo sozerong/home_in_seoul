@@ -52,7 +52,8 @@ flowchart LR
     L1 -->|transform/rent.py| S1
     L1 -->|transform/station_master.py| S2
     L1 -->|transform/congestion.py| S3
-    L2 -->|transform/living_migration.py| S4
+    L2 -->|transform/living_iceberg.py, Spark| IC[(Iceberg lh.living.migration_rows<br>24시간대 전체 행)]
+    IC -->|transform/living_migration.py| S4
     L2 -->|transform/sbiz_store.py| S5
     L2 -->|transform/boundary.py| S6 & S7
     STG -->|dbt models/wh| WH
@@ -69,7 +70,7 @@ Airflow가 화살표마다 일정을 건다: API는 매주 월요일, 생활이�
 | 전월세 (오피스텔, 연립다세대) | 공공데이터포털 API. 요청 단위 = 구(행안부 5자리, 강남 11680) × 계약월. UTF-8 한 줄 XML, 한 페이지 1,000건. 금액에 쉼표("3,000"), 법정동 이름 + 지번만 있고 좌표·동호 없음 | `molit_rent.py`가 페이지별로 받아 그대로 저장. `molit_{offi,rh}_rent/collected_date=D/{구}_{계약월}_p001.xml`. 일시 오류만 3회 재시도, 0건·오류 코드는 실패 | `rent.py`: 숫자·날짜 정리, 법정동 이름 → 법정동 코드(상가정보에서 만든 대응표) → **지번으로 PNU 19자리** 만들기, 규칙 V1~V9. 처리 단위 (출처, 수집일, 구, 계약월). `stg.rent` 121,019행 (수집일 2개, 계약월 202606~202610) | `dim_parcel`에서 PNU로 필지를 찾아 행정동을 얻음. `fact_rent` 뷰 = 처리 단위마다 가장 최근 수집분 (늦은 신고 반영) | `rent_listing`(신규 계약 한 건 = 한 행), `dong_profile`의 월세·전세 중앙값 |
 | 역사마스터 | 서울 Open API. XML, 역 784개, 위도·경도(WGS84) | `seoul_api.py`가 그대로 저장. `seoul_station_master/collected_date=D/subwayStationMaster_p001.xml` | `station_master.py`: 좌표 범위 검사, 중복 검사. `stg.station_master` 784행 | `dim_station`: 4326 → 5179 변환, 행정동 경계에 공간 조인 | `dong_profile`의 가장 가까운 역, 거리 |
 | 지하철 혼잡도 | 서울 Open API. XML 2페이지, 한 행 = 역 × 방향 × 요일구분, 시간대 39칸이 가로로 펼쳐짐. 역번호 3자리·4자리 섞임 | 위와 같음. `seoul_subway_congestion/collected_date=D/subwConfusion_p00N.xml` | `congestion.py`: 39칸을 세로로 풀기(한 행 = 역 × 방향 × 요일 × 30분). `stg.congestion` 65,169행 | `map_congestion_station` 282개: 역번호 0 채워 4자리 + 호선 일치, 특수번호 9001~9006 등 6개는 손 대응표. `fact_congestion` 뷰 | `dong_profile`의 평일 07~09시 최대 혼잡도 |
-| 서울 생활이동 (행정동) | 열린데이터광장 파일. 한 달 zip 약 1.1GB, 안에 도착시간별 CSV 24개(풀면 6.3GB, 1억 4,118만 행). CP949, 10열. **2021년 행정동 코드 7자리**, 이동인구 3명 이하는 "*" | 손으로 받아 `lake/_inbox/living_migration/`에 넣으면 센서가 발견 → `register_file.py`가 zip 검사(`testzip`, 필수 파일 24개, sha256)만 하고 그대로 복사. `seoul_living_migration/collected_date=D/생활이동_행정동_YYYYMM.zip` | `living_migration.py`: zip을 풀지 않고 스트리밍으로 읽어 **출근 범위만**(HW, 월~금, 도착 07~09시, 출발·도착 모두 서울) 넣음. 240분 초과는 격리. `stg.living_migration` 1,230만 행 (3개월), 격리 26,832행 | `map_dong_2021` 426개: 2021 코드 → 2025 동 (앞 7자리 규칙 + 바뀐 동 8개 손 대응). `fact_commute` 뷰 | `commute_od`(출발 동 × 직장 동, 20~34세 가중 평균 이동 시간, 직선거리) |
+| 서울 생활이동 (행정동) | 열린데이터광장 파일. 한 달 zip 약 1.1GB, 안에 도착시간별 CSV 24개(풀면 6.3GB, 1억 4,118만 행). CP949, 10열. **2021년 행정동 코드 7자리**, 이동인구 3명 이하는 "*" | 손으로 받아 `lake/_inbox/living_migration/`에 넣으면 센서가 발견 → `register_file.py`가 zip 검사(`testzip`, 필수 파일 24개, sha256)만 하고 그대로 복사. `seoul_living_migration/collected_date=D/생활이동_행정동_YYYYMM.zip` | `living_iceberg.py`(Spark): zip을 컨테이너 /tmp에 풀어 24시간대 전체 행을 글자 그대로 Iceberg 표에 넣음(대상연월 파티션, 줄 번호 보존). `living_migration.py`: Iceberg에서 **출근 범위만**(HW, 월~금, 도착 07~09시, 출발·도착 모두 서울) 가져와 정제. 240분 초과는 격리. `stg.living_migration` 4,038만 행 (10개월, 202510~202607), 격리 93,880행 | `map_dong_2021` 426개: 2021 코드 → 2025 동 (앞 7자리 규칙 + 바뀐 동 8개 손 대응). `fact_commute` 뷰 | `commute_od`(출발 동 × 직장 동, 20~34세 가중 평균 이동 시간, 직선거리) |
 | 상가(상권)정보 | 공공데이터포털 파일. zip 337MB, 안에 시도별 CSV. 서울 554,092행, UTF-8, 39열, 경도·위도, 행안부 행정동 코드, 법정동 코드 | inbox → `register_file.py`. `sbiz_store/collected_date=D/소상공인시장진흥공단_상가(상권)정보_20260630.zip` | `sbiz_store.py`: 필수 5종(편의점, 슈퍼, 약국, 내과·소아과, 세탁)만. `stg.sbiz_store` 30,394행. **같은 zip이 전월세의 법정동 코드표로도 쓰인다** | `fact_store`: 4326 → 5179, 행정동에 공간 조인. 업소가 가진 행안부 코드로 **통계청 ↔ 행안부 행정동 코드 대응을 다수결로 만듦**(426/426) | `dong_profile`의 업소 수와 ㎢당 밀도 |
 | SGIS 행정동 경계 | 통계청 파일. zip 76MB, shp, EPSG:5179, UTF-8, 2025년 코드 8자리(통계청식, 강남 11230) | inbox → `register_file.py`. `sgis_boundary/collected_date=D/bnd_dong_00_2025_2Q.zip` | `boundary.py`: 좌표계 숫자 검사(.prj), 서울만, 꼬인 도형 `ST_MakeValid`. `stg.sgis_dong` 426행 | **`dim_dong` 426행: 모든 출처가 모이는 중심 축** | 모든 마트 테이블의 키 `dong_id`. 도형 자체는 상품에 넣지 않는다(결정 26) |
 | 연속지적도 | 브이월드 파일. zip 96MB, shp, **EPSG:5186**(경계와 다름), EUC-KR, 896,692 필지, PNU 중복 0 | inbox → `register_file.py`. `parcel_boundary/collected_date=D/LSMD_CONT_LDREG_서울.zip` | `boundary.py`: 좌표계 검사, `ST_MakeValid`. `stg.parcel` 896,692행 | `dim_parcel`: 필지 안 대표점(`ST_PointOnSurface`)을 5179로 바꿔 행정동에 넣음. 동에 안 들어간 필지 19개 | 전월세 → 행정동 연결에만 쓰임 (직접 내보내지 않음) |
@@ -281,7 +282,7 @@ CROSS JOIN LATERAL (SELECT s.* FROM wh.dim_station s ORDER BY s.point <-> c.p LI
 sum(population * avg_minutes) FILTER (WHERE age IN ('20','25','30') AND population IS NOT NULL)
   / NULLIF(sum(population) FILTER (WHERE age IN ('20','25','30') AND population IS NOT NULL), 0) AS avg_minutes_age20_34
 ```
-생활이동의 한 행은 "이 성별·나이 묶음의 평균 시간"이다. 그냥 평균하면 3명짜리 행과 100명짜리 행이 같은 무게가 되므로 이동인구로 가중한다. 3개월 × 평일 × 07~09시 × 성별 × 나이의 행들이 출발·직장 동 한 쌍으로 모인다.
+생활이동의 한 행은 "이 성별·나이 묶음의 평균 시간"이다. 그냥 평균하면 3명짜리 행과 100명짜리 행이 같은 무게가 되므로 이동인구로 가중한다. 최근 6개 대상연월(결정 36) × 평일 × 07~09시 × 성별 × 나이의 행들이 출발·직장 동 한 쌍으로 모인다.
 ```
 관악구 신사동 → 역삼1동: avg_minutes_age20_34 152.9 (이동인구 8,542.14), 전체 나이 116.4, distance_km 10.13
 ```
@@ -480,18 +481,18 @@ erDiagram
 | 테이블 | 한 행 | 기본키 | 컬럼 (NN = NOT NULL) | 행 수 | 크기 |
 |---|---|---|---|---|---|
 | `rent` | 수집일 × 신고된 전월세 계약 한 건 | **없음** (아래 설명) | source_type NN, collected_date NN, source_file NN, item_no NN, deal_ymd char(6) NN, sgg_cd char(5) NN, umd_nm NN, bjd_cd char(10) NN, jibun NN, **pnu char(19) NN**, building_name, house_type, build_year int, floor int, excl_area numeric(7,2) NN, deal_date date NN, deposit int NN, monthly_rent int NN, contract_type, contract_term, pre_deposit int, pre_monthly_rent int, use_rr_right | 121,019 | 32MB |
-| `living_migration` | 수집일 × 대상월 × 출발 × 도착 × 요일 × 도착시 × 성별 × 나이 | (collected_date, target_ym, dest_cd, origin_cd, weekday, arrive_hour, sex, age) | dest_cd/origin_cd char(7), weekday char(1), arrive_hour smallint, sex char(1), age char(2), avg_minutes smallint NN, population numeric (가려진 `*`는 NULL), source_file, row_no | 12,308,331 | 2,481MB |
+| `living_migration` | 수집일 × 대상월 × 출발 × 도착 × 요일 × 도착시 × 성별 × 나이 | (collected_date, target_ym, dest_cd, origin_cd, weekday, arrive_hour, sex, age) | dest_cd/origin_cd char(7), weekday char(1), arrive_hour smallint, sex char(1), age char(2), avg_minutes smallint NN, population numeric (가려진 `*`는 NULL), source_file, row_no | 40,382,009 | 8,100MB |
 | `congestion` | 수집일 × 요일 × 호선 × 역 × 방향 × 30분 | (collected_date, dow, line, sttn_no, direction, slot) | sttn_no text(원본), **sttn_no4 char(4)**(0 채움), sttn_nm, slot time, congestion numeric(5,1) | 65,169 | 24MB |
 | `station_master` | 수집일 × 역(호선별) | (collected_date, bldn_id) | bldn_id char(4), bldn_nm, route, lat/lot numeric(9,6) | 784 | 0.3MB |
 | `sbiz_store` | 수집일 × 업소 (필수 5종) | (collected_date, store_id) | base_ym, store_id char(20), store_name, sub_cd char(6), sub_nm, sido_cd, sgg_cd, adm_cd char(8), bjd_cd char(10), lon/lat double | 30,394 | 16MB |
 | `sgis_dong` | 수집일 × 행정동 | (collected_date, adm_cd) | base_date date, adm_cd char(8), adm_nm, made_valid bool, geom MultiPolygon **5179** | 426 | 7.6MB |
 | `parcel` | 수집일 × 필지 | (collected_date, pnu) | base_ym, pnu char(19), jibun, sgg_cd, made_valid bool, geom MultiPolygon **5186** | 896,692 | 338MB |
-| `*_quarantine` (6개) | 격리된 원본 행 하나 | 없음 | 출처 키 칸(수집일, 파일, 순번 등) + **reasons text[] + raw jsonb** + quarantined_at | rent 4, living 26,832, 나머지 0 | |
+| `*_quarantine` (6개) | 격리된 원본 행 하나 | 없음 | 출처 키 칸(수집일, 파일, 순번 등) + **reasons text[] + raw jsonb** + quarantined_at | rent 4, living 93,880, 나머지 0 | |
 
 정리 방식에서 볼 것:
 - **코드는 모두 문자형**(`char(4)`, `char(8)`, `char(19)`)이다. 숫자로 두면 역사_ID "0150"이나 PNU의 앞자리가 사라진다(CLAUDE.md 7절의 앞자리 0 문제).
 - `stg.rent`에 기본키가 없는 것은 일부러다. 동·호가 없어 거래 하나를 가리킬 키가 없고, 같은 칸 값의 계약이 실제로 두 건일 수 있다. 그래서 처리 단위(출처, 수집일, 구, 계약월)를 통째로 지우고 넣고, 웨어하우스는 최신 수집분만 본다(결정 18).
-- `living_migration`이 가장 크다(2.5GB, 전체의 대부분). 원본 한 달 1억 4천만 행 중 출근 범위만 남겨 한 달 약 410만 행이다.
+- `living_migration`이 가장 크다(8.1GB, 10개월, 전체의 대부분). 원본 한 달 1억 4천만 행 중 출근 범위만 남겨 한 달 약 350만~430만 행이다. 원본 전체 행은 Iceberg 표(10개월 14억 579만 행, lakehouse/ 11GB)에 있다.
 - `made_valid`는 꼬인 도형을 `ST_MakeValid`로 고쳤는지 표시한다. 고친 것도 숨기지 않는다.
 
 ### 웨어하우스 `wh`
@@ -506,7 +507,7 @@ erDiagram
 | `map_congestion_station` | 대응표 | 혼잡도 (호선, 역번호) 하나 | PK (line, sttn_no), FK bldn_id → dim_station, CHECK method ∈ {padded, manual} | 282 (padded 276, manual 6) | |
 | `fact_store` | 사실 | 수집일 × 업소 | PK (collected_date, store_id), FK dong_id, mois_dong_cd → map_dong_mois(동 안 업소만). btree(dong_id). 2026-11-03에 업소 원본의 mois_dong_cd 컬럼을 더함(결정 31 E1) | 30,394 | 5.5MB |
 | `fact_rent` | 사실 (뷰) | 계약 한 건, 최신 수집분 | | 70,708 | |
-| `fact_commute` | 사실 (뷰) | 생활이동 한 행, 최신 수집분 | | 12,308,331 | |
+| `fact_commute` | 사실 (뷰) | 생활이동 한 행, 최신 수집분 | | 40,382,009 | |
 | `fact_congestion` | 사실 (뷰) | 역 × 방향 × 요일 × 30분, 최신 수집분 | | 65,169 | |
 
 정리 방식에서 볼 것:
@@ -520,7 +521,7 @@ erDiagram
 | 테이블 | 한 행 | 행 수 | 내보내기 |
 |---|---|---|---|
 | `rent_listing` | 최근 계약월(202606~202609)의 신규 전월세 계약 한 건 | 50,593 | O |
-| `commute_od` | 출발 동 × 직장 동 | 131,035 | O |
+| `commute_od` | 출발 동 × 직장 동 | 141,411 (2026-11-03, 최근 6개 대상연월) | O |
 | `dong_profile` | 행정동 하나 (아래 세 표를 합침) | 426 | O |
 | `dong_rent_summary` | 행정동 × 월세/전세 | 814 | dong_profile로 |
 | `dong_station` | 행정동 하나: 가장 가까운 역, 혼잡도 역 | 426 | dong_profile로 |
