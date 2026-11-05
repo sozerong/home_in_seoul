@@ -63,6 +63,26 @@ services:
     ports:
       - "127.0.0.1:5050:80"
 
+  metabase:
+    # 파이프라인 운영 대시보드 (결정 38). 화면 설정은 전용 DB에, 데이터는 읽기 전용 계정으로 본다 (warehouse/metabase_setup.py).
+    image: metabase/metabase:v0.64.5.2
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MB_DB_TYPE: postgres
+      MB_DB_HOST: db
+      MB_DB_PORT: 5432
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: seoul
+      MB_DB_PASS: ${POSTGRES_PASSWORD}
+      JAVA_TIMEZONE: Asia/Seoul
+      # 사용 통계 전송과 새 버전 확인을 끈다.
+      MB_ANON_TRACKING_ENABLED: "false"
+      MB_CHECK_FOR_UPDATES: "false"
+    ports:
+      - "127.0.0.1:3000:3000"
+
 volumes:
   pgdata:
   pgadmin_data:

@@ -394,7 +394,7 @@ DB(`information_schema`, `pg_constraint`, `geometry_columns`)에서 그대로 �
 | | 스테이징 `stg` | 웨어하우스 `wh` | 마트 `mart` |
 |---|---|---|---|
 | 모양 | 출처 하나 = 테이블 하나 + 격리 테이블 하나. 출처의 칸을 거의 그대로, 타입만 정함 | 행정동 차원(`dim_dong`)을 가운데 둔 별 모양. 차원(dim), 대응표(map), 사실(fact) | 받는 쪽 질문에 맞춘 넓은 표. 조인 없이 바로 읽힘 |
-| 키 | 기본키가 **수집일로 시작**한다. 같은 원본을 다른 날 다시 받아도 나란히 쌓이고, 처리 단위(수집일 …)로 지우고 다시 넣는다 | 코드 하나(`dong_id`, `pnu`, `bldn_id`)가 기본키. 수집일은 키에서 빠지고 "어느 수집분에서 왔나"(`source_collected_date`)로만 남는다 | 기본키 제약은 두지 않고 dbt 테스트(`models/mart/mart.yml`, `tests/`)로 중복과 행 수를 확인한다 |
+| 키 | 기본키가 **수집일로 시작**한다. 같은 원본을 다른 날 다시 받아도 나란히 쌓이고, 처리 단위(수집일 …)로 지우고 다시 넣는다 | 코드 하나(`dong_id`, `pnu`, `bldn_id`)가 기본키. 수집일은 키에서 빠지고 출처 수집분 표시(`source_collected_date`)로만 남는다 | 기본키 제약은 두지 않고 dbt 테스트(`models/mart/mart.yml`, `tests/`)로 중복과 행 수를 확인한다 |
 | 위치 | 원본 좌표계 그대로(경계 5179, 지적도 5186, 역·업소는 위경도 숫자) | **모두 EPSG:5179 점·면**. GiST 인덱스 | 도형 없음. 거리(m, km)와 면적(㎢)만 숫자로 |
 | 추적 | 모든 행에 `source_file`과 파일 안 순번(`row_no`/`item_no`). 격리 행은 `reasons text[]` + 원본 `raw jsonb` | 대응표에 `method`(prefix/padded/manual)와 `note` | `basis`, `copied_from_2021_split_dong`, `target_months` 같은 출처 설명 칸 |
 | 단위 | 원본 단위 | 원본 단위 | **컬럼 이름에 단위**: `_10k_won`(만 원), `_m2`, `_m`, `_km`, `_per_km2` |

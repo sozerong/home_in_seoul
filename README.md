@@ -34,6 +34,7 @@ flowchart LR
 | 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | dbt `warehouse/dbt/models/wh/`, 손 대응표 `warehouse/dbt/seeds/`, [docs/erd.md](docs/erd.md) |
 | 마트 | 동네 요약, 출발 × 직장 출퇴근 표(생활이동 최근 6개 대상연월, 결정 36), 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
+| 운영 대시보드 | 지금 정상인지, 어느 출처와 DAG를 고칠지 색으로 판정. 읽기 전용 계정으로 봄 | Metabase, 카드 `warehouse/sql/ops/`, 생성 `warehouse/metabase_setup.py` (결정 38, 39) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
 
 ## 데이터 소스
@@ -61,6 +62,9 @@ POSTGRES_PASSWORD=영문과숫자만
 DATABASE_URL=postgresql://seoul:영문과숫자만@localhost:5433/seoul
 DATA_GO_KR_SERVICE_KEY=공공데이터포털_Decoding_키
 SEOUL_OPEN_API_KEY=서울_열린데이터광장_키
+# 운영 대시보드용. 아무 긴 값이나 넣는다
+METABASE_DB_PASSWORD=영문과숫자만
+METABASE_ADMIN_PASSWORD=영문과숫자만
 ```
 
 ### 2. DB와 Python 환경
@@ -70,10 +74,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
+DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
-for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary) do python -m warehouse.run_sql warehouse/sql/%f.sql
+for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops) do python -m warehouse.run_sql warehouse/sql/%f.sql
 ```
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
@@ -117,7 +121,14 @@ python -m warehouse.export_product
 모델 사이의 관계 그림은 `dbt docs generate` 후 `dbt docs serve`로 볼 수 있다.
 결과: `product\vYYYY.MM.DD\` (파일 설명은 [docs/data_contract.md](docs/data_contract.md)).
 
-### 6. 확인
+### 6. 운영 대시보드
+```
+docker compose up -d metabase
+python -m warehouse.metabase_setup
+```
+출력된 주소(http://localhost:3000/dashboard/번호)를 연다. 로그인은 `dev@example.com`과 `.env`의 `METABASE_ADMIN_PASSWORD`. 내 PC에서만 열린다. 카드를 고치려면 `warehouse/sql/ops/`의 SQL을 고치고 위 스크립트를 다시 실행한다(화면에서 손으로 고친 내용은 덮인다).
+
+### 7. 확인
 ```
 for %t in (test_rent test_station_master test_congestion test_living_migration test_sbiz_store test_boundary) do python -m tests.%t
 docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql

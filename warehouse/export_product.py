@@ -37,6 +37,14 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def record_product(conn, manifest):
+    """상품 버전의 파일 목록을 ops.product_file에 쓴다 (운영 대시보드, 결정 38). 같은 버전을 다시 내면 바꿔 쓴다."""
+    conn.execute("DELETE FROM ops.product_file WHERE version = %s", [manifest["version"]])
+    for name, info in manifest["files"].items():
+        conn.execute("INSERT INTO ops.product_file VALUES (%s, %s, %s, %s)",
+                     [manifest["version"], name, info["rows"], info["sha256"]])
+
+
 def main():
     version = datetime.date.today().strftime("v%Y.%m.%d")
     out = ROOT / "product" / version
@@ -76,6 +84,8 @@ def main():
             UNION ALL SELECT 'commute_pairs_age20_34_basis', count(*)::text FROM mart.commute_od WHERE basis = 'age20_34'
             UNION ALL SELECT 'commute_pairs_all_ages_basis', count(*)::text FROM mart.commute_od WHERE basis = 'all_ages'
             UNION ALL SELECT 'dongs_without_monthly_rent_deal', count(*)::text FROM mart.dong_profile WHERE monthly_deals IS NULL""").fetchall())
+
+        record_product(conn, manifest)
 
     (out / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     for name, info in manifest["files"].items():
