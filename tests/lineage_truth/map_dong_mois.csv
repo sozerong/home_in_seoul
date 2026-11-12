@@ -1,0 +1,34 @@
+target_column,source_table,source_column,kind,subkind,note
+mois_dong_cd,wh.fact_store,mois_dong_cd,DIRECT,IDENTITY,
+dong_id,wh.fact_store,dong_id,DIRECT,IDENTITY,
+stores,wh.fact_store,*,DIRECT,AGGREGATION,count(*)
+share,wh.fact_store,*,DIRECT,AGGREGATION,count(*) / sum(count(*)) over
+share,wh.fact_store,dong_id,INDIRECT,WINDOW,sum() over (partition by dong_id)
+is_primary,wh.fact_store,dong_id,INDIRECT,WINDOW,"rank = row_number() over (partition by dong_id order by count(*) desc, mois_dong_cd)"
+is_primary,wh.fact_store,mois_dong_cd,INDIRECT,WINDOW,"rank = row_number() over (partition by dong_id order by count(*) desc, mois_dong_cd)"
+is_primary,wh.fact_store,*,INDIRECT,WINDOW,"rank = row_number() over (partition by dong_id order by count(*) desc, mois_dong_cd)"
+mois_dong_cd,wh.fact_store,dong_id,INDIRECT,FILTER,vote: where dong_id is not null
+dong_id,wh.fact_store,dong_id,INDIRECT,FILTER,vote: where dong_id is not null
+stores,wh.fact_store,dong_id,INDIRECT,FILTER,vote: where dong_id is not null
+share,wh.fact_store,dong_id,INDIRECT,FILTER,vote: where dong_id is not null
+is_primary,wh.fact_store,dong_id,INDIRECT,FILTER,vote: where dong_id is not null
+mois_dong_cd,wh.fact_store,dong_id,INDIRECT,GROUP_BY,
+dong_id,wh.fact_store,dong_id,INDIRECT,GROUP_BY,
+stores,wh.fact_store,dong_id,INDIRECT,GROUP_BY,
+share,wh.fact_store,dong_id,INDIRECT,GROUP_BY,
+is_primary,wh.fact_store,dong_id,INDIRECT,GROUP_BY,
+mois_dong_cd,wh.fact_store,mois_dong_cd,INDIRECT,GROUP_BY,
+dong_id,wh.fact_store,mois_dong_cd,INDIRECT,GROUP_BY,
+stores,wh.fact_store,mois_dong_cd,INDIRECT,GROUP_BY,
+share,wh.fact_store,mois_dong_cd,INDIRECT,GROUP_BY,
+is_primary,wh.fact_store,mois_dong_cd,INDIRECT,GROUP_BY,
+mois_dong_cd,wh.fact_store,mois_dong_cd,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+dong_id,wh.fact_store,mois_dong_cd,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+stores,wh.fact_store,mois_dong_cd,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+share,wh.fact_store,mois_dong_cd,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+is_primary,wh.fact_store,mois_dong_cd,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+mois_dong_cd,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+dong_id,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+stores,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+share,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+is_primary,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀

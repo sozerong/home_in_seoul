@@ -1,0 +1,83 @@
+target_column,source_table,source_column,kind,subkind,note
+dong_id,wh.dim_dong,dong_id,DIRECT,IDENTITY,
+mois_dong_cd,wh.dim_dong,mois_dong_cd,DIRECT,IDENTITY,
+dong_nm,wh.dim_dong,dong_nm,DIRECT,IDENTITY,
+sgg_cd,wh.dim_dong,sgg_cd,DIRECT,IDENTITY,
+area_km2,wh.dim_dong,area_km2,DIRECT,IDENTITY,
+boundary_base_date,wh.dim_dong,boundary_base_date,DIRECT,IDENTITY,
+monthly_deals,mart.dong_rent_summary,deals,DIRECT,IDENTITY,
+monthly_median_deposit_10k_won,mart.dong_rent_summary,median_deposit_10k_won,DIRECT,IDENTITY,
+monthly_median_rent_10k_won,mart.dong_rent_summary,median_monthly_rent_10k_won,DIRECT,IDENTITY,
+jeonse_deals,mart.dong_rent_summary,deals,DIRECT,IDENTITY,
+jeonse_median_deposit_10k_won,mart.dong_rent_summary,median_deposit_10k_won,DIRECT,IDENTITY,
+nearest_station_nm,mart.dong_station,nearest_station_nm,DIRECT,IDENTITY,
+nearest_station_route,mart.dong_station,nearest_station_route,DIRECT,IDENTITY,
+nearest_station_distance_m,mart.dong_station,nearest_station_distance_m,DIRECT,IDENTITY,
+nearest_congestion_station_nm,mart.dong_station,nearest_congestion_station_nm,DIRECT,IDENTITY,
+nearest_congestion_station_route,mart.dong_station,nearest_congestion_station_route,DIRECT,IDENTITY,
+nearest_congestion_station_distance_m,mart.dong_station,nearest_congestion_station_distance_m,DIRECT,IDENTITY,
+am_peak_congestion,mart.dong_station,am_peak_congestion,DIRECT,IDENTITY,
+convenience_store,mart.dong_amenity,convenience_store,DIRECT,IDENTITY,
+supermarket,mart.dong_amenity,supermarket,DIRECT,IDENTITY,
+pharmacy,mart.dong_amenity,pharmacy,DIRECT,IDENTITY,
+internal_pediatric_clinic,mart.dong_amenity,internal_pediatric_clinic,DIRECT,IDENTITY,
+laundry,mart.dong_amenity,laundry,DIRECT,IDENTITY,
+convenience_store_per_km2,mart.dong_amenity,convenience_store,DIRECT,TRANSFORMATION,"round(a.x / d.area_km2, 1)"
+convenience_store_per_km2,wh.dim_dong,area_km2,DIRECT,TRANSFORMATION,
+supermarket_per_km2,mart.dong_amenity,supermarket,DIRECT,TRANSFORMATION,"round(a.x / d.area_km2, 1)"
+supermarket_per_km2,wh.dim_dong,area_km2,DIRECT,TRANSFORMATION,
+pharmacy_per_km2,mart.dong_amenity,pharmacy,DIRECT,TRANSFORMATION,"round(a.x / d.area_km2, 1)"
+pharmacy_per_km2,wh.dim_dong,area_km2,DIRECT,TRANSFORMATION,
+internal_pediatric_clinic_per_km2,mart.dong_amenity,internal_pediatric_clinic,DIRECT,TRANSFORMATION,"round(a.x / d.area_km2, 1)"
+internal_pediatric_clinic_per_km2,wh.dim_dong,area_km2,DIRECT,TRANSFORMATION,
+laundry_per_km2,mart.dong_amenity,laundry,DIRECT,TRANSFORMATION,"round(a.x / d.area_km2, 1)"
+laundry_per_km2,wh.dim_dong,area_km2,DIRECT,TRANSFORMATION,
+monthly_deals,mart.dong_rent_summary,dong_id,INDIRECT,JOIN,left join mr: 오른쪽에서 온 컬럼에만
+monthly_median_deposit_10k_won,mart.dong_rent_summary,dong_id,INDIRECT,JOIN,left join mr: 오른쪽에서 온 컬럼에만
+monthly_median_rent_10k_won,mart.dong_rent_summary,dong_id,INDIRECT,JOIN,left join mr: 오른쪽에서 온 컬럼에만
+monthly_deals,mart.dong_rent_summary,lease_type,INDIRECT,JOIN,mr.lease_type = 월세
+monthly_median_deposit_10k_won,mart.dong_rent_summary,lease_type,INDIRECT,JOIN,mr.lease_type = 월세
+monthly_median_rent_10k_won,mart.dong_rent_summary,lease_type,INDIRECT,JOIN,mr.lease_type = 월세
+jeonse_deals,mart.dong_rent_summary,dong_id,INDIRECT,JOIN,left join jr
+jeonse_median_deposit_10k_won,mart.dong_rent_summary,dong_id,INDIRECT,JOIN,left join jr
+jeonse_deals,mart.dong_rent_summary,lease_type,INDIRECT,JOIN,jr.lease_type = 전세
+jeonse_median_deposit_10k_won,mart.dong_rent_summary,lease_type,INDIRECT,JOIN,jr.lease_type = 전세
+monthly_deals,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽 d.dong_id
+monthly_median_deposit_10k_won,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽 d.dong_id
+monthly_median_rent_10k_won,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽 d.dong_id
+jeonse_deals,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽 d.dong_id
+jeonse_median_deposit_10k_won,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽 d.dong_id
+nearest_station_nm,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_station_route,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_station_distance_m,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_congestion_station_nm,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_congestion_station_route,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_congestion_station_distance_m,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+am_peak_congestion,mart.dong_station,dong_id,INDIRECT,JOIN,left join st
+nearest_station_nm,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+nearest_station_route,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+nearest_station_distance_m,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+nearest_congestion_station_nm,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+nearest_congestion_station_route,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+nearest_congestion_station_distance_m,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+am_peak_congestion,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+convenience_store,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+supermarket,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+pharmacy,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+internal_pediatric_clinic,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+laundry,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+convenience_store_per_km2,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+supermarket_per_km2,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+pharmacy_per_km2,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+internal_pediatric_clinic_per_km2,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+laundry_per_km2,mart.dong_amenity,dong_id,INDIRECT,JOIN,left join a
+convenience_store,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+supermarket,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+pharmacy,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+internal_pediatric_clinic,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+laundry,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+convenience_store_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+supermarket_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+pharmacy_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+internal_pediatric_clinic_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+laundry_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽

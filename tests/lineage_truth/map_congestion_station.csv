@@ -1,0 +1,20 @@
+target_column,source_table,source_column,kind,subkind,note
+line,wh.fact_congestion,line,DIRECT,IDENTITY,union 첫 갈래
+sttn_no,wh.fact_congestion,sttn_no,DIRECT,IDENTITY,
+bldn_id,wh.dim_station,bldn_id,DIRECT,IDENTITY,
+line,wh.congestion_station_manual,line,DIRECT,IDENTITY,union 둘째 갈래(seed)
+sttn_no,wh.congestion_station_manual,sttn_no,DIRECT,IDENTITY,
+bldn_id,wh.congestion_station_manual,bldn_id,DIRECT,IDENTITY,
+note,wh.congestion_station_manual,note,DIRECT,IDENTITY,
+line,wh.dim_station,bldn_id,INDIRECT,JOIN,"s.bldn_id = lpad(c.sttn_no, 4, 0)"
+sttn_no,wh.dim_station,bldn_id,INDIRECT,JOIN,"s.bldn_id = lpad(c.sttn_no, 4, 0)"
+bldn_id,wh.dim_station,bldn_id,INDIRECT,JOIN,"s.bldn_id = lpad(c.sttn_no, 4, 0)"
+line,wh.fact_congestion,sttn_no,INDIRECT,JOIN,lpad 인자
+sttn_no,wh.fact_congestion,sttn_no,INDIRECT,JOIN,lpad 인자
+bldn_id,wh.fact_congestion,sttn_no,INDIRECT,JOIN,lpad 인자
+line,wh.dim_station,route,INDIRECT,JOIN,s.route = c.line
+sttn_no,wh.dim_station,route,INDIRECT,JOIN,s.route = c.line
+bldn_id,wh.dim_station,route,INDIRECT,JOIN,s.route = c.line
+line,wh.fact_congestion,line,INDIRECT,JOIN,
+sttn_no,wh.fact_congestion,line,INDIRECT,JOIN,
+bldn_id,wh.fact_congestion,line,INDIRECT,JOIN,

@@ -1,0 +1,51 @@
+target_column,source_table,source_column,kind,subkind,note
+dong_id,wh.dim_dong,dong_id,DIRECT,IDENTITY,
+nearest_station_id,wh.dim_station,bldn_id,DIRECT,IDENTITY,LATERAL a의 s.* 중 하나
+nearest_station_nm,wh.dim_station,bldn_nm,DIRECT,IDENTITY,
+nearest_station_route,wh.dim_station,route,DIRECT,IDENTITY,
+nearest_station_distance_m,wh.dim_station,point,DIRECT,TRANSFORMATION,"ST_Distance(a.point, c.p)"
+nearest_station_distance_m,wh.dim_dong,geom,DIRECT,TRANSFORMATION,c.p = ST_PointOnSurface(geom)
+nearest_congestion_station_id,wh.dim_station,bldn_id,DIRECT,IDENTITY,
+nearest_congestion_station_nm,wh.dim_station,bldn_nm,DIRECT,IDENTITY,
+nearest_congestion_station_route,wh.dim_station,route,DIRECT,IDENTITY,
+nearest_congestion_station_distance_m,wh.dim_station,point,DIRECT,TRANSFORMATION,
+nearest_congestion_station_distance_m,wh.dim_dong,geom,DIRECT,TRANSFORMATION,
+am_peak_congestion,wh.fact_congestion,congestion,DIRECT,AGGREGATION,peak의 max(f.congestion)
+congestion_collected_date,wh.fact_congestion,collected_date,DIRECT,AGGREGATION,스칼라 서브쿼리 max
+nearest_station_id,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_station_nm,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_station_route,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_station_distance_m,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_congestion_station_id,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_congestion_station_nm,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_congestion_station_route,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_congestion_station_distance_m,wh.dim_station,point,INDIRECT,SORT,LATERAL order by s.point <-> c.p limit 1
+nearest_station_id,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_station_nm,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_station_route,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_station_distance_m,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_congestion_station_id,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_congestion_station_nm,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_congestion_station_route,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_congestion_station_distance_m,wh.dim_dong,geom,INDIRECT,SORT,정렬 기준점 c.p
+nearest_congestion_station_id,wh.dim_station,bldn_id,INDIRECT,FILTER,k: s.bldn_id in (select bldn_id from covered)
+nearest_congestion_station_nm,wh.dim_station,bldn_id,INDIRECT,FILTER,k: s.bldn_id in (select bldn_id from covered)
+nearest_congestion_station_route,wh.dim_station,bldn_id,INDIRECT,FILTER,k: s.bldn_id in (select bldn_id from covered)
+nearest_congestion_station_distance_m,wh.dim_station,bldn_id,INDIRECT,FILTER,k: s.bldn_id in (select bldn_id from covered)
+nearest_congestion_station_id,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,covered = distinct bldn_id
+nearest_congestion_station_nm,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,covered = distinct bldn_id
+nearest_congestion_station_route,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,covered = distinct bldn_id
+nearest_congestion_station_distance_m,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,covered = distinct bldn_id
+am_peak_congestion,wh.fact_congestion,dow,INDIRECT,FILTER,f.dow = 평일 (측정 15)
+am_peak_congestion,wh.fact_congestion,slot,INDIRECT,FILTER,slot between 07:00 and 08:30
+am_peak_congestion,wh.fact_congestion,line,INDIRECT,JOIN,"peak: join using (line, sttn_no)"
+am_peak_congestion,wh.fact_congestion,sttn_no,INDIRECT,JOIN,"peak: join using (line, sttn_no)"
+am_peak_congestion,wh.map_congestion_station,line,INDIRECT,JOIN,"peak: join using (line, sttn_no)"
+am_peak_congestion,wh.map_congestion_station,sttn_no,INDIRECT,JOIN,"peak: join using (line, sttn_no)"
+am_peak_congestion,wh.map_congestion_station,bldn_id,INDIRECT,GROUP_BY,peak: group by m.bldn_id
+am_peak_congestion,wh.map_congestion_station,bldn_id,INDIRECT,JOIN,left join peak pk on pk.bldn_id = k.bldn_id (오른쪽 pk)
+am_peak_congestion,wh.dim_station,bldn_id,INDIRECT,JOIN,같은 ON의 왼쪽 k.bldn_id
+am_peak_congestion,wh.dim_station,point,INDIRECT,SORT,규칙 밖(전이): k 선택이 붙일 peak을 정함
+am_peak_congestion,wh.dim_dong,geom,INDIRECT,SORT,규칙 밖(전이)
+am_peak_congestion,wh.dim_station,bldn_id,INDIRECT,FILTER,규칙 밖(전이): k의 covered 필터
+am_peak_congestion,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,규칙 밖(전이): covered

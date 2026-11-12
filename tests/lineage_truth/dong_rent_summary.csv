@@ -1,0 +1,25 @@
+target_column,source_table,source_column,kind,subkind,note
+dong_id,mart.rent_listing,dong_id,DIRECT,IDENTITY,
+lease_type,mart.rent_listing,lease_type,DIRECT,IDENTITY,
+deals,mart.rent_listing,*,DIRECT,AGGREGATION,count(*)
+median_deposit_10k_won,mart.rent_listing,deposit_10k_won,DIRECT,AGGREGATION,percentile_cont within group
+median_monthly_rent_10k_won,mart.rent_listing,monthly_rent_10k_won,DIRECT,AGGREGATION,
+median_excl_area_m2,mart.rent_listing,excl_area_m2,DIRECT,AGGREGATION,
+first_ym,mart.rent_listing,deal_ymd,DIRECT,AGGREGATION,min
+last_ym,mart.rent_listing,deal_ymd,DIRECT,AGGREGATION,max
+dong_id,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+lease_type,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+deals,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+median_deposit_10k_won,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+median_monthly_rent_10k_won,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+median_excl_area_m2,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+first_ym,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+last_ym,mart.rent_listing,dong_id,INDIRECT,GROUP_BY,
+dong_id,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+lease_type,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+deals,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+median_deposit_10k_won,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+median_monthly_rent_10k_won,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+median_excl_area_m2,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+first_ym,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+last_ym,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
