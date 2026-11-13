@@ -97,11 +97,13 @@ def swap(conn, tables):
         n = conn.execute(f"SELECT count(*) FROM {table}_new").fetchone()[0]
         if i == 0 and n == 0:
             raise SystemExit(f"{table}_new가 0행입니다. 옮기지 않습니다")
-        # ponytail: 1,378만 행을 한 번 더 복사한다(시간 [미측정]). 느리면 F-13 선택지 C(이름 바꾸고 뷰 다시 만들기)
+        # ponytail: 한 번 더 복사한다. 측정 38: 경계 표 1,378만 행 72초, 격리 3,194만 행 258초, 트랜잭션 334초 동안 읽기가 잠긴다.
+        # 잠금이 문제가 되면 F-13 선택지 C(이름 바꾸고 뷰 다시 만들기)
+        t = time.time()
         conn.execute(f"TRUNCATE {table}")
         conn.execute(f"INSERT INTO {table} SELECT * FROM {table}_new")
         conn.execute(f"DROP TABLE {table}_new")
-        print(f"{table} 교체: {n:,}행")
+        print(f"{table} 교체: {n:,}행, {time.time() - t:.1f}초(커밋 전)")
 
 
 def run(spark, args, views, tests):
@@ -151,8 +153,10 @@ def write(spark, saves):
          .jdbc("jdbc:postgresql://db:5432/seoul?reWriteBatchedInserts=true", new,
                properties={"user": "seoul", "password": read_env("POSTGRES_PASSWORD"), "driver": "org.postgresql.Driver",
                            "batchsize": "10000"}))
+    t = time.time()
     with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 블록이 정상으로 끝나면 커밋: 모든 표 교체가 한 트랜잭션
         swap(conn, [table for _, table in saves])
+    print(f"교체 트랜잭션(커밋 포함): {time.time() - t:.1f}초")
 
 
 def main():

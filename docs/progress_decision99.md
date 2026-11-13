@@ -5,7 +5,7 @@
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 커밋 | 완료 (598b807, a042e58, 679e252) |
-| 2 | 생활이동 관문 판정·격리 행을 PostgreSQL에 (판단 64) | 코드 완료 (40542d6). 디스크는 회수됨(측정 36). 실제 Spark 실행은 handoff_finish.md 2.1 |
+| 2 | 생활이동 관문 판정·격리 행을 PostgreSQL에 (판단 64) | **완료.** 실제 실행기 1회, `07_ops.sql`, wh_load, metabase_setup(측정 38, handoff_finish.md 2절) |
 | 3 | "거절되면 직전 승인 배치" (판단 63) | **완료: 결정 100(B, 거절된 달만 빼고 갱신)**. `test_month_approved` → `warn_month_approved`(기록만). 실제 실행 확인은 handoff_finish.md 2.1 |
 | 4 | 8절 옛 경로 은퇴 | 대기 → handoff_finish.md 3.1 |
 | 5 | 3.9 DuckDB 비교 | 대기 → handoff_finish.md 3.3. 선행 조건(공간 회수 측정 36, 자원 상한과 유도 시험 측정 37·F-17)은 끝남 |

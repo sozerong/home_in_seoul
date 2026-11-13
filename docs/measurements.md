@@ -884,7 +884,7 @@
   | dbt 전체 빌드 (빌드용 스키마에만, 교체·내보내기 없음, 5초 주기) | 224초 (dbt 212.9초, PASS 122) | 1.506GiB | **3.201GiB** | 1.636GiB | 0.260GiB | 26.27GiB | 0 |
   | 리니지 추출 Spark (`lineage.extract --engine spark --trigger manual`, 회차 33, 5초 주기) | 14초 (추출 9.66초) | **2.585GiB** | 2.801GiB | 1.635GiB | 0.260GiB | 25.97GiB | 0 |
   | 상품 내보내기 `export_product` | 미측정 | | | | | | |
-  | 생활이동 실행기 (Spark) | 5단계 실제 실행 때 | | | | | | |
+  | 생활이동 실행기 (Spark, vm_watch 5초, Airflow 컨테이너 cgroup) | 3,201초 | RSS 최대 10.37GiB, cgroup 사용 최대 22.00GiB(상한, 나머지는 페이지 캐시) | | | | 16.6GiB(VM 사용 최대 13.88GiB) | 0 | 측정 38 |
 - 내보내기를 재지 않은 이유: `warehouse/export_product.py`는 출력 위치가 `product/v{오늘}`로 고정이고 `ops.product_file`에 기록한다. 임시 폴더로 낼 방법이 없어, 재려면 오늘 버전 상품을 실제로 다시 내야 한다(새 격리 표가 비어 `commute_quarantine_rows`가 0으로 나감). 그래서 재지 않았다.
 - 리니지 추출은 14초로 짧아 5초 주기 표본이 순간 최대를 놓쳤을 수 있다. 빌드 스키마는 측정 뒤 `drop_build_schemas`로 지웠다(남은 `*_build` 없음).
 - 예산 (resource_guard.md 2절 방법):
@@ -894,3 +894,35 @@
   - Spark `spark.driver.memory` 8g는 그대로. 힙 밖까지 합친 RSS는 5단계 실제 실행에서 vm_watch로 잰다.
 - 적용 (L2, 21:5x): `docker-compose.yml`에 `mem_limit`, `memswap_limit`(같은 값, 컨테이너 스왑 금지), Airflow `cpus: 12`. 컨테이너를 다시 만들지 않고 `docker update --memory --memory-swap [--cpus]`로 걸었다. `docker inspect`: db 4,294,967,296 / airflow 23,622,320,128(cpus 12) / metabase 2,147,483,648 / pgadmin 536,870,912, 모두 running. Airflow 컨테이너 안 cgroup `memory.limit_in_bytes`와 `memory.memsw.limit_in_bytes`가 23,622,320,128.
 - 상한 뒤 DuckDB 2.0.0 기본값(컨테이너 안, 설정 없이): `memory_limit` 17.5 GiB(cgroup 상한 22g의 80%), `threads` 12(cpus 할당). **DuckDB는 컨테이너 상한을 스스로 읽는다.** `max_temp_directory_size`는 여전히 `90% of available disk space`(가상 디스크 기준)라 L3 설정이 필요하다.
+
+## 측정 38. 생활이동 실행기 실제 실행: 판정·격리 표 저장과 교체(비우고 복사) (handoff_finish.md 2.1, 판단 64, F-13 처방 A, 2026-11-13)
+- 방법: DAG와 같은 인자 `/opt/airflow/spark-venv/bin/python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status --save batch_status=stg.living_batch_status quarantine=stg.living_quarantine` (Airflow 컨테이너, 작업 폴더 /opt/project). Spark 3.5.9 local[*], driver 8g, 셔플 파티션 200, AQE 켬. 입력 Iceberg `lh.living.migration_rows` 10달 1,405,791,964행(측정 32와 같음). 1회. 다른 무거운 작업 없음. **측정 32와 다른 조건: 결정 101 상한(Airflow 컨테이너 메모리 22GiB·스왑 금지, cpus 12)**, `--save` 두 표 추가, 교체가 비우고 복사(F-13 처방 A). 시작 전 호스트 C: 여유 641,243,422,720B, `heavy.lock` 잡음, `measure.vm_watch living_run_2_1` 켬(22:35:49~23:29:15, 641줄). Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop.
+- 결과: 종료 코드 0, 실행 3,201.1초(`ops.engine_run` run_id `local-1794576950933`, 단계 32개, ok=true). 테스트 `test_population_exact` 통과, `warn_month_approved` 위반 0.
+  - `stg.living_commute` 13,782,826행(측정 32와 같음). `stg.living_batch_status` 10행, 10개 모두 승인, 행 값이 측정 32 관문 표와 같음. `stg.living_quarantine` 31,935,758행 = 판정 표 `quarantined` 합. 남은 `_new` 표 없음.
+  - 교체(한 트랜잭션): `stg.living_commute` 72.3초, `stg.living_batch_status` 0.0초, `stg.living_quarantine` 257.8초(모두 커밋 전), 커밋 포함 **333.9초**. 그동안 `TRUNCATE`의 ACCESS EXCLUSIVE 잠금으로 이 표들(과 `wh.fact_commute` 뷰)을 읽는 쿼리가 기다린다.
+- 측정 32와 나란히 (`ops.engine_run` 합):
+  | run | 시간 | 단계 | 셔플 쓰기 | 메모리 흘림 | 디스크 흘림 | JVM 힙 최대 | 단계 시간 합 |
+  |---|---|---|---|---|---|---|---|
+  | 측정 32 첫 실행 `local-1794556106209` | 2,094.0초 | 23 | 143.0GB | 504.6GB | 57.0GB | 7.67GB | 5,395초 |
+  | 이번 `local-1794576950933` | 3,201.1초 | 32 | 248.1GB | 460.0GB | 54.8GB | 7.47GB | 5,746초 |
+  - 작업(job)별: 측정 32는 `show batch_status` 하나(셔플 136.8GB)였다. 이번에는 `cache quarantine`(셔플 164.7GB, 단계 시간 2,938초)이 먼저 돌고 `cache batch_status`(77.1GB, 2,382초)가 뒤따른다. 격리 뷰를 `--save`로 저장하며 따로 캐시해, 원본 읽기와 코드표 조인 셔플이 그만큼 더 돈다(F-9 원인 1과 같은 뿌리). `write stg.living_quarantine_new` 139초가 더해졌다.
+  - 단계 시간 합은 6.5% 늘었는데 실행 시간은 52.9% 늘었다. 늘어난 1,107초는 교체 334초, 격리 쓰기 139초, 그리고 나머지 약 634초다. 나머지는 두 작업이 차례로 돌며 단계가 덜 겹친 몫과 CPU 12개 상한(측정 32는 16개)으로 보이나 둘을 나눠 재지 않았다 [확인 필요].
+- vm_watch (Airflow 컨테이너): VM 사용 최대 13.88GiB(23:19:59), 스왑 사용 0(8GiB 모두 남음), cgroup 사용 최대 22.00GiB = 상한(대부분 페이지 캐시. RSS 최대 10.37GiB, 23:21:14), `failcnt` 0, `oom_kill` 0. 컨테이너 `/tmp` 사용 74.6GB → 최대 333.6GB(23:29:05, 끝 직전) → 끝난 뒤 79.1GB(`/tmp/spark-local` 비워짐).
+- 호스트 C: 여유 641.24GB → 313.00GB(끝난 뒤). VM 안에서 지운 셔플 파일 자리는 VHDX에서 돌아오지 않는다(측정 36, `discard` 없음). 다음 무거운 실행 전 여유를 다시 본다.
+- 실행 중 Claude 앱을 두 번 껐다 켰다. 호스트 쪽 `docker exec` 클라이언트가 끊겨도 컨테이너 안 실행기와 vm_watch는 계속 돌았다(vm_watch 줄이 끊김 없이 이어짐).
+- 2.2 `warehouse/sql/07_ops.sql` DB 적용(23:3x, `psql -v ON_ERROR_STOP=1`, 이미 있는 표·인덱스는 건너뜀). 생활이동 행의 전후:
+  | 뷰 | 적용 전 | 적용 후 |
+  |---|---|---|
+  | `ops.quality` 통과 / 격리 / 비율 | 40,382,009 / 93,880 / 0.232% (옛 정제 표 `stg.living_migration`, 범위 C 안만) | 1,373,116,739 / 31,935,758 / 2.273% (관문 `stg.living_batch_status.passed` 합, `stg.living_quarantine`) |
+  | `ops.freshness` 수집일 / 기간 / 늦음 | 2026-11-03 / 202607 / 참 (옛 정제 표 최신) | 빈 값 (승인 배치를 `stg_dbt.batch_status`에서 읽는데, 그 표에 생활이동이 아직 없다. 2.3 wh_load 뒤 채워짐) |
+  - 뜻이 바뀐 점: 통과는 옛 "범위 C(HW·평일·07~09시·서울) 안 정제 행"에서 "관문과 같은 분모, C4 완전 중복을 하나로 센 뒤 원본 행 전체(범위 밖 포함)"로, 격리는 범위 밖 행과 거절된 배치 행까지 포함한다. 그래서 0.232%와 2.273%는 같은 저울이 아니다(측정 32 관문 표의 2.1~2.7%와 같은 저울).
+  - 적용 뒤 `ops.freshness`, `ops.quality`는 더는 옛 표(`stg.living_migration`, `stg.living_migration_quarantine`)에 의존하지 않는다(`pg_depend`로 두 표를 읽는 뷰 0개).
+- 2.3 wh_load 1회(`manual__2026-11-13T14:32:10`, 23:32~23:36 KST, 성공): `dbt_build` 233.1초, `record_build` 14.6초, `swap_schemas` 4.0초, `export_product` 7.2초, `report` 0.5초. 실행 전 오늘 버전 상품 폴더를 scratchpad에 sha256과 함께 떠 두고 비교했다.
+  - `stg_dbt.batch_status`에 생활이동 10행(10개 승인, 202510~202607)이 들어갔다. `ops.freshness` 생활이동: 2026-11-03 / 202607 / 늦음 참(202608 자료가 아직 레이크에 없다. 적용 전 옛 표 기준과 같은 값).
+  - 상품 `v2026.11.13` 데이터 파일 8개(csv·parquet 4쌍) sha256 모두 직전과 같다. `manifest.json`은 `created_at`과 `quality.commute_quarantine_rows` 93,880 → 31,935,758만 다르다(2.2와 같은 분모 변화).
+  - `SLACK_WEBHOOK_URL`이 `.env`에 없어 요약 메시지 실제 도착은 확인하지 못했다.
+- 2.4 `python -m warehouse.metabase_setup`(호스트): 대시보드 카드 14개 다시 만듦. 카드 SQL을 Metabase 읽기 계정(`metabase_ro`)으로 직접 실행:
+  - 06 출처 상태: 생활이동 "늦음", 마지막 수집일 2026-11-03, 최신 기간 202607, 할 일 "202608 파일을 lake/_inbox/living_migration에 넣기".
+  - 10 출처별 품질: 생활이동 통과 1,373,116,739, 격리 31,935,758(2.273%), 사유 `V6 31935758`. 옛 격리 표도 사유가 `{V6}` 93,880행뿐이었다(범위 C 안). 새 경로의 격리 사유도 V6 하나라 범위가 넓어진 것만 다르다.
+  - 14 거절된 배치: 0행(10개 모두 승인).
+
