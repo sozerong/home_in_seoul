@@ -49,3 +49,18 @@ am_peak_congestion,wh.dim_station,point,INDIRECT,SORT,규칙 밖(전이): k 선�
 am_peak_congestion,wh.dim_dong,geom,INDIRECT,SORT,규칙 밖(전이)
 am_peak_congestion,wh.dim_station,bldn_id,INDIRECT,FILTER,규칙 밖(전이): k의 covered 필터
 am_peak_congestion,wh.map_congestion_station,bldn_id,INDIRECT,FILTER,규칙 밖(전이): covered
+*,wh.dim_dong,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.map_congestion_station,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.fact_congestion,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_station,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_station,bldn_id,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.dim_station,bldn_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,dow,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,line,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,slot,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,sttn_no,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.map_congestion_station,bldn_id,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.map_congestion_station,bldn_id,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,wh.map_congestion_station,bldn_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.map_congestion_station,line,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.map_congestion_station,sttn_no,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼

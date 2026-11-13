@@ -22,6 +22,25 @@
 4. **같은 쌍이 DIRECT와 INDIRECT 둘 다일 수 있다.** 예: `commute_od.avg_minutes`는 `fact_commute.population`을 값으로 쓰고(DIRECT), CASE 조건으로도 쓴다(INDIRECT CONDITIONAL). 두 줄로 쓴다.
 5. **CASE 결과가 상수뿐이면 DIRECT가 없다.** `commute_od.basis`는 'age20_34' / 'all_ages' 중 하나라 값 출처가 없고, 조건만 INDIRECT CONDITIONAL로 쓴다.
 
+## 행 집합 줄 ROWSET (결정 80, 2026-11-13 추가)
+
+추출기를 고치기 전에 6개 파일 끝에 더했다(결정 49의 순서). `target_column`은 `*`(그 모델의 행 집합), `kind`는 `ROWSET`이다.
+
+- (1) `subkind = FROM`: 모델 SQL의 FROM·JOIN에 나오는 표마다 `표.* -> *`. CTE, 파생 표, WHERE 안 하위 쿼리의 표도 넣고, SELECT 목록의 스칼라 하위 쿼리에만 나오는 표는 뺀다(값 하나를 계산할 뿐 행 집합을 정하지 않는다). 사람이 모델 SQL을 읽고 쓴 표 목록이다.
+- (2) `subkind = FILTER / JOIN / GROUP_BY`: 그 모델의 행 조건 컬럼. 위 정답의 INDIRECT 줄 중 subkind가 FILTER, JOIN, GROUP_BY인 출처 (표, 컬럼)의 합이다. 정답에서 기계적으로 옮겼다. 그래서 (2)의 일치는 INDIRECT 정답 일치에서 대부분 따라 나온다. 독립된 검증은 (1)이다.
+- 결정 80이 받아들인 대가대로 표 단위로 넓다. 예: `dong_profile`의 LEFT JOIN 표(`dong_station` 등)도 FROM 줄이 있다. LEFT JOIN은 왼쪽 행 수를 바꾸지 않지만 결정 80의 정의(FROM·JOIN 원천표마다)를 그대로 따랐다.
+
+| 모델 | ROWSET 키 (FROM + 조건 컬럼) |
+|---|---|
+| mart.dong_station | 12 (4 + 8) |
+| mart.commute_od | 11 (3 + 8) |
+| mart.dong_rent_summary | 3 (1 + 2) |
+| mart.dong_profile | 9 (4 + 5) |
+| wh.map_congestion_station | 7 (3 + 4) |
+| wh.map_dong_mois | 3 (1 + 2) |
+
+키는 (출력, 출처 표, 출처 컬럼, kind)라 같은 컬럼이 FILTER와 JOIN 둘 다면 키 하나다.
+
 ## 정답에서 뺀 것 (알고 뺀 것)
 
 - **상수 출력 컬럼.** `map_congestion_station.method`('padded' / 'manual')는 줄이 없다. union 첫 갈래의 `note`(null)도 같은 이유로 seed 쪽 DIRECT만 있다. 상수 컬럼의 행 수 영향은 같은 scope의 다른 컬럼에 붙은 INDIRECT로 이미 드러난다.

@@ -23,3 +23,6 @@ median_monthly_rent_10k_won,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
 median_excl_area_m2,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
 first_ym,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
 last_ym,mart.rent_listing,lease_type,INDIRECT,GROUP_BY,
+*,mart.rent_listing,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,mart.rent_listing,dong_id,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,mart.rent_listing,lease_type,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼

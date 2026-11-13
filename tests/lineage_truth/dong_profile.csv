@@ -81,3 +81,12 @@ supermarket_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
 pharmacy_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
 internal_pediatric_clinic_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
 laundry_per_km2,wh.dim_dong,dong_id,INDIRECT,JOIN,ON의 왼쪽
+*,wh.dim_dong,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,mart.dong_rent_summary,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,mart.dong_station,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,mart.dong_amenity,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,mart.dong_amenity,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,mart.dong_rent_summary,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,mart.dong_rent_summary,lease_type,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,mart.dong_station,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.dim_dong,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼

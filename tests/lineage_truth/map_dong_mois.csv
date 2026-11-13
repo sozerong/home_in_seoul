@@ -32,3 +32,9 @@ dong_id,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code =
 stores,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
 share,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
 is_primary,wh.fact_store,*,INDIRECT,FILTER,본문 where rank = 1 or (rank_in_code = 1 and mois_dong_cd not in ...): 순위의 창 기준까지 풀어 씀
+*,wh.fact_store,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.fact_store,*,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_store,dong_id,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_store,dong_id,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,wh.fact_store,mois_dong_cd,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_store,mois_dong_cd,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼

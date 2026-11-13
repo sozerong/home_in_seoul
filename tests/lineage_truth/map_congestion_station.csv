@@ -18,3 +18,10 @@ bldn_id,wh.dim_station,route,INDIRECT,JOIN,s.route = c.line
 line,wh.fact_congestion,line,INDIRECT,JOIN,
 sttn_no,wh.fact_congestion,line,INDIRECT,JOIN,
 bldn_id,wh.fact_congestion,line,INDIRECT,JOIN,
+*,wh.fact_congestion,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_station,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.congestion_station_manual,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_station,bldn_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.dim_station,route,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,line,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_congestion,sttn_no,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼

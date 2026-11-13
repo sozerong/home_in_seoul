@@ -144,3 +144,17 @@ basis,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
 copied_from_2021_split_dong,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
 distance_km,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
 target_months,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
+*,wh.fact_commute,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.map_dong_2021,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_dong,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
+*,wh.dim_dong,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,avg_minutes,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,dest_cd,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,dest_cd,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,origin_cd,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,origin_cd,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,population,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,target_ym,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.map_dong_2021,dong_cd_2021,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
+*,wh.map_dong_2021,dong_cd_2021,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+*,wh.map_dong_2021,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
