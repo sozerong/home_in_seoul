@@ -1,6 +1,7 @@
 """상가(상권)정보 레이크 zip의 서울 CSV를 정제·검증해 stg.sbiz_store와 stg.sbiz_store_quarantine에 넣는다.
 
 규칙은 docs/rules.md 5절. 범위는 생활 편의 필수 5종 소분류 6코드만.
+같은 파일 전체에서 법정동 코드표(stg.bjd_code)도 만든다. 전월세 정제 C6이 읽는다(결정 72).
 처리 단위는 수집일 하나(zip 하나)이고, 그 수집일의 기존 행을 지우고 다시 넣는다(멱등).
 사용법: python -m transform.sbiz_store 수집일YYYY-MM-DD
 예:     python -m transform.sbiz_store 2026-10-21
@@ -102,13 +103,14 @@ def read_seoul(path):
             reader = csv.DictReader(f)  # MC1: 모두 문자열
             if sorted(reader.fieldnames or []) != sorted(HEADER):  # MF2
                 raise SystemExit(f"MF2 스키마 변경: 다른 열 {sorted(set(reader.fieldnames or []) ^ set(HEADER))}")
-            total, pairs, rows = 0, set(), []
+            total, pairs, rows, bjd = 0, set(), [], set()
             for row_no, raw in enumerate(reader, start=1):
                 if None in raw or None in raw.values():  # MF2: 열 수가 39가 아닌 행
                     raise SystemExit(f"MF2 {row_no}번째 행의 열 수가 {len(HEADER)}개가 아닙니다")
                 total += 1
                 code = raw["상권업종소분류코드"].strip()
                 pairs.add((code, raw["상권업종소분류명"].strip()))
+                bjd.add((raw["시군구코드"], raw["법정동명"], raw["법정동코드"]))  # 전월세 C6용 코드표, 원본 값 그대로
                 if code in ESSENTIAL:
                     rows.append((row_no, raw))
     if total == 0:  # MF1
@@ -116,7 +118,7 @@ def read_seoul(path):
     missing = sorted(set(ESSENTIAL.items()) - pairs)
     if missing:  # MF3
         raise SystemExit(f"MF3 필수 업종 (코드, 이름)이 없습니다. 분류 체계가 바뀌었는지 보세요: {missing}")
-    return names[0], match.group(1), rows
+    return names[0], match.group(1), rows, sorted(bjd)
 
 
 def main():
@@ -129,7 +131,7 @@ def main():
     if len(zips) != 1:
         raise SystemExit(f"레이크에 zip이 정확히 하나가 아닙니다({len(zips)}개): {folder}")
 
-    source_file, base_ym, rows = read_seoul(zips[0])
+    source_file, base_ym, rows, bjd = read_seoul(zips[0])
     good, bad = split(rows)
     meta = {"collected_date": args.collected_date, "source_file": source_file}
     good = [{**meta, "base_ym": base_ym, **r} for r in good]
@@ -149,12 +151,14 @@ def main():
             " GROUP BY collected_date ORDER BY collected_date DESC LIMIT 1", (args.collected_date,)).fetchone()
         if previous and len(good) < previous[1] * (1 - MAX_SHRINK_RATIO):  # MF5
             raise SystemExit(f"MF5 행 수 급감: 직전 {previous[0]} {previous[1]}행 -> 이번 {len(good)}행")
-        for table in ("stg.sbiz_store", "stg.sbiz_store_quarantine"):
+        for table in ("stg.sbiz_store", "stg.sbiz_store_quarantine", "stg.bjd_code"):
             conn.execute(f"DELETE FROM {table} WHERE collected_date = %s", (args.collected_date,))
         with conn.cursor() as cur:
             cur.executemany(insert_sql("stg.sbiz_store", COLUMNS), good)
             cur.executemany(insert_sql("stg.sbiz_store_quarantine", QUARANTINE_COLUMNS), bad)
-    print("적재 완료")
+            cur.executemany("INSERT INTO stg.bjd_code (collected_date, sgg_cd, bjd_nm, bjd_cd) VALUES (%s, %s, %s, %s)",
+                            [(args.collected_date, *code) for code in bjd])
+    print(f"적재 완료 (법정동 코드표 {len(bjd)}행)")
 
 
 if __name__ == "__main__":

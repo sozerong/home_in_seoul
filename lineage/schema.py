@@ -1,6 +1,6 @@
 """1단계: 스키마 추론 (결정 53). DB에 묻지 않고 레포 안의 것으로 표마다 컬럼 목록을 만든다.
 
-- 소스: warehouse/sql의 stg DDL(01~06)과 원본 표 DDL(09_raw_*)의 CREATE TABLE
+- 소스: warehouse/sql의 stg DDL(01~06)과 원본 표 DDL(09·10_raw_*)의 CREATE TABLE
 - seed: warehouse/dbt/seeds/*.csv 첫 줄
 - 모델: manifest의 depends_on 순서대로 컴파일된 SQL을 qualify해 얻은 출력 컬럼
 앞 모델의 출력이 뒤 모델의 입력이라 순서대로만 돈다(결정 56). 키는 컴파일된 SQL 그대로(seoul.wh_build.dim_dong).
@@ -17,7 +17,7 @@ from common import ROOT
 
 DBT = ROOT / "warehouse" / "dbt"
 CATALOG = "seoul"  # profiles.yml의 dbname
-STG_DDL = sorted([*(ROOT / "warehouse" / "sql").glob("0[1-6]_stg_*.sql"), *(ROOT / "warehouse" / "sql").glob("09_raw_*.sql")])
+STG_DDL = sorted([*(ROOT / "warehouse" / "sql").glob("0[1-6]_stg_*.sql"), *(ROOT / "warehouse" / "sql").glob("[0-9][0-9]_raw_*.sql")])
 
 
 def stg_tables():

@@ -4,7 +4,7 @@
 
 with cells as (
     select r.collected_date, r.source_file, r.row_no, r.raw, r.dow, r.line, r.sttn_no, r.sttn_nm, r.direction,
-           t.key, btrim(t.value, E' \t\n\r\f\v') as value
+           t.key, {{ py_strip('t.value') }} as value
     from {{ ref('congestion_rows') }} r
     cross join lateral jsonb_each_text(r.raw) t
     where cardinality(r.reasons) = 0

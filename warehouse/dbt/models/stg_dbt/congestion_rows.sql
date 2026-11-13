@@ -5,11 +5,11 @@
 
 with src as (
     select r.collected_date, r.source_file, r.row_no, r.raw,
-           btrim(coalesce(r.raw ->> 'DOW_SE', ''), E' \t\n\r\f\v') as dow,  -- Python strip()과 같은 공백 문자
-           btrim(coalesce(r.raw ->> 'LINE', ''), E' \t\n\r\f\v') as line,
-           btrim(coalesce(r.raw ->> 'STTN_NO', ''), E' \t\n\r\f\v') as sttn_no,
-           btrim(coalesce(r.raw ->> 'DPTRE_STTN', ''), E' \t\n\r\f\v') as sttn_nm,
-           btrim(coalesce(r.raw ->> 'UP_DOWN_SE', ''), E' \t\n\r\f\v') as direction
+           {{ py_strip("coalesce(r.raw ->> 'DOW_SE', '')") }} as dow,  -- Python strip()과 같은 공백 문자
+           {{ py_strip("coalesce(r.raw ->> 'LINE', '')") }} as line,
+           {{ py_strip("coalesce(r.raw ->> 'STTN_NO', '')") }} as sttn_no,
+           {{ py_strip("coalesce(r.raw ->> 'DPTRE_STTN', '')") }} as sttn_nm,
+           {{ py_strip("coalesce(r.raw ->> 'UP_DOWN_SE', '')") }} as direction
     from {{ source('raw', 'congestion') }} r
 )
 select s.*,

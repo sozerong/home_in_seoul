@@ -5,7 +5,7 @@
 select r.source_type, r.sgg_cd, r.deal_ymd, r.deal_date, r.pnu, r.umd_nm, r.jibun, r.building_name,
        r.house_type, r.build_year, r.floor, r.excl_area, r.deposit, r.monthly_rent, r.contract_type,
        r.collected_date, r.source_file, r.item_no
-from {{ source('stg', 'rent') }} r
+from {{ ref('rent') }} r
 join (select source_type, sgg_cd, deal_ymd, max(collected_date) as collected_date
-      from {{ source('stg', 'rent') }} group by source_type, sgg_cd, deal_ymd) latest
+      from {{ ref('rent') }} group by source_type, sgg_cd, deal_ymd) latest
   using (source_type, sgg_cd, deal_ymd, collected_date)

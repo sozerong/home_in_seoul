@@ -8,6 +8,9 @@
   manifest.json    버전, 파일마다 행 수와 sha256, 원천 수집일, 품질 지표
 경계 도형(geojson)은 내보내지 않는다: SGIS 이용약관이 사전 승낙 없는 제3자 제공을 막는다(결정 26).
 CSV는 엑셀에서 한글이 깨지지 않게 UTF-8 BOM으로 쓴다. 계약 내용은 docs/data_contract.md.
+계약 스키마(결정 83): 표마다 [컬럼, 타입] 순서 목록을 docs/product_contract.json에 둔다. 실제 마트 스키마가 다르면 아무것도
+내보내지 않고 실패한다. 같으면 manifest에 스키마와 직전 버전 대비 변경(추가, 삭제, 타입 변경, 깨는지)을 쓴다.
+의도한 변경은 같은 커밋에서 계약 파일과 docs/data_contract.md 변경 기록을 고친다.
 사용법: python -m warehouse.export_product
 """
 import csv
@@ -21,6 +24,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from common import ROOT, read_env
+
+CONTRACT = ROOT / "docs" / "product_contract.json"
 
 TABLES = {  # 파일 이름: 정렬 기준. 행마다 순서가 하나로 정해져야 같은 데이터가 같은 파일(sha256)이 된다
     "dong_profile": "dong_id",
@@ -37,6 +42,32 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def actual_schema(conn):
+    """{표: [[컬럼, 타입]]}. 타입은 format_type이라 char(6), numeric(10,1)처럼 길이까지 나온다."""
+    return {name: [list(r) for r in conn.execute(
+        "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
+        "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum", [f"mart.{name}"])]
+        for name in TABLES}
+
+
+def schema_changes(old, new):
+    """직전 버전 스키마 대비 표마다 추가, 삭제, 타입 변경. 삭제나 타입 변경이 있으면 깨는 변경이다."""
+    changes = {}
+    for name in new:
+        a, b = dict(old.get(name, [])), dict(new[name])
+        c = {"added": [k for k in b if k not in a], "removed": [k for k in a if k not in b],
+             "type_changed": [[k, a[k], b[k]] for k in b if k in a and a[k] != b[k]]}
+        if any(c.values()):
+            changes[name] = {**c, "breaking": bool(c["removed"] or c["type_changed"])}
+    return changes
+
+
+def previous_schema(version):
+    """오늘 버전을 뺀 가장 최근 버전 manifest의 schema. 없으면(계약 이전 버전) None."""
+    older = sorted(p for p in (ROOT / "product").glob("v*/manifest.json") if p.parent.name != version)
+    return json.loads(older[-1].read_text(encoding="utf-8")).get("schema") if older else None
+
+
 def record_product(conn, manifest):
     """상품 버전의 파일 목록을 ops.product_file에 쓴다 (운영 대시보드, 결정 38). 같은 버전을 다시 내면 바꿔 쓴다."""
     conn.execute("DELETE FROM ops.product_file WHERE version = %s", [manifest["version"]])
@@ -47,12 +78,20 @@ def record_product(conn, manifest):
 
 def main():
     version = datetime.date.today().strftime("v%Y.%m.%d")
+    with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 폴더를 지우기 전에 계약부터 본다
+        schema = actual_schema(conn)
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    if schema != contract:
+        raise SystemExit(f"상품 스키마가 계약 파일({CONTRACT.name})과 다릅니다. 의도한 변경이면 계약 파일과 "
+                         f"docs/data_contract.md 변경 기록을 함께 고치세요: {json.dumps(schema_changes(contract, schema), ensure_ascii=False)}")
+    previous = previous_schema(version)
     out = ROOT / "product" / version
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
     manifest = {"version": version, "created_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
-                "files": {}}
+                "files": {}, "schema": schema,
+                "schema_changes": None if previous is None else schema_changes(previous, schema)}  # None: 직전 버전에 스키마 기록 없음
 
     with psycopg.connect(read_env("DATABASE_URL")) as conn:
         for name, order in TABLES.items():

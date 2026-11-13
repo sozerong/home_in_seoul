@@ -206,6 +206,32 @@ def json_key(col):
     return col.name
 
 
+def rowset_tables(root):
+    """FROM·JOIN에 나온 물리 표(CTE, 파생 표, WHERE 안 하위 쿼리 포함). SELECT 목록의 스칼라 하위 쿼리와 그 안은 뺀다:
+    값 하나를 계산할 뿐 행 집합을 정하지 않는다."""
+    tables = set()
+    for scope in root.traverse():
+        if not any(in_select_list(s) for s in (scope, *parents(scope))):
+            tables |= {phys(s) for s in scope.sources.values() if isinstance(s, exp.Table)}
+    return tables
+
+
+def parents(scope):
+    while scope.parent is not None:
+        scope = scope.parent
+        yield scope
+
+
+def in_select_list(scope):
+    """scope가 부모 SELECT의 출력 식 안에 든 하위 쿼리인가."""
+    if scope.parent is None or not scope.is_subquery:
+        return False
+    node, top = scope.expression, scope.parent.expression
+    while node.parent is not None and node.parent is not top:
+        node = node.parent
+    return node.parent is top and node.arg_key == "expressions" and isinstance(top, exp.Select)
+
+
 def subkind(leaf):
     return "AGGREGATION" if leaf.agg else "TRANSFORMATION" if leaf.transform else "IDENTITY"
 
@@ -227,6 +253,13 @@ def extract_edges(sql_text, model, schema):
             rows += [(leaf, "INDIRECT", sk) for leaf, sk in resolver.attached(seen)]
             for leaf, kind, sk in rows:
                 edges.add((name, leaf.table, leaf.column, kind, sk))
+        # ROWSET (결정 80): 대상 행 집합 '*'의 출처. (1) FROM·JOIN 원천표의 행, (2) 행 조건(WHERE·JOIN·GROUP BY) 컬럼.
+        # (2)는 위에서 출력 컬럼마다 붙인 INDIRECT 절 잎의 합이다. ponytail: 표 단위로 넓게 잡힌다(결정 80이 받아들인 대가)
+        for table in rowset_tables(root):
+            edges.add(("*", table, "*", "ROWSET", "FROM"))
+        for target, table, column, kind, sk in list(edges):
+            if kind == "INDIRECT" and sk in ("FILTER", "JOIN", "GROUP_BY") and table is not None:
+                edges.add(("*", table, column, "ROWSET", sk))
     except Exception as e:  # 파싱 실패는 버리지 않고 남긴다 (CLAUDE.md 4절 4번)
         return [{**base, "target_column": None, "source_table": None, "source_column": None, "kind": None,
                  "subkind": None, "status": "parse_error", "detail": f"{type(e).__name__}: {e}"[:500]}]

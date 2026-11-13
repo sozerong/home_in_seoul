@@ -31,3 +31,14 @@ CREATE TABLE IF NOT EXISTS stg.sbiz_store_quarantine (
     raw            jsonb       NOT NULL,  -- 원본 행의 열 이름과 값
     quarantined_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- 법정동 코드표: 서울 CSV 전체(6코드만이 아님)에 나온 (시군구코드, 법정동명) -> 법정동코드. 원본 값 그대로.
+-- 전월세 정제 C6(stg_dbt.rent_rows)이 가장 최근 수집일 것을 읽는다. 옛 transform/rent.py가 실행마다 zip을 다시 읽던 것을 대신한다.
+-- 한 (시군구, 법정동명)에 코드가 둘이면 기본 키가 막아 적재가 실패한다(옛 코드는 조용히 마지막 것을 썼다).
+CREATE TABLE IF NOT EXISTS stg.bjd_code (
+    collected_date date     NOT NULL,
+    sgg_cd         char(5)  NOT NULL,  -- 시군구코드 (행정안전부식)
+    bjd_nm         text     NOT NULL,  -- 법정동명
+    bjd_cd         char(10) NOT NULL,  -- 법정동코드
+    PRIMARY KEY (collected_date, sgg_cd, bjd_nm)
+);

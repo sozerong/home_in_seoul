@@ -41,7 +41,7 @@ def main():
                     if r["status"] == "ok"]
         truth, got = keyed(csv.DictReader(open(path, encoding="utf-8"))), keyed(got_rows)
         print(f"## {table}")
-        for kind in ("DIRECT", "INDIRECT"):
+        for kind in ("DIRECT", "INDIRECT", "ROWSET"):
             t = {k for k in truth if k[3] == kind}
             g = {k for k in got if k[3] == kind}
             hit, miss, wrong = t & g, t - g, g - t
@@ -58,7 +58,7 @@ def main():
                     if truth[k] != got[k]:
                         print(f"    subkind {k[0]} <- {k[1]}.{k[2]} 정답 {sorted(truth[k])} 추출 {sorted(got[k])}")
     print("## 합계")
-    for kind in ("DIRECT", "INDIRECT"):
+    for kind in ("DIRECT", "INDIRECT", "ROWSET"):  # ROWSET: 결정 80
         hit, miss, wrong = (totals[f"{kind} {x}"] for x in ("맞음", "놓침", "틀림"))
         print(f"  {kind}: 맞음 {hit}, 놓침 {miss}, 틀림 {wrong}, 재현율 {hit / (hit + miss):.1%}, "
               f"정밀도 {hit / (hit + wrong):.1%}, subkind 일치 {totals[f'{kind} subkind 일치']}/{hit}")

@@ -4,6 +4,8 @@ sources:
     schema: "{{ var('raw_schema', 'raw') }}"  # S1 실험(measure)만 바꾼다
     tables:
       - name: congestion
+      - name: rent  # warehouse/sql/10 (결정 72)
+      - name: sbiz_store  # warehouse/sql/11 (결정 78)
   - name: stg
     schema: "{{ var('source_schema', 'stg') }}"  # 변이 시험(measure/lineage_mutation.py)만 stg_mut으로 바꾼다
     tables:
@@ -11,7 +13,6 @@ sources:
       - name: sbiz_store
       - name: parcel
       - name: station_master
-      - name: rent
       - name: living_migration
         columns:  # 08 검사: 2021 대응표에 없는 생활이동 코드
           - name: origin_cd

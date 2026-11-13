@@ -1,7 +1,7 @@
-"""전월세 실거래가(오피스텔, 연립다세대) 주간 수집·정제 DAG. 결정 18, 21.
+"""전월세 실거래가(오피스텔, 연립다세대) 주간 수집·원본 적재 DAG. 결정 18, 21, 72.
 
 매주 월요일 13:00(한국 시간)에 돈다(PC가 켜져 있는 시간, 결정 34). data interval이 끝나는 달의 **전달부터 N개월**을 서울 25개 구 x 2개 출처로
-다시 받아 정제한다. N은 Airflow Variable `rent_recent_months`(없으면 3). 이번 달은 아직 진행 중이라 뺀다.
+다시 받아 원본 표(raw.rent)에 넣는다. 정제는 wh_load의 dbt가 한다(결정 72). N은 Airflow Variable `rent_recent_months`(없으면 3). 이번 달은 아직 진행 중이라 뺀다.
 작업 하나 = 처리 단위 하나 (출처, 구, 계약년월). 실패하면 그 칸만 다시 돌린다.
 재시도는 스크립트 안에서만 한다(일시 오류만 3번). Airflow 재시도는 0번이라, 여기 도착한 실패는 바로 드러난다.
 """
@@ -10,19 +10,19 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, Variable, task
 
 from alerting import notify_failure
-from assets import STG_RENT
+from assets import RAW_RENT
 
 SEOUL_GU = ["11110", "11140", "11170", "11200", "11215", "11230", "11260", "11290", "11305", "11320",
             "11350", "11380", "11410", "11440", "11470", "11500", "11530", "11545", "11560", "11590",
             "11620", "11650", "11680", "11710", "11740"]  # 서울 25개 구 (법정동 코드 앞 5자리, stg.sbiz_store에서 확인)
 KINDS = ["offi", "rh"]
 
-# 수집일(D)은 작업이 실제로 도는 순간에 한 번 정해 수집과 정제에 같이 넘긴다.
+# 수집일(D)은 작업이 실제로 도는 순간에 한 번 정해 수집과 원본 적재에 같이 넘긴다.
 # 며칠 뒤 이 작업만 다시 돌려도 "실제로 받은 날"이 붙는다. 종료 코드가 0이 아니면 바로 멈춘다(set -e).
 COMMAND = (
     'set -euo pipefail; cd /opt/project; D=$(date +%F); '
     'python -m ingestion.molit_rent "$KIND" "$GU" "$YM" --collected-date "$D"; '
-    'python -m transform.rent "$KIND" "$D" "$GU" "$YM"'
+    'python -m transform.rent_raw "$KIND" "$D" "$GU" "$YM"'
 )
 
 with DAG(
@@ -55,8 +55,8 @@ with DAG(
         map_index_template="{{ task.env['KIND'] }}_{{ task.env['GU'] }}_{{ task.env['YM'] }}",
     ).expand(env=plan())
 
-    @task(outlets=[STG_RENT])
+    @task(outlets=[RAW_RENT])
     def rent_updated():
-        """모든 칸이 성공한 뒤 stg.rent 갱신을 한 번만 알린다. 칸마다 알리면 마트가 여러 번 돈다."""
+        """모든 칸이 성공한 뒤 raw.rent 갱신을 한 번만 알린다. 칸마다 알리면 wh_load가 여러 번 돈다."""
 
     cells >> rent_updated()

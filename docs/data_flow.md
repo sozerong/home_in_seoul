@@ -49,7 +49,7 @@ flowchart LR
     R1 -->|ingestion/molit_rent.py| L1
     R2 -->|ingestion/seoul_api.py| L1
     R3 & R4 & R5 & R6 -->|lake/_inbox → ingestion/register_file.py| L2
-    L1 -->|transform/rent.py| S1
+    L1 -->|transform/rent_raw.py 파싱만 → raw.rent jsonb → dbt stg_dbt 정제 (결정 72)| S1
     L1 -->|transform/station_master.py| S2
     L1 -->|transform/congestion_raw.py 파싱만 → raw.congestion jsonb → dbt stg_dbt 정제 (결정 42)| S3
     L2 -->|transform/living_iceberg.py, Spark| IC[(Iceberg lh.living.migration_rows<br>24시간대 전체 행)]
@@ -67,7 +67,7 @@ Airflow가 화살표마다 일정을 건다: API는 매주 월요일, 생활이�
 
 | 출처 | 처음 받은 모양 | 레이크에 넣는 방법과 모양 | 스테이징 (정제·검증) | 웨어하우스 | 마트에서 쓰는 곳 |
 |---|---|---|---|---|---|
-| 전월세 (오피스텔, 연립다세대) | 공공데이터포털 API. 요청 단위 = 구(행안부 5자리, 강남 11680) × 계약월. UTF-8 한 줄 XML, 한 페이지 1,000건. 금액에 쉼표("3,000"), 법정동 이름 + 지번만 있고 좌표·동호 없음 | `molit_rent.py`가 페이지별로 받아 그대로 저장. `molit_{offi,rh}_rent/collected_date=D/{구}_{계약월}_p001.xml`. 일시 오류만 3회 재시도, 0건·오류 코드는 실패 | `rent.py`: 숫자·날짜 정리, 법정동 이름 → 법정동 코드(상가정보에서 만든 대응표) → **지번으로 PNU 19자리** 만들기, 규칙 V1~V9. 처리 단위 (출처, 수집일, 구, 계약월). `stg.rent` 121,019행 (수집일 2개, 계약월 202606~202610) | `dim_parcel`에서 PNU로 필지를 찾아 행정동을 얻음. `fact_rent` 뷰 = 처리 단위마다 가장 최근 수집분 (늦은 신고 반영) | `rent_listing`(신규 계약 한 건 = 한 행), `dong_profile`의 월세·전세 중앙값 |
+| 전월세 (오피스텔, 연립다세대) | 공공데이터포털 API. 요청 단위 = 구(행안부 5자리, 강남 11680) × 계약월. UTF-8 한 줄 XML, 한 페이지 1,000건. 금액에 쉼표("3,000"), 법정동 이름 + 지번만 있고 좌표·동호 없음 | `molit_rent.py`가 페이지별로 받아 그대로 저장. `molit_{offi,rh}_rent/collected_date=D/{구}_{계약월}_p001.xml`. 일시 오류만 3회 재시도, 0건·오류 코드는 실패 | (2026-11-13부터 `rent_raw.py`가 파싱만 해 `raw.rent`에 jsonb로 넣고 dbt `stg_dbt.rent_rows`가 같은 규칙을 적용, 결정 72) `rent.py`: 숫자·날짜 정리, 법정동 이름 → 법정동 코드(상가정보에서 만든 대응표) → **지번으로 PNU 19자리** 만들기, 규칙 V1~V9. 처리 단위 (출처, 수집일, 구, 계약월). `stg.rent` 121,019행 (수집일 2개, 계약월 202606~202610) | `dim_parcel`에서 PNU로 필지를 찾아 행정동을 얻음. `fact_rent` 뷰 = 처리 단위마다 가장 최근 수집분 (늦은 신고 반영) | `rent_listing`(신규 계약 한 건 = 한 행), `dong_profile`의 월세·전세 중앙값 |
 | 역사마스터 | 서울 Open API. XML, 역 784개, 위도·경도(WGS84) | `seoul_api.py`가 그대로 저장. `seoul_station_master/collected_date=D/subwayStationMaster_p001.xml` | `station_master.py`: 좌표 범위 검사, 중복 검사. `stg.station_master` 784행 | `dim_station`: 4326 → 5179 변환, 행정동 경계에 공간 조인 | `dong_profile`의 가장 가까운 역, 거리 |
 | 지하철 혼잡도 | 서울 Open API. XML 2페이지, 한 행 = 역 × 방향 × 요일구분, 시간대 39칸이 가로로 펼쳐짐. 역번호 3자리·4자리 섞임 | 위와 같음. `seoul_subway_congestion/collected_date=D/subwConfusion_p00N.xml` | `congestion.py`: 39칸을 세로로 풀기(한 행 = 역 × 방향 × 요일 × 30분). `stg.congestion` 65,169행 | `map_congestion_station` 282개: 역번호 0 채워 4자리 + 호선 일치, 특수번호 9001~9006 등 6개는 손 대응표. `fact_congestion` 뷰 | `dong_profile`의 평일 07~09시 최대 혼잡도 |
 | 서울 생활이동 (행정동) | 열린데이터광장 파일. 한 달 zip 약 1.1GB, 안에 도착시간별 CSV 24개(풀면 6.3GB, 1억 4,118만 행). CP949, 10열. **2021년 행정동 코드 7자리**, 이동인구 3명 이하는 "*" | 손으로 받아 `lake/_inbox/living_migration/`에 넣으면 센서가 발견 → `register_file.py`가 zip 검사(`testzip`, 필수 파일 24개, sha256)만 하고 그대로 복사. `seoul_living_migration/collected_date=D/생활이동_행정동_YYYYMM.zip` | `living_iceberg.py`(Spark): zip을 컨테이너 /tmp에 풀어 24시간대 전체 행을 글자 그대로 Iceberg 표에 넣음(대상연월 파티션, 줄 번호 보존). `living_migration.py`: Iceberg에서 **출근 범위만**(HW, 월~금, 도착 07~09시, 출발·도착 모두 서울) 가져와 정제. 240분 초과는 격리. `stg.living_migration` 4,038만 행 (10개월, 202510~202607), 격리 93,880행 | `map_dong_2021` 426개: 2021 코드 → 2025 동 (앞 7자리 규칙 + 바뀐 동 8개 손 대응). `fact_commute` 뷰 | `commute_od`(출발 동 × 직장 동, 20~34세 가중 평균 이동 시간, 직선거리) |

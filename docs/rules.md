@@ -38,6 +38,11 @@
 
 - 정제 규칙을 적용하지 못한 값(예: 숫자 칸에 숫자가 아닌 값)은 그 **정제 규칙 번호**(C3 금액, C4 계약일, C5 면적·층·건축년도)를 격리 사유로 남긴다. 합의한 V1~V9에 "형식 오류"가 없어서 구현할 때 더했다(2026-10-21).
 - 구현: transform/rent.py. 처리 단위(출처, 수집일, 구, 계약년월)마다 두 테이블의 기존 행을 지우고 다시 넣는 것을 한 트랜잭션으로 한다.
+- **2026-11-13 SQL로 이전 (결정 72, 혼잡도와 같은 방식).** 규칙은 그대로이고 자리만 옮겼다. 파싱: `transform/rent_raw.py` → `raw.rent`(item 하나 = jsonb 한 칸, `warehouse/sql/10_raw_rent.sql`). 처리 단위 멱등은 원본 표가 맡는다(단위 행을 지우고 다시 넣기). 정제·검증: `warehouse/dbt/models/stg_dbt/rent_rows`(C1~C6, V1~V9, 사유), `rent`(통과), `rent_quarantine`(격리). 원천 키 목록: 매크로 `rent_keys.sql`. 규칙 시험: `stg_dbt.yml`의 unit test 2개(옛 tests/test_rent.py의 경우 전부). 법정동 코드표(C6)는 상가정보 정제가 서울 CSV 전체에서 만드는 `stg.bjd_code`(가장 최근 수집일)를 읽는다. 옛 코드는 실행마다 zip을 다시 읽었다.
+  - 파일 단위 검사는 dbt 테스트: F1은 쓰는 키가 없으면 실패(`rent_raw_keys_present`), 모르는 키는 경고(`rent_raw_unknown_keys`). F2 `rent_quarantine_ratio`는 키(출처, 구, 계약년월)마다 가장 최근 수집 단위만 본다(하류 wh.fact_rent가 그 단위만 쓴다). 걸리면 규칙을 고치거나 그 단위의 raw.rent 행을 지운다. C6 안전망 `rent_pnu_length`(통과 행 PNU 19자리). item 0개는 원본 적재가 실패시킨다.
+  - **2026-11-13 배치 관문 (결정 75~77).** F1(쓰는 키 없음)과 F2(격리 비율)는 dbt 테스트가 아니라 `stg_dbt.batch_status`의 배치 판정이 됐다. 배치 = 처리 단위이고, 모든 단위를 본다(옛 F2는 최근 단위만). 걸리면 빌드는 계속되고 그 단위만 `rent`·`rent_quarantine`에서 빠져 하류는 직전 승인 수집분을 쓴다. 위 "그 단위의 raw.rent 행을 지운다"는 "거절로 남는다"로 바뀌었다(원본은 고치지 않는다). 거절 목록은 운영 카드 `14_rejected_batches.sql`. `rent_pnu_length`는 빌드 테스트로 남았다(결정 76).
+  - 공백 제거(C2)는 Python `str.strip()`과 같은 29글자(매크로 `py_strip`). ASCII 공백만 지우면 건물 이름 끝의 전각 공백(U+3000) 27행이 달랐다(측정 24).
+  - 옛 결과와 같음: 수집일 9개, 처리 단위 1,352개, 통과 450,957행·격리 11행, 두 방향 `EXCEPT ALL` 0, 컬럼 이름·순서·타입 같음 (측정 24).
 
 ### 파일 단위 검사 (어긋나면 그 파일 처리 전체를 실패)
 | # | 검사 |
@@ -132,6 +137,7 @@
 ### 구현과 실측
 - 구현: transform/congestion.py, warehouse/sql/03_stg_congestion.sql(기본 키 (collected_date, dow, line, sttn_no, direction, slot)).
 - **2026-11-13 SQL로 이전 (결정 42, 60~64).** 규칙은 그대로이고 자리만 옮겼다. 파싱: `transform/congestion_raw.py` → `raw.congestion`(jsonb, `warehouse/sql/09_raw_congestion.sql`). 정제·격리: `warehouse/dbt/models/stg_dbt/` (`congestion_rows`에 CV1~CV4, `congestion_cells`에 CC3·CC5, `congestion`에 CC2·CC4·CV5, `congestion_quarantine`). 원천 키 목록: 매크로 `congestion_keys.sql`. 규칙 시험: `stg_dbt.yml`의 unit test 4개(옛 tests/test_congestion.py의 경우). 파일 단위 검사는 dbt 테스트: CF1은 쓰는 키가 없으면 실패(`congestion_raw_keys_present`), 모르는 키는 경고(`congestion_raw_unknown_keys`), CF2 `congestion_cell_unique`, CF3 `congestion_quarantine_ratio`(수집일별), CF4 `congestion_raw_shrink`(가장 최근 수집일만). 변경 알림은 운영 카드 `warehouse/sql/ops/13_congestion_change.sql`.
+  - **2026-11-13 배치 관문 (결정 75~77).** CF1~CF4는 dbt 테스트가 아니라 `stg_dbt.batch_status`의 배치 판정이 됐다. 배치 = 수집일이고, 모든 수집일을 본다(옛 CF4는 최근 수집일만, 지금은 수집일마다 직전 수집일과 비교). 걸리면 그 수집일만 `congestion`·`congestion_quarantine`에서 빠지고 하류는 직전 승인 수집일을 쓴다. CF2는 시각(slot) 대신 시간 키로 센다(일대일). 모르는 키 경고와 `congestion_station_all_mapped`는 그대로다(결정 76).
   - 옛 결과와 같음: 수집일 5개(10-21, 10-26, 11-02, 11-03, 11-13) 325,845행, 두 방향 `EXCEPT ALL` 0, 컬럼 이름·순서·타입 같음, 격리 0 대 0 (측정 23).
 - 실측 (2026-10-21 수집분): 원본 1,671행 → 세로 65,169칸, 통과 65,169, **격리 0칸(0.00%)**. 혼잡도 0.0 ~ 159.4. 두 번째 실행 뒤에도 65,169행(멱등), 실행 1.8초(bash time, 1회). 직전 스냅샷이 없어 변경 알림은 "비교하지 않음"이었다.
 - 시험: tests/test_congestion.py. 시간대 이름 39개(처음과 자정 넘는 두 칸), 정상 행 39칸 통과와 값 변환, CV1~CV4는 통과 0칸(원본 행 전체 격리), CV5는 38칸 통과 1칸 격리(격리 조각은 신원 필드 5개 + 그 칸), "nan", 경계값 0과 300. 혼잡도 상한을 400으로 바꾼 변형 코드로 돌리면 시험이 실패하는 것을 확인했다(2026-10-21).
@@ -306,6 +312,7 @@
 - 같은 페이지: 업데이트 주기 분기, 차기 등록 예정일 2026-10-31, 업종분류 체계 대분류 10 / 중분류 75 / 소분류 247, 표준산업분류 10차.
 
 - 구현: warehouse/sql/05_stg_sbiz_store.sql(stg.sbiz_store 기본 키 (collected_date, store_id), stg.sbiz_store_quarantine), transform/sbiz_store.py, 시험 tests/test_sbiz_store.py(`python -m tests.test_sbiz_store`).
+- **2026-11-13 SQL로 이전 (결정 78, 79).** 규칙은 그대로이고 범위가 바뀌었다: 정제 결과는 서울 전체 업종이고 편의 업종은 `mart.dong_amenity`만 seed `amenity_category`로 고른다. 파싱: `transform/sbiz_store_raw.py` → `raw.sbiz_store`(행 하나 = jsonb, `warehouse/sql/11_raw_sbiz_store.sql`). 정제·검증: `warehouse/dbt/models/stg_dbt/store_rows`(MC2·MC3·MC4, MV1~MV4), `store`, `store_quarantine`. 키 목록: 매크로 `sbiz_keys.sql`. 법정동 코드표는 SQL 모델 `stg_dbt.bjd_code`. 파일 단위 검사의 새 자리: MF1과 깨진 행은 적재기, MF2는 관문(쓰는 키 11개)과 경고(모르는 열), MF3은 빌드 테스트 `amenity_category_present`, MF4·MF5는 관문(`store_batch_checks`, 서울 전체 기준). MV2는 배치 전체에서 센다. 옛 결과와 같음: 6코드 부분 30,394행 두 방향 `EXCEPT ALL` 0, 코드표 466행 0 (측정 27).
 
 ### 시험
 - MC2, MC3, MV1~MV4 각각과 여러 규칙이 겹치는 경우, 경계값(경도 126.7, 위도 37.8), 경도·위도 뒤바뀜, "nan"을 확인한다. MV2는 split으로, MF1~MF3은 임시 zip을 만들어 read_seoul로 확인한다(서울 CSV 없음·둘·0행, 열 이름 변경, 열 수가 모자란 행, 필수 코드 없음, 필수 코드 이름 변경).

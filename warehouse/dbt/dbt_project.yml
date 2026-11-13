@@ -21,3 +21,5 @@ seeds:
       +column_types: {dong_cd_2021: char(7), dong_id: char(8), note: text}
     congestion_station_manual:  # 혼잡도 특수 번호와 예외 6개 (결정 17)
       +column_types: {line: text, sttn_no: text, bldn_id: char(4), note: text}
+    amenity_category:  # 생활 편의 업종(question.md 3절 범위 A). 편의 지표만 이 목록으로 거른다 (결정 79)
+      +column_types: {sub_cd: char(6), sub_nm: text}

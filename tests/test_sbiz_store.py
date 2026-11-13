@@ -89,9 +89,10 @@ def fails(rule, files):
     raise AssertionError(f"{rule}로 실패해야 하는데 통과했다")
 
 
-name, base_ym, rows = read({SEOUL: csv_text(NORMAL), "소상공인시장진흥공단_상가(상권)정보_경기_202606.csv": "x"})
+name, base_ym, rows, bjd = read({SEOUL: csv_text(NORMAL), "소상공인시장진흥공단_상가(상권)정보_경기_202606.csv": "x"})
 assert (name, base_ym) == (SEOUL, "202606")
 assert [n for n, _ in rows] == [1, 2, 3, 4, 5, 6]            # 필수 6코드 행만, 행 번호는 1부터 (카페 7번은 빠짐)
+assert bjd == [(BASE["시군구코드"], BASE["법정동명"], BASE["법정동코드"])]  # 법정동 코드표: 카페 행까지 전체에서, 중복 없이
 
 fails("MF1", {})                                             # 서울 CSV가 없음
 fails("MF1", {SEOUL: csv_text(NORMAL), SEOUL.replace("202606", "202603"): csv_text(NORMAL)})  # 둘

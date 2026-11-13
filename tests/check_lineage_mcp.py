@@ -41,7 +41,7 @@ async def main():
     assert got == set(direct), (got ^ set(direct))
     assert ("stg_dbt.congestion", "dow") in {(r["source_table"], r["source_column"]) for r in up["rows"]}
     assert {"t": "stg_dbt.congestion", "c": "dow"} in found["rows"]
-    print("회차:", down["run"], "HEAD:", down["repo_head"])
+    print("회차:", down["run"], "마지막 빌드:", down["latest_build"])
     print(f"downstream {QUESTION}: {down['count']}행, 뷰 직접 조회와 같음. 상품:",
           [(r["to_table"], r["to_column"], r["depth"], r["value_path"], r["row_path"]) for r in down["rows"]
            if r["is_product"]])

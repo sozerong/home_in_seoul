@@ -10,7 +10,6 @@
 """
 import argparse
 import itertools
-import subprocess
 import time
 import urllib.parse
 
@@ -21,16 +20,10 @@ from common import ROOT, read_env
 from lineage import schema as S
 from lineage.edges import extract_edges
 from lineage.product import product_edges
+from warehouse.build_record import git_state, sql_hashes
 
 COLUMNS = ["run_id", "sql_file", "file_kind", "target_table", "target_column", "source_table", "source_column",
            "kind", "subkind", "status", "detail"]
-
-
-def git_commit():
-    # 컨테이너에 바인드 마운트한 저장소는 소유자가 달라 git이 거부한다. 읽기만 하므로 이 호출에서만 검사를 끈다
-    out = subprocess.run(["git", "-c", f"safe.directory={ROOT.as_posix()}", "-C", str(ROOT), "rev-parse", "HEAD"],
-                         capture_output=True, text=True)
-    return out.stdout.strip() or None  # git이 없으면 비워 둔다
 
 
 def model_edges(models, schema):
@@ -67,12 +60,13 @@ def main():
     manifest = S.load_manifest()
     schema, models = S.build(manifest)
     url = read_env("DATABASE_URL")
+    commit, clean = git_state()
     with psycopg.connect(url, autocommit=True) as conn:
         run_id = conn.execute(
-            "INSERT INTO lineage.run (status, trigger, git_commit, sqlglot_version, engine, manifest_generated_at, sql_files)"
-            " VALUES ('running', %s, %s, %s, %s, %s, %s) RETURNING run_id",
-            [args.trigger, git_commit(), sqlglot.__version__, args.engine, manifest["metadata"]["generated_at"],
-             len(models)]).fetchone()[0]
+            "INSERT INTO lineage.run (status, trigger, git_commit, sqlglot_version, engine, manifest_generated_at, sql_files,"
+            " sql_hash, clean) VALUES ('running', %s, %s, %s, %s, %s, %s, %s, %s) RETURNING run_id",
+            [args.trigger, commit, sqlglot.__version__, args.engine, manifest["metadata"]["generated_at"],
+             len(models), sql_hashes(manifest)[1], clean]).fetchone()[0]
         try:
             product = [{**e, "sql_file": "export_product.py", "file_kind": "product"} for e in product_edges(schema)]
             if args.engine == "python":

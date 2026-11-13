@@ -1,4 +1,5 @@
--- 한 행 = 필수 6코드 업소 하나(상가정보 가장 최근 수집분). 서울 행정동 경계 밖이면 dong_id가 NULL.
+-- 한 행 = 상가 업소 하나, 서울 전체 업종(상가정보 가장 최근 승인 수집분, 결정 78, 79). 서울 행정동 경계 밖이면 dong_id가 NULL.
+-- 업종을 고르지 않는다: 다수결(map_dong_mois)은 전체 업소로, 편의 지표(mart.dong_amenity)만 seed amenity_category로 거른다.
 -- mois_dong_cd는 업소 원본의 행정안전부 행정동 코드로, map_dong_mois와 dim_dong이 다수결에 쓴다 (결정 31 E1).
 -- 상가정보 좌표는 도 단위 경위도라 WGS84(EPSG:4326)로 보고 5179로 바꾼다 (data_sources.md 13절, [확인 필요]).
 {{ config(indexes=[{'columns': ['dong_id']}]) }}
@@ -12,8 +13,8 @@ with boundary as (
 store as (
     select collected_date, store_id, sub_cd, base_ym, adm_cd as mois_dong_cd,
            ST_Transform(ST_SetSRID(ST_MakePoint(lon, lat), 4326), 5179)::geometry(Point, 5179) as point
-    from {{ source('stg', 'sbiz_store') }}
-    where collected_date = (select max(collected_date) from {{ source('stg', 'sbiz_store') }})
+    from {{ ref('store') }}
+    where collected_date = (select max(collected_date) from {{ ref('store') }})
 )
 
 select s.collected_date, s.store_id, s.sub_cd, s.base_ym, s.point, b.adm_cd as dong_id, s.mois_dong_cd

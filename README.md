@@ -77,7 +77,7 @@ pip install -r requirements.txt
 DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06, 운영 07, 리니지 08, 혼잡도 원본 09는 순서대로 실행기로. 혼잡도 정제(stg_dbt)와 wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
-for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops 08_lineage 09_raw_congestion) do python -m warehouse.run_sql warehouse/sql/%f.sql
+for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops 08_lineage 09_raw_congestion 10_raw_rent 11_raw_sbiz_store) do python -m warehouse.run_sql warehouse/sql/%f.sql
 ```
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
@@ -95,7 +95,7 @@ docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -
 DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
 
 ### 4. 데이터 넣기
-손으로 받는 파일은 받은 zip 그대로 `lake\_inbox\{출처}\`에 넣고 해당 `file_*` DAG를 실행한다. 스테이징이 바뀔 때마다 `wh_load`가 자동으로 돌기 때문에 **아래 순서대로** 넣는다(순서를 어기면 `wh_load`의 dbt 테스트 `not_null_dim_dong_mois_dong_cd`(행정안전부 코드를 정하지 못한 행정동)가 실패하고, 전월세 정제는 "법정동 코드표가 없습니다"로 실패한다).
+손으로 받는 파일은 받은 zip 그대로 `lake\_inbox\{출처}\`에 넣고 해당 `file_*` DAG를 실행한다. 스테이징이 바뀔 때마다 `wh_load`가 자동으로 돌기 때문에 **아래 순서대로** 넣는다(순서를 어기면 `wh_load`의 dbt 테스트 `not_null_dim_dong_mois_dong_cd`(행정안전부 코드를 정하지 못한 행정동)가 실패하고, 전월세는 dbt unit test는 통과하지만 법정동 코드표 `stg.bjd_code`가 비어 모든 행이 V8로 격리되고 배치 관문(결정 75)이 전월세 처리 단위를 모두 거절해 `rent_listing_not_empty`가 실패한다 [확인 필요: 관문 도입 뒤 다시 실행하지 않음]).
 
 | 순서 | inbox 폴더 | 파일 이름 | DAG |
 |---|---|---|---|

@@ -13,7 +13,7 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, task
 
 from alerting import notify_failure
-from assets import STG_LIVING_MIGRATION, STG_PARCEL, STG_SBIZ_STORE, STG_SGIS_DONG
+from assets import RAW_SBIZ_STORE, STG_LIVING_MIGRATION, STG_PARCEL, STG_SGIS_DONG
 
 INBOX = "/opt/project/lake/_inbox"
 
@@ -26,7 +26,7 @@ LIVING_CLEAN = ('for f in "${files[@]}"; do n=$(basename "$f"); case "$n" in 생
 
 SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset)
     "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, STG_LIVING_MIGRATION),
-    "sbiz_store": (None, 600, 'python -m transform.sbiz_store "$D"', STG_SBIZ_STORE),
+    "sbiz_store": (None, 600, 'python -m transform.sbiz_store_raw "$D"', RAW_SBIZ_STORE),  # 파싱만, 정제는 dbt(결정 78)
     "sgis_boundary": (None, 600, 'python -m transform.boundary sgis_dong "$D"', STG_SGIS_DONG),
     "parcel_boundary": (None, 600, 'python -m transform.boundary parcel "$D"', STG_PARCEL),
 }

@@ -78,6 +78,18 @@ assert of(e, "dow") == {("c", "raw.DOW_SE", "DIRECT", "TRANSFORMATION"), ("c", "
 assert ("c", "raw", "DIRECT", "IDENTITY") in of(e, "raw")
 assert ("c", "raw", "DIRECT", "TRANSFORMATION") in of(e, "value")
 
+# ROWSET (결정 80): FROM·JOIN 표와 WHERE 하위 쿼리 표의 행, 행 조건 컬럼 -> 대상 '*'. SELECT 목록 스칼라 하위 쿼리 표는 빠진다
+e = edges("select t.id, (select max(s.nm) from db.s.st s) as m from db.s.t t join db.s.u u on u.id = t.id "
+          "where t.k in (select x from db.s.st) group by t.id")
+rowset = of(e, "*")
+assert ("t", "*", "ROWSET", "FROM") in rowset and ("u", "*", "ROWSET", "FROM") in rowset
+assert ("st", "*", "ROWSET", "FROM") in rowset  # WHERE 안 하위 쿼리의 표는 행 집합을 정한다
+assert ("t", "k", "ROWSET", "FILTER") in rowset and ("u", "id", "ROWSET", "JOIN") in rowset
+assert ("t", "id", "ROWSET", "GROUP_BY") in rowset
+assert not any(r[2] == "nm" for r in rowset)  # 스칼라 하위 쿼리의 값 컬럼은 행 조건이 아니다
+e = edges("select (select max(s.nm) from db.s.st s) as m from db.s.t t")
+assert ("st", "*", "ROWSET", "FROM") not in of(e, "*"), of(e, "*")
+
 # 파싱 실패는 예외 대신 parse_error 행 하나
 rows = extract_edges("select from where", "db.s.out", SCHEMA)
 assert len(rows) == 1 and rows[0]["status"] == "parse_error", rows

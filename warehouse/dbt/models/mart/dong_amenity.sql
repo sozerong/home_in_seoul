@@ -1,8 +1,10 @@
 -- 한 행 = 행정동. 필수 5종 업소 수와 면적당 밀도(question.md 3절 생활 편의).
+-- 업종은 seed amenity_category 한곳에서 고른다(결정 79). fact_store는 서울 전체 업종이다.
 
 with s as (
     select dong_id, sub_cd from {{ ref('fact_store') }}
     where collected_date = (select max(collected_date) from {{ ref('fact_store') }}) and dong_id is not null
+      and sub_cd in (select sub_cd from {{ ref('amenity_category') }})
 )
 
 select d.dong_id, d.area_km2,

@@ -1,8 +1,10 @@
 """변이 시험 (P4-6, 결정 49, 59). 리니지 지도가 말하는 영향을 실제 실행으로 확인한다.
 
 변이 하나마다:
-1. stg_mut 스키마에 stg 표마다 뷰를 만든다. 변이할 컬럼만 식으로 바꾼다(4천만 행 생활이동을 복사하지 않으려고 뷰로 둔다).
-2. dbt seed + run을 --vars '{source_schema: stg_mut, build_suffix: <접미사>}'로 돌려 wh·mart를 다른 스키마에 만든다.
+1. stg_mut, raw_mut 스키마에 원천 표마다 뷰를 만든다. 변이할 컬럼만 식으로 바꾼다(4천만 행 생활이동을 복사하지 않으려고 뷰로 둔다).
+   정제를 dbt로 옮긴 출처(혼잡도, 전월세, 상가정보)는 raw 표의 jsonb 키 값을 바꾼다(결정 84). 나머지는 stg 컬럼을 바꾼다.
+2. dbt seed + run을 --vars '{source_schema: stg_mut, raw_schema: raw_mut, build_suffix: <접미사>}'로 돌려
+   stg_dbt·wh·mart를 다른 스키마에 만든다.
    테스트(dbt build)는 돌리지 않는다. 변이가 테스트를 깨면 하류 모델이 만들어지지 않기 때문이다.
    컴파일 결과는 target/mut에 써서 lineage가 읽는 target/을 건드리지 않는다.
 3. 상품 표 4개(export_product.TABLES)를 대조군(M0: 변이 없음, _mut0)과 컬럼마다 비교한다. 키가 있는 표는 (키, 컬럼),
@@ -12,8 +14,8 @@ M0은 실제 mart와도 비교해 var 기본값과 뷰 경유가 결과를 바�
 실제 stg, wh, mart는 읽기만 한다. 끝나면 stg_mut, wh_mut*, mart_mut*를 지운다.
 
 실행(Airflow 컨테이너 안, dbt가 거기 있다): python -m measure.lineage_mutation [M1 M2 ...]
-주의: M1, M2는 혼잡도를 dbt로 옮기기 전(2026-11-13, 측정 22) stg.congestion에 건 변이다. 옮긴 뒤에는 혼잡도가
-raw.congestion에서 오므로 stg 변이가 닿지 않는다. 다시 재려면 raw 변이(jsonb 키 값 바꾸기)로 고친다.
+M1, M2, M4, M6은 처음(측정 22)에는 stg 표에 건 변이였다. 정제를 dbt로 옮긴 뒤(결정 72, 78) 그 값은 raw jsonb에서 오므로
+raw 키 값 변이로 다시 썼다(결정 84). M7은 결정 80의 contract_type 변이다.
 """
 import json
 import subprocess
@@ -27,25 +29,41 @@ from lineage.product import product_tables
 
 DBT = ["/opt/airflow/dbt-venv/bin/dbt"]
 DBT_DIR = "/opt/project/warehouse/dbt"
-SOURCES = ["sgis_dong", "sbiz_store", "parcel", "station_master", "congestion", "rent", "living_migration"]
+SOURCES = {"stg": ["sgis_dong", "parcel", "station_master", "living_migration"],
+           "raw": ["congestion", "rent", "sbiz_store"]}
 KEYS = {"dong_profile": ["dong_id"], "commute_od": ["origin_dong_id", "dest_dong_id"],
         "dong_mois_map": ["mois_dong_cd"], "rent_listing": []}  # rent_listing은 거래 고유 키가 없다
 
-# 변이: {stg 표: {컬럼: 바꿀 SQL 식}}, 설계서가 예상한 상품 컬럼
+
+def set_key(key, value, when):
+    """raw jsonb의 키 하나를 조건에 맞는 행만 바꾸는 식. 원천 값은 모두 문자열이라 문자열로 넣는다."""
+    return f"CASE WHEN {when} THEN jsonb_set(raw, ARRAY['{key}'], to_jsonb(({value})::text)) ELSE raw END"
+
+
+# 혼잡도 시간 칸(TIME0530 ~ TIME0030) 숫자에 모두 1을 더한다
+TIME_PLUS_1 = ("(SELECT jsonb_object_agg(k, CASE WHEN k LIKE 'TIME%' AND v ~ '^[0-9]+([.][0-9]+)?$' "
+               "THEN to_jsonb((v::numeric + 1)::text) ELSE to_jsonb(v) END) FROM jsonb_each_text(raw) t(k, v))")
+
+# 변이: ({"스키마.표": {컬럼: 바꿀 SQL 식}}, 설계서가 예상한 상품 컬럼, 지도에서 찾을 원천 (표, 컬럼)).
+# raw 변이의 지도 출처는 키('raw.DOW_SE')다. 혼잡도 시간 칸은 jsonb_each_text(raw)로 풀어 컬럼 'raw' 전체에서 온다.
 MUTATIONS = {
-    "M0": ({}, "없음 (대조군)"),
-    "M1": ({"congestion": {"dow": "CASE WHEN dow = '평일' THEN '주중' ELSE dow END"}},
-           "dong_profile.am_peak_congestion"),
-    "M2": ({"congestion": {"congestion": "congestion + 1"}}, "dong_profile.am_peak_congestion"),
-    "M3": ({"station_master": {"lat": "CASE WHEN bldn_id = %(station)s THEN lat + 0.05 ELSE lat END",
-                               "lot": "CASE WHEN bldn_id = %(station)s THEN lot + 0.05 ELSE lot END"}},
-           "dong_profile.nearest_station_*"),
-    "M4": ({"rent": {"monthly_rent": "CASE WHEN monthly_rent > 0 AND item_no % 10 = 0 THEN 0 ELSE monthly_rent END"}},
-           "dong_profile.monthly_*, jeonse_*"),
-    "M5": ({"living_migration": {"age": "CASE WHEN age = '25' THEN '26' ELSE age END"}},
-           "commute_od.avg_minutes_age20_34, population_age20_34, basis, avg_minutes"),
-    "M6": ({"sbiz_store": {"sub_cd": "CASE WHEN sub_cd = 'G20405' AND row_no % 2 = 0 THEN 'Z99999' ELSE sub_cd END"}},
-           "dong_profile.convenience_store*"),
+    "M0": ({}, "없음 (대조군)", []),
+    "M1": ({"raw.congestion": {"raw": set_key("DOW_SE", "'주중'", "raw ->> 'DOW_SE' = '평일'")}},
+           "dong_profile.am_peak_congestion", [("raw.congestion", "raw.DOW_SE")]),
+    "M2": ({"raw.congestion": {"raw": TIME_PLUS_1}}, "dong_profile.am_peak_congestion", [("raw.congestion", "raw")]),
+    "M3": ({"stg.station_master": {"lat": "CASE WHEN bldn_id = %(station)s THEN lat + 0.05 ELSE lat END",
+                                   "lot": "CASE WHEN bldn_id = %(station)s THEN lot + 0.05 ELSE lot END"}},
+           "dong_profile.nearest_station_*", [("stg.station_master", "lat"), ("stg.station_master", "lot")]),
+    "M4": ({"raw.rent": {"raw": set_key("monthlyRent", "'0'",
+                                        "btrim(raw ->> 'monthlyRent') NOT IN ('0', '') AND item_no % 10 = 0")}},
+           "dong_profile.monthly_*, jeonse_*", [("raw.rent", "raw.monthlyRent")]),
+    "M5": ({"stg.living_migration": {"age": "CASE WHEN age = '25' THEN '26' ELSE age END"}},
+           "commute_od.avg_minutes_age20_34, population_age20_34, basis, avg_minutes", [("stg.living_migration", "age")]),
+    "M6": ({"raw.sbiz_store": {"raw": set_key("상권업종소분류코드", "'Z99999'",
+                                              "raw ->> '상권업종소분류코드' = 'G20405' AND row_no % 2 = 0")}},
+           "dong_profile.convenience_store*", [("raw.sbiz_store", "raw.상권업종소분류코드")]),
+    "M7": ({"raw.rent": {"raw": set_key("contractType", "'신규계약'", "raw ->> 'contractType' = '신규' AND item_no % 10 = 0")}},
+           "dong_profile.monthly_deals, jeonse_deals 등, rent_listing 행 수", [("raw.rent", "raw.contractType")]),
 }
 
 
@@ -54,24 +72,26 @@ def columns(conn, schema, table):
                                        "AND table_name = %s ORDER BY ordinal_position", [schema, table])]
 
 
-def make_stg_mut(conn, changes, params):
-    conn.execute("DROP SCHEMA IF EXISTS stg_mut CASCADE; CREATE SCHEMA stg_mut")
-    for table in SOURCES:
-        exprs = changes.get(table, {})
-        cols = columns(conn, "stg", table)
-        assert set(exprs) <= set(cols), (table, exprs)
-        select = ", ".join(f"({exprs[c]})::{typ(conn, table, c)} AS {c}" if c in exprs else c for c in cols)
-        conn.execute(f"CREATE VIEW stg_mut.{table} AS SELECT {select} FROM stg.{table}".replace("%(station)s",
-                                                                                             f"'{params['station']}'"))
+def make_mut(conn, changes, params):
+    for schema, tables in SOURCES.items():
+        conn.execute(f"DROP SCHEMA IF EXISTS {schema}_mut CASCADE; CREATE SCHEMA {schema}_mut")
+        for table in tables:
+            name = f"{schema}.{table}"
+            exprs = changes.get(name, {})
+            cols = columns(conn, schema, table)
+            assert set(exprs) <= set(cols), (name, exprs)
+            select = ", ".join(f"({exprs[c]})::{typ(conn, name, c)} AS {c}" if c in exprs else c for c in cols)
+            conn.execute(f"CREATE VIEW {schema}_mut.{table} AS SELECT {select} FROM {name}".replace(
+                "%(station)s", f"'{params['station']}'"))
 
 
 def typ(conn, table, column):
     return conn.execute("SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = %s::regclass "
-                        "AND attname = %s", [f"stg.{table}", column]).fetchone()[0]
+                        "AND attname = %s", [table, column]).fetchone()[0]
 
 
 def dbt(suffix):
-    vars_ = json.dumps({"source_schema": "stg_mut", "build_suffix": suffix})
+    vars_ = json.dumps({"source_schema": "stg_mut", "raw_schema": "raw_mut", "build_suffix": suffix})
     for cmd in (["seed", "--full-refresh"], ["run"]):
         out = subprocess.run(DBT + cmd + ["--vars", vars_, "--target-path", "target/mut", "--log-path", "logs/mut"],
                              cwd=DBT_DIR, capture_output=True, text=True)
@@ -99,9 +119,8 @@ def diff(conn, left, right):
     return result
 
 
-def predicted(conn, changes):
-    """지도: 바꾼 stg 컬럼에서 닿는 상품 컬럼."""
-    pairs = [(f"stg.{t}", c) for t, cols in changes.items() for c in cols]
+def predicted(conn, pairs):
+    """지도: 바꾼 원천 (표, 컬럼)에서 닿는 상품 컬럼."""
     found = set()
     for t, c in pairs:
         found |= {(r[0].removeprefix("product."), r[1]) for r in conn.execute(
@@ -111,7 +130,7 @@ def predicted(conn, changes):
 
 
 def drop_all(conn):
-    for s in ("stg_mut", "wh_mut", "mart_mut", "wh_mut0", "mart_mut0"):
+    for s in ("stg_mut", "raw_mut", "stg_dbt_mut", "wh_mut", "mart_mut", "stg_dbt_mut0", "wh_mut0", "mart_mut0"):
         conn.execute(f"DROP SCHEMA IF EXISTS {s} CASCADE")
 
 
@@ -127,7 +146,7 @@ def main():
         params = {"station": station}
         try:
             started = time.perf_counter()
-            make_stg_mut(conn, {}, params)
+            make_mut(conn, {}, params)
             dbt("_mut0")
             base = diff(conn, "mart", "mart_mut0")
             print(f"M0 대조군 vs 실제 mart: {base}  ({time.perf_counter() - started:.0f}초)")
@@ -135,15 +154,16 @@ def main():
                 raise SystemExit("대조군이 실제 mart와 다릅니다. stg가 그 사이 바뀌었거나 var 기본값이 결과를 바꿨습니다")
             report = []
             for name in names:
-                changes, expected = MUTATIONS[name]
+                changes, expected, sources = MUTATIONS[name]
                 started = time.perf_counter()
-                make_stg_mut(conn, changes, params)
-                conn.execute("DROP SCHEMA IF EXISTS wh_mut CASCADE; DROP SCHEMA IF EXISTS mart_mut CASCADE")
+                make_mut(conn, changes, params)
+                conn.execute("DROP SCHEMA IF EXISTS stg_dbt_mut CASCADE; DROP SCHEMA IF EXISTS wh_mut CASCADE; "
+                             "DROP SCHEMA IF EXISTS mart_mut CASCADE")
                 dbt("_mut")
                 d = diff(conn, "mart_mut0", "mart_mut")
                 observed = {(t, c) for t, v in d.items() for c in v["changed"]}
                 rows = {t: v["rows"] for t, v in d.items() if v["rows"][0] != v["rows"][1]}
-                pred = predicted(conn, changes)
+                pred = predicted(conn, sources)
                 missed = observed - pred
                 report.append((name, changes, expected, observed, rows, pred, missed))
                 print(f"\n{name} {changes} ({time.perf_counter() - started:.0f}초)")

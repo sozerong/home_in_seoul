@@ -1,6 +1,24 @@
-# 혼잡도 정제(결정 42, 61). 규칙 시험은 옛 tests/test_congestion.py의 경우를 dbt unit test로 옮긴 것이다(설계서 2.6 5번).
+# 혼잡도·전월세 정제(결정 42, 61, 72). 규칙 시험은 옛 tests/test_congestion.py의 경우를 dbt unit test로 옮긴 것이다(설계서 2.6 5번).
 # unit test는 DB 표를 읽지 않고 주어진 입력 행으로 모델 SQL만 돌린다. dbt build가 모델보다 먼저 돌려, 실패하면 빌드가 멈춘다.
 models:
+  - name: batch_status
+    description: 한 행 = (출처, 원천 배치). 관문 검사(결정 76)에 하나라도 걸리면 approved가 false이고 그 배치는 정제 결과에 들어가지 않는다(결정 75).
+    columns:
+      - name: source
+        data_tests: [not_null]
+      - name: approved
+        data_tests: [not_null]
+  - name: raw_shape
+    description: 한 행 = (출처, 수집일, 키 집합). 원본 jsonb 키 집합의 이력과 그 모양의 item 수 (결정 82).
+  - name: store
+    description: 한 행 = 정제·검증을 통과한 상가 업소 하나, 서울 전체 업종. 옛 stg.sbiz_store와 같은 모양 (결정 78).
+    columns:
+      - name: store_id
+        data_tests: [not_null]
+  - name: store_quarantine
+    description: 한 행 = 검증에 어긋난 상가 원본 행 하나. 옛 stg.sbiz_store_quarantine과 같은 모양.
+  - name: bjd_code
+    description: 한 행 = (수집일, 시군구, 법정동명) -> 법정동코드. 승인된 상가정보 배치 전체에서 만든다(전월세 C6).
   - name: congestion
     description: 한 행 = 수집일 x 요일 x 호선 x 역 x 방향 x 30분 구간. 옛 stg.congestion과 같은 모양.
     columns:
@@ -8,6 +26,10 @@ models:
         data_tests: [not_null]
   - name: congestion_quarantine
     description: 행 단위(CV1~CV4)는 원본 row 하나에 한 줄, 칸 단위(CV5)는 칸 하나에 한 줄.
+  - name: rent
+    description: 한 행 = 정제·검증을 통과한 전월세 계약 한 건. 옛 stg.rent와 같은 모양 (결정 72).
+  - name: rent_quarantine
+    description: 한 행 = 검증에 어긋난 전월세 item 하나. 옛 stg.rent_quarantine과 같은 모양.
 
 unit_tests:
   - name: congestion_rows_row_rules  # CV1~CV4: 신원 필드가 잘못되면 사유가 붙는다. 여러 규칙에 함께 걸리면 번호 순서로
@@ -68,6 +90,12 @@ unit_tests:
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0700', -0.1
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0730', null
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 2, '2311', 'TIME0800', 34
+          union all select '2026-11-02', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 3, '150', 'TIME0530', 50
+      - input: ref('batch_status')  # 관문(결정 75): 거절된 수집일(11-02)의 칸은 빠진다
+        format: sql  # 배열 컬럼이 있어 dict로 주면 dbt가 빠진 컬럼을 cast(null as ARRAY)로 채워 실패한다(failure_analysis F-1)
+        rows: |
+          select 'congestion' as source, '2026-11-01' as batch_key, '2026-11-01'::date as collected_date, null::text as period, true as approved, '{}'::text[] as failed_checks, now() as checked_at
+          union all select 'congestion', '2026-11-02', '2026-11-02', null, false, '{congestion_raw_shrink}', now()
     expect:
       rows:
         - {row_no: 1, sttn_no4: '0150', slot: '05:30:00', congestion: 10.5}
@@ -88,8 +116,79 @@ unit_tests:
         rows: |
           select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, '-0.1' as value, 3 as row_no, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1", "TIME0830": "5"}'::jsonb as raw, 'TIME0800' as key, -0.1::double precision as number
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '150', '서울역', '상선', '5', 3, '{"TIME0830": "5"}', 'TIME0830', 5
+      - input: ref('batch_status')
+        format: sql
+        rows: |
+          select 'congestion' as source, '2026-11-01' as batch_key, '2026-11-01'::date as collected_date, null::text as period, true as approved, '{}'::text[] as failed_checks, now() as checked_at
     expect:
       format: sql
       rows: |
         select '2026-11-01'::date as collected_date, 'f.xml' as source_file, 1 as row_no, '{CV1,CV4}'::text[] as reasons, '{"LINE": "", "STTN_NO": "15"}'::jsonb as raw, now() as quarantined_at  -- 같은 문장 안의 now()라 모델과 같다
         union all select '2026-11-01', 'f.xml', 3, '{CV5}', '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1"}', now()
+
+  - name: rent_rows_rules  # 옛 tests/test_rent.py의 경우를 옮김. C2~C6, V1~V9, 경계값, 여러 규칙(번호 순서)
+    model: rent_rows
+    given:
+      - input: source('raw', 'rent')
+        format: sql
+        rows: |
+          select 'offi'::text as source_type, '2026-10-21'::date as collected_date, '11680'::char(5) as sgg_cd, '202609'::char(6) as deal_ymd, 'f.xml'::text as source_file, 1 as item_no, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}'::jsonb as raw, now() as loaded_at
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 2, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 3, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": " ", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 4, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "10", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202602', 'f.xml', 5, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "30", "dealMonth": "2", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 6, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "-1", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 7, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "0", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 8, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "300.01", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 9, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "81", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 10, '{"buildYear": "2004", "contractTerm": " ", "contractType": "기타", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 11, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "없는동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 12, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "산12", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 13, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "산10-22", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 14, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "12가", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 15, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "산", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 16, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "abc", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 17, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": " ", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "없는동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 18, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "300", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+          union all select 'offi', '2026-10-21', '11680', '202609', 'f.xml', 19, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "-5", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}', now()
+      - input: ref('bjd_code')
+        rows:
+          - {collected_date: '2026-10-21', sgg_cd: '11680', bjd_nm: 역삼동, bjd_cd: '1168010100'}
+          - {collected_date: '2026-01-01', sgg_cd: '11680', bjd_nm: 없는동, bjd_cd: '1168099999'}  # 옛 수집일 코드표는 안 쓴다
+    expect:
+      rows:
+        - {item_no: 1, reasons: '', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 정상: C3 쉼표, C4 날짜, C6 pnu
+        - {item_no: 2, reasons: '', pnu: '1168010100108240000', deposit: 24500, deal_date: '2026-09-09'}  # 부번이 없으면 0000
+        - {item_no: 3, reasons: 'V1', pnu: '1168010100108240025', deposit: null, deal_date: '2026-09-09'}  # 필수값 없음
+        - {item_no: 4, reasons: 'V2', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-10-09'}  # 요청한 계약년월과 다름
+        - {item_no: 5, reasons: 'V3', pnu: '1168010100108240025', deposit: 24500, deal_date: null}  # 없는 날짜
+        - {item_no: 6, reasons: 'V4', pnu: '1168010100108240025', deposit: -1, deal_date: '2026-09-09'}  # 음수 금액
+        - {item_no: 7, reasons: 'V5', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 면적 0
+        - {item_no: 8, reasons: 'V5', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 면적 상한 초과
+        - {item_no: 9, reasons: 'V6', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 층 상한 초과
+        - {item_no: 10, reasons: 'V7', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 모르는 계약 종류
+        - {item_no: 11, reasons: 'V8', pnu: null, deposit: 24500, deal_date: '2026-09-09'}  # 법정동 코드 없음
+        - {item_no: 12, reasons: '', pnu: '1168010100200120000', deposit: 24500, deal_date: '2026-09-09'}  # 산 지번: 대지구분 2
+        - {item_no: 13, reasons: '', pnu: '1168010100200100022', deposit: 24500, deal_date: '2026-09-09'}  # 산 지번 부번
+        - {item_no: 14, reasons: 'V9', pnu: null, deposit: 24500, deal_date: '2026-09-09'}  # 지번 모양 아님
+        - {item_no: 15, reasons: 'V9', pnu: null, deposit: 24500, deal_date: '2026-09-09'}  # 본번 없음
+        - {item_no: 16, reasons: 'C3', pnu: '1168010100108240025', deposit: null, deal_date: '2026-09-09'}  # 금액 칸에 숫자 아님
+        - {item_no: 17, reasons: 'V1,V8', pnu: null, deposit: null, deal_date: '2026-09-09'}  # 여러 규칙
+        - {item_no: 18, reasons: '', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 경계 통과
+        - {item_no: 19, reasons: '', pnu: '1168010100108240025', deposit: 24500, deal_date: '2026-09-09'}  # 경계 통과
+
+  - name: rent_rows_values  # C1: 출처마다 건물 이름 필드가 다르다. C2: 공백 한 칸은 null. 숫자 칸
+    model: rent_rows
+    given:
+      - input: source('raw', 'rent')
+        format: sql
+        rows: |
+          select 'offi'::text as source_type, '2026-10-21'::date as collected_date, '11680'::char(5) as sgg_cd, '202609'::char(6) as deal_ymd, 'f.xml'::text as source_file, 1 as item_no, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "offiNm": "대우디오빌플러스", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "sggNm": "강남구", "umdNm": "역삼동", "useRRRight": " "}'::jsonb as raw, now() as loaded_at
+          union all select 'rh', '2026-10-21', '11680', '202609', 'g.xml', 2, '{"buildYear": "2004", "contractTerm": " ", "contractType": " ", "dealDay": "9", "dealMonth": "9", "dealYear": "2026", "deposit": "24,500", "excluUseAr": "38.96", "floor": "3", "jibun": "824-25", "monthlyRent": "0", "preDeposit": " ", "preMonthlyRent": " ", "sggCd": "11680", "umdNm": "역삼동", "useRRRight": " ", "mhouseNm": "청아람", "houseType": "다세대"}', now()
+      - input: ref('bjd_code')
+        rows:
+          - {collected_date: '2026-10-21', sgg_cd: '11680', bjd_nm: 역삼동, bjd_cd: '1168010100'}
+    expect:
+      rows:
+        - {item_no: 1, building_name: 대우디오빌플러스, house_type: null, monthly_rent: 0, contract_type: null, excl_area: 38.96, floor: 3, build_year: 2004, reasons: ''}
+        - {item_no: 2, building_name: 청아람, house_type: 다세대, monthly_rent: 0, contract_type: null, excl_area: 38.96, floor: 3, build_year: 2004, reasons: ''}
