@@ -363,7 +363,7 @@ CREATE TABLE IF NOT EXISTS raw.congestion (
 | U1 | MCP Python SDK 버전과 FastMCP stdio가 Windows에서 Claude Code와 붙는지 | P4-5 |
 | U2 | `dbt --vars`로 source schema와 빌드 접미사를 바꿔도 기본 실행 결과가 같은지 | P4-6 변이 시험 전 |
 | U3 | sqlglot이 `percentile_cont ... within group`, 집계 FILTER, `make_time`을 postgres 방언으로 문제없이 파싱하는지 (dong_rent_summary, commute_od는 사전 시험에서 qualify까지 통과) | P4-2 |
-| U4 | Metabase가 새 스키마 `lineage`를 읽는지 | P4-3 |
+| U4 | Metabase가 새 스키마 `lineage`를 읽는지 | P4-3. **닫음 (2026-11-13):** `metabase_setup` 재실행 뒤 읽기 전용 계정(metabase_ro)으로 `lineage.edge` 1,001행, `lineage.downstream`, `lineage.run` 조회 성공. 스키마 동기화에 lineage 표·뷰 7개, raw, stg_dbt가 보인다. 권한은 `setup_role`의 기본 권한(ALTER DEFAULT PRIVILEGES)으로 따라왔다 |
 | U5 | 생활이동의 귀가 방향 이동유형 값 | S6b |
 | U6 | `stg_dbt.congestion` 전체 재빌드 시간이 수집일이 쌓여도 감당할 만한지 (1년이면 약 340만 행 추정) | 이전 뒤 측정 |
 

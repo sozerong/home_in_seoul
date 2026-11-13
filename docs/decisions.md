@@ -554,6 +554,11 @@
   - C. CI에서 푸시마다. 단점: DB가 없어 저장할 수 없고(결정 47), `dbt compile`이 DB 연결을 요구하는지 [확인 필요], CI에서 Spark를 띄우기 무겁다.
 - 결정과 이유: B (2026-11-12, 사용자가 추천안을 승인). 리니지는 상품을 만드는 흐름의 일부가 아니라 그 흐름을 관찰하는 메타데이터라 실패가 번지지 않게 뗀다.
 - 검증: (구현 후) wh_load 수동 실행 뒤 lineage DAG가 Asset으로 한 번 도는지, lineage를 일부러 실패시켜도 wh_load와 상품은 영향이 없는지 본다.
+  - 2026-11-13 실행 (Airflow): 연결은 결정 70 검증에 적었다. 실패 시험: `lineage.edge_raw`에 회차 18 이후 행을 거부하는 제약(`CHECK (run_id <= 18) NOT VALID`)을 잠깐 걸고 wh_load를 손으로 돌렸다.
+    - wh_load 성공(빌드, 교체, 내보내기). 상품 manifest가 새로 쓰였고(10:00:11) 파일 8개 sha256이 직전과 같다.
+    - 이어서 Asset으로 깨어난 lineage DAG만 실패. `lineage.run` 회차 19가 failed(간선 0행)로 남았고, 지도 뷰(`lineage.edge`)는 직전 성공 회차 18을 그대로 보여 줬다.
+    - 실패 알림: `logs/alerts.log`와 `ops.failure_log`에 lineage / extract_lineage 한 줄.
+    - 제약을 지우고 Airflow에서 lineage DAG를 손으로 다시 돌리니 회차 20 success(trigger manual, 간선 1,001), 회차 18과 `run_diff` 0행.
 - 결과와 남은 것: P5에서 내보내기가 리니지를 읽게 되면 순서 의존이 생기므로 그때 다시 본다. 나중에 Kubernetes로 옮길 때(GH프로젝트 계획) 걸리는 점: 지금은 lineage 작업이 wh_load가 같은 컨테이너 파일시스템에 남긴 `target/compiled/`를 읽는다. 작업마다 다른 파드에서 도는 실행 방식에서는 이 파일이 보이지 않으므로, 공유 볼륨에서 읽거나 lineage 작업이 스스로 `dbt compile`을 하도록 바꿔야 한다.
 
 ## 결정 51. 리니지 제공: 뷰 위에 MCP 서버 (P4)
@@ -643,6 +648,7 @@
 - 선택지: A. dbt 모델을 `stg`에 만든다. 단점: 스키마 통째 교체를 쓸 수 없고 Python 표와 섞인다. B. wh 스키마 안에 둔다. 단점: 층이 섞여 리니지 그림이 흐려진다. C. 새 스키마 `stg_dbt`에 만들고 교체 목록을 `['stg_dbt', 'wh', 'mart']`로 늘린다. 장점: 매크로가 이미 목록을 받으므로 기본값만 바꾸면 되고, 정제 결과도 검사를 통과해야 교체된다. 단점: 이전 기간에 스테이징이 두 스키마에 나뉜다.
 - 결정과 이유: C (2026-11-13, 사용자가 판단을 위임). 모든 출처가 옮겨지면 `stg`로 이름을 합칠지 그때 정한다.
 - 검증: 교체 실패 주입(결정 32와 같은 방법)으로 세 스키마가 함께 되돌아가는지 본다.
+  - 2026-11-13 실행: 실제 기본 목록(`stg_dbt`, `wh`, `mart`)으로 했다. `dbt run --select stg_dbt wh`로 `stg_dbt_build`, `wh_build`만 만들고 `mart_build`는 만들지 않은 채 `dbt run-operation swap_schemas`를 돌렸다. 종료 코드 1, "schema mart_build does not exist". 앞의 두 교체도 취소됐다: 실제 표 OID가 그대로(stg_dbt.congestion 63447, wh.dim_dong 63465, mart.dong_profile 63680), 빌드 스키마 2개가 그대로 남고 `_old` 스키마는 생기지 않았다. 행 수 stg_dbt.congestion 325,845, wh.fact_congestion 65,169, mart.dong_profile 426 그대로. 시험 뒤 `drop_build_schemas`로 빌드 스키마를 지웠다.
 - 결과와 남은 것: `fact_congestion`은 `source('stg', 'congestion')`에서 `ref('congestion')`로 바뀐다.
 
 ## 결정 62. 정제 모델 재빌드: 매번 전체 (결정 42)
@@ -714,7 +720,7 @@
 - 상황: 결정 57로 `export_product`가 끝나면 `wh.built` Asset을 갱신한다. 처음에 `postgres://db:5432/seoul/wh`로 적었더니 Airflow가 "postgres URI는 DB, 스키마, 표 세 단계가 있어야 한다"며 `assets.py`를 불러오는 DAG 8개 모두를 불러오지 못했다.
 - 선택지: A. 아무 표 이름을 붙인 postgres URI(`.../mart/dong_profile`). 단점: 그 표 하나만 바뀐다는 뜻으로 읽힌다. B. 실제로 마지막에 바뀌는 것, 내보낸 상품 폴더 `file:///opt/project/product`.
 - 결정과 이유: B (2026-11-13, 사용자가 판단을 위임). `export_product`가 마지막으로 쓰는 것이 이 폴더이고, 리니지 상품 층도 이 내보내기를 기준으로 한다(결정 55).
-- 검증: DagBag 오류 0, DAG 8개. 2026-11-13 wh_load(asset_triggered) 성공 직후 lineage DAG가 asset_triggered로 돌아 성공했다. lineage.run 회차 15: trigger asset, 엔진 spark, git 921901a, 간선 909, 7.9초, 직전 회차(14, manual)와 `run_diff` 0행. lineage를 일부러 실패시켜 wh_load가 무사한지는 따로 돌리지 않았다. DAG가 나뉘어 있어 lineage는 wh_load가 끝난 뒤에만 시작한다.
+- 검증: DagBag 오류 0, DAG 8개. 2026-11-13 wh_load(asset_triggered) 성공 직후 lineage DAG가 asset_triggered로 돌아 성공했다. lineage.run 회차 15: trigger asset, 엔진 spark, git 921901a, 간선 909, 7.9초, 직전 회차(14, manual)와 `run_diff` 0행. lineage를 일부러 실패시킨 시험은 결정 50 검증에 적었다.
 - 결과와 남은 것: 같은 실수를 막도록 Asset을 더할 때는 DagBag 오류부터 본다. DAG 파일 이름은 `column_lineage.py`(dag_id `lineage`)로 했다. dags 폴더가 sys.path에 들어가 `lineage.py`면 레포의 `lineage` 패키지를 가린다.
 
 ## 결정 71. 혼잡도 SQL 이전의 구현 세부 (결정 42, 60~64 구현)
