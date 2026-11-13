@@ -3,20 +3,24 @@
 
 -- 기간: 생활이동이 있는 최근 6개 대상연월 (결정 36, 전월세 rent_listing의 최근 6개월과 같은 기준).
 
-with commute_months as (
-    select distinct target_ym from {{ ref('fact_commute') }} order by target_ym desc limit 6
+with commute as (  -- 범위 C(결정 9): 평일, 도착 07~09시, 야간상주지 -> 주간상주지(HW). 경계 표에서 여기서 고른다(design 3.5)
+    select * from {{ ref('fact_commute') }}
+    where day_type = '평일' and hour_group = '07_09' and move_type = 'HW'
 ),
 
-by_code as (
+commute_months as (
+    select distinct target_ym from commute order by target_ym desc limit 6
+),
+
+by_code as (  -- 경계 표의 합에서 평균을 다시 낸다. 가려진(*) 행은 합에 들어 있지 않다. 전체 나이 = 두 나이 구간의 합
     select origin_cd, dest_cd,
-           sum(population * avg_minutes) filter (where age in ('20', '25', '30') and population is not null)
-             / nullif(sum(population) filter (where age in ('20', '25', '30') and population is not null), 0) as avg_minutes_age20_34,
-           coalesce(sum(population) filter (where age in ('20', '25', '30')), 0) as population_age20_34,
-           sum(population * avg_minutes) filter (where population is not null)
-             / nullif(sum(population) filter (where population is not null), 0) as avg_minutes_all_ages,
+           sum(population_minutes) filter (where age_group = '20_34')
+             / nullif(sum(population) filter (where age_group = '20_34'), 0) as avg_minutes_age20_34,
+           coalesce(sum(population) filter (where age_group = '20_34'), 0) as population_age20_34,
+           sum(population_minutes) / nullif(sum(population), 0) as avg_minutes_all_ages,
            coalesce(sum(population), 0) as population_all_ages,
            string_agg(distinct target_ym, ',' order by target_ym) as target_months
-    from {{ ref('fact_commute') }}
+    from commute
     where target_ym in (select target_ym from commute_months)
     group by origin_cd, dest_cd
 ),

@@ -5,10 +5,10 @@ with manual as (
     select dong_cd_2021, dong_id from {{ ref('map_dong_2021_manual') }}
 ),
 
-code as (
-    select origin_cd as code from {{ source('stg', 'living_migration') }}
+code as (  -- 생활이동 경계 표(서울, HW·WH, 모든 시간대)에 나오는 코드
+    select origin_cd as code from {{ source('stg', 'living_commute') }}
     union
-    select dest_cd from {{ source('stg', 'living_migration') }}
+    select dest_cd from {{ source('stg', 'living_commute') }}
 )
 
 select dong_cd_2021, dong_id, 'manual'::text as method

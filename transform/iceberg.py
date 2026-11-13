@@ -10,9 +10,10 @@ import sys
 from common import ROOT, read_env
 
 
-def spark_session(app):
+def spark_session(app, conf=None):
+    """conf: 덮어쓸 Spark 설정. 엔진 분석(3.10)에서 메모리, 셔플 파티션, AQE, 이벤트 로그를 바꾼다."""
     from pyspark.sql import SparkSession
-    spark = (SparkSession.builder.master("local[*]").appName(app)
+    builder = (SparkSession.builder.master("local[*]").appName(app)
              .config("spark.jars", ",".join(sorted(glob.glob("/opt/spark-jars/*.jar"))))
              .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions")
              .config("spark.sql.catalog.lh", "org.apache.iceberg.spark.SparkCatalog")
@@ -22,8 +23,10 @@ def spark_session(app):
              .config("spark.sql.catalog.lh.jdbc.password", read_env("POSTGRES_PASSWORD"))
              .config("spark.sql.catalog.lh.warehouse", f"file:{ROOT / 'lakehouse'}")
              .config("spark.driver.memory", "8g")  # local 모드에서는 드라이버가 일꾼이다. 측정 5와 같은 값
-             .config("spark.ui.enabled", "false").config("spark.ui.showConsoleProgress", "false")
-             .getOrCreate())
+             .config("spark.ui.enabled", "false").config("spark.ui.showConsoleProgress", "false"))
+    for key, value in (conf or {}).items():
+        builder = builder.config(key, value)
+    spark = builder.getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     return spark
 

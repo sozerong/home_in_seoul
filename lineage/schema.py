@@ -1,6 +1,6 @@
 """1단계: 스키마 추론 (결정 53). DB에 묻지 않고 레포 안의 것으로 표마다 컬럼 목록을 만든다.
 
-- 소스: warehouse/sql의 stg DDL(01~06)과 원본 표 DDL(09·10_raw_*)의 CREATE TABLE
+- 소스: warehouse/sql의 stg DDL(*_stg_*)과 원본 표 DDL(*_raw_*)의 CREATE TABLE, spark_sql/iceberg_tables.sql(Iceberg 원본, 코드표)
 - seed: warehouse/dbt/seeds/*.csv 첫 줄
 - 모델: manifest의 depends_on 순서대로 컴파일된 SQL을 qualify해 얻은 출력 컬럼
 앞 모델의 출력이 뒤 모델의 입력이라 순서대로만 돈다(결정 56). 키는 컴파일된 SQL 그대로(seoul.wh_build.dim_dong).
@@ -17,7 +17,8 @@ from common import ROOT
 
 DBT = ROOT / "warehouse" / "dbt"
 CATALOG = "seoul"  # profiles.yml의 dbname
-STG_DDL = sorted([*(ROOT / "warehouse" / "sql").glob("0[1-6]_stg_*.sql"), *(ROOT / "warehouse" / "sql").glob("[0-9][0-9]_raw_*.sql")])
+STG_DDL = sorted([*(ROOT / "warehouse" / "sql").glob("[0-9][0-9]_stg_*.sql"), *(ROOT / "warehouse" / "sql").glob("[0-9][0-9]_raw_*.sql")])
+SPARK_DDL = ROOT / "spark_sql" / "iceberg_tables.sql"  # Spark SQL 묶음이 읽는 Iceberg 원본, 코드표 (결정 91)
 
 
 def stg_tables():
@@ -60,6 +61,11 @@ def build(manifest):
 
     for (db, name), columns in stg_tables().items():
         put(db, name, columns)
+    for statement in sqlglot.parse(SPARK_DDL.read_text(encoding="utf-8"), dialect="spark"):
+        if isinstance(statement, exp.Create) and statement.kind == "TABLE":
+            t = statement.this.this
+            schema.setdefault(t.catalog, {}).setdefault(t.db, {})[t.name] = {
+                c.name: c.args["kind"].sql("spark") for c in statement.this.expressions if isinstance(c, exp.ColumnDef)}
     for node in manifest["nodes"].values():
         if node["resource_type"] == "seed":
             with open(DBT / node["original_file_path"], encoding="utf-8", newline="") as f:

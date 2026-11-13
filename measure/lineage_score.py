@@ -12,12 +12,15 @@ import sys
 from common import ROOT
 from lineage import schema as S
 from lineage.edges import extract_edges
+from lineage.spark_sql import FOLDERS, combined_sql
 
 TRUTH = ROOT / "tests" / "lineage_truth"
 
 
 def normalize(table):
     """seoul.wh_build.dim_dong -> wh.dim_dong (설계서 1.7의 lineage.edge와 같은 정규화)"""
+    if not table.startswith("seoul."):  # Iceberg(lh.*), 레이크 코드표(lake.*)는 그대로 (lineage.norm과 같음)
+        return table
     db, name = table.split(".")[-2:]
     return f"{db.removesuffix('_build')}.{name}"
 
@@ -32,12 +35,15 @@ def keyed(rows):
 def main():
     detail = "--detail" in sys.argv
     schema, models = S.build(S.load_manifest())
-    by_table = {normalize(name): (name, sql) for name, _, sql in models}
+    by_table = {normalize(name): (name, sql, "postgres") for name, _, sql in models}
+    for folder, name in FOLDERS.items():  # Spark SQL 묶음은 묶음 전체가 모델 하나다(lineage/spark_sql.py)
+        by_table[normalize(name)] = (name, combined_sql(folder), "spark")
     totals = collections.Counter()
     for path in sorted(TRUTH.glob("*.csv")):
-        table = ("wh." if path.stem.startswith("map_") else "mart.") + path.stem
-        name, sql = by_table[table]
-        got_rows = [{**r, "source_table": normalize(r["source_table"])} for r in extract_edges(sql, name, schema)
+        table = (path.stem.replace("stg_", "stg.", 1) if path.stem.startswith("stg_")
+                 else ("wh." if path.stem.startswith("map_") else "mart.") + path.stem)
+        name, sql, dialect = by_table[table]
+        got_rows = [{**r, "source_table": normalize(r["source_table"])} for r in extract_edges(sql, name, schema, dialect)
                     if r["status"] == "ok"]
         truth, got = keyed(csv.DictReader(open(path, encoding="utf-8"))), keyed(got_rows)
         print(f"## {table}")

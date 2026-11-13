@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS lineage.run (
 CREATE TABLE IF NOT EXISTS lineage.edge_raw (
     run_id        bigint NOT NULL REFERENCES lineage.run,
     sql_file      text NOT NULL,               -- target/compiled 기준 경로. 상품 층은 'export_product.py'
-    file_kind     text NOT NULL CHECK (file_kind IN ('model', 'test', 'product')),
+    file_kind     text NOT NULL CHECK (file_kind IN ('model', 'test', 'product', 'spark_sql')),  -- spark_sql: 결정 91
     target_table  text,                        -- 원문 그대로 (seoul.wh_build.dim_dong, product.dong_profile)
     target_column text,
     source_table  text,
@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS lineage.edge_raw (
     detail        text                         -- 오류 메시지
 );
 CREATE INDEX IF NOT EXISTS edge_raw_run ON lineage.edge_raw (run_id);
+-- 이미 있는 표의 검사 조건을 맞춘다(spark_sql 추가, 결정 91). 다시 실행해도 같다
+ALTER TABLE lineage.edge_raw DROP CONSTRAINT IF EXISTS edge_raw_file_kind_check;
+ALTER TABLE lineage.edge_raw ADD CONSTRAINT edge_raw_file_kind_check CHECK (file_kind IN ('model', 'test', 'product', 'spark_sql'));
 -- 이미 있는 표에 ROWSET을 허용한다(결정 80). 다시 실행해도 같다
 ALTER TABLE lineage.edge_raw DROP CONSTRAINT IF EXISTS edge_raw_kind_check;
 ALTER TABLE lineage.edge_raw ADD CONSTRAINT edge_raw_kind_check CHECK (kind IN ('DIRECT', 'INDIRECT', 'ROWSET'));

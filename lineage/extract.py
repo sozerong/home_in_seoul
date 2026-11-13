@@ -3,6 +3,7 @@
 1 드라이버: 스키마 추론(순서대로만 됨)        lineage/schema.py
 2 엔진:     SQL 파일마다 extract_edges        lineage/edges.py  ← 엔진(python/spark)은 여기서만 고른다
 3 드라이버: 상품 층 간선                      lineage/product.py
+           Spark SQL 묶음 간선                lineage/spark_sql.py
 4 저장:     lineage.run 한 행 + lineage.edge_raw (python은 psycopg COPY, spark는 JDBC)
 입력은 warehouse/dbt/target(manifest, compiled). dbt build/compile이 먼저 돌아 있어야 한다(compile은 DB가 필요하다).
 사용법: python -m lineage.extract --engine python|spark --trigger manual|asset
@@ -20,6 +21,7 @@ from common import ROOT, read_env
 from lineage import schema as S
 from lineage.edges import extract_edges
 from lineage.product import product_edges
+from lineage.spark_sql import spark_sql_edges
 from warehouse.build_record import git_state, sql_hashes
 
 COLUMNS = ["run_id", "sql_file", "file_kind", "target_table", "target_column", "source_table", "source_column",
@@ -69,6 +71,7 @@ def main():
              len(models), sql_hashes(manifest)[1], clean]).fetchone()[0]
         try:
             product = [{**e, "sql_file": "export_product.py", "file_kind": "product"} for e in product_edges(schema)]
+            product += spark_sql_edges(schema)  # Spark SQL 묶음(결정 91). 묶음 하나가 일 하나라 드라이버에서 만든다
             if args.engine == "python":
                 edges = run_python(models, schema) + product
                 with conn.cursor().copy(f"COPY lineage.edge_raw ({', '.join(COLUMNS)}) FROM STDIN") as copy:

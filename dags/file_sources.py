@@ -13,7 +13,7 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, task
 
 from alerting import notify_failure
-from assets import RAW_SBIZ_STORE, STG_LIVING_MIGRATION, STG_PARCEL, STG_SGIS_DONG
+from assets import RAW_SBIZ_STORE, STG_LIVING_COMMUTE, STG_LIVING_MIGRATION, STG_PARCEL, STG_SGIS_DONG
 
 INBOX = "/opt/project/lake/_inbox"
 
@@ -22,16 +22,18 @@ INBOX = "/opt/project/lake/_inbox"
 SPARK_PY = "/opt/airflow/spark-venv/bin/python"
 LIVING_CLEAN = ('for f in "${files[@]}"; do n=$(basename "$f"); case "$n" in 생활이동_행정동_*.zip) '
                 f'ym=${{n#생활이동_행정동_}}; ym=${{ym%.zip}}; {SPARK_PY} -m transform.living_iceberg "$D" "$ym"; '
-                f'{SPARK_PY} -m transform.living_migration "$D" "$ym";; esac; done')
+                f'{SPARK_PY} -m transform.living_migration "$D" "$ym";; esac; done; '
+                # 경계 표는 Iceberg 원본 전체에서 매번 다시 만든다(결정 88, 90). 옛 경로(living_migration)는 8절에서 뺀다
+                f'{SPARK_PY} -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status')
 
-SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset)
-    "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, STG_LIVING_MIGRATION),
-    "sbiz_store": (None, 600, 'python -m transform.sbiz_store_raw "$D"', RAW_SBIZ_STORE),  # 파싱만, 정제는 dbt(결정 78)
-    "sgis_boundary": (None, 600, 'python -m transform.boundary sgis_dong "$D"', STG_SGIS_DONG),
-    "parcel_boundary": (None, 600, 'python -m transform.boundary parcel "$D"', STG_PARCEL),
+SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset 목록)
+    "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, [STG_LIVING_MIGRATION, STG_LIVING_COMMUTE]),
+    "sbiz_store": (None, 600, 'python -m transform.sbiz_store_raw "$D"', [RAW_SBIZ_STORE]),  # 파싱만, 정제는 dbt(결정 78)
+    "sgis_boundary": (None, 600, 'python -m transform.boundary sgis_dong "$D"', [STG_SGIS_DONG]),
+    "parcel_boundary": (None, 600, 'python -m transform.boundary parcel "$D"', [STG_PARCEL]),
 }
 
-for source, (schedule, timeout, clean, asset) in SOURCES.items():
+for source, (schedule, timeout, clean, assets) in SOURCES.items():
     with DAG(
         dag_id=f"file_{source}",
         schedule=schedule,
@@ -53,6 +55,6 @@ for source, (schedule, timeout, clean, asset) in SOURCES.items():
                           f'files=(lake/_inbox/{source}/*.zip); [ -e "${{files[0]:-}}" ] || {{ echo "inbox가 비어 있습니다"; exit 1; }}; '
                           f'for f in "${{files[@]}}"; do python -m ingestion.register_file {source} "$f" --collected-date "$D"; done; '
                           f'{clean}; rm -f "${{files[@]}}"'),
-            outlets=[asset],
+            outlets=assets,
         )
         wait_for_file() >> load

@@ -125,7 +125,9 @@ class Resolver:
         return scope
 
     def star(self, scope, seen):
-        """count(*)의 출처: FROM 표의 행."""
+        """count(*)의 출처: FROM 표의 행. FROM이 UNION이면 갈래마다 (F-10 처방 A)."""
+        if isinstance(scope.expression, exp.SetOperation):
+            return [leaf for branch in self.branches(scope.expression) for leaf in self.star(self.scope_of[id(branch)], seen)]
         source_expr = scope.expression.args["from_"].this  # sqlglot 30에서 인자 이름이 from_이다
         alias = source_expr.alias_or_name
         seen.add((id(scope), alias))
@@ -236,11 +238,12 @@ def subkind(leaf):
     return "AGGREGATION" if leaf.agg else "TRANSFORMATION" if leaf.transform else "IDENTITY"
 
 
-def extract_edges(sql_text, model, schema):
-    """컴파일된 SQL 하나의 간선 목록. 실패해도 예외를 던지지 않고 status='parse_error' 행 하나를 돌려준다."""
+def extract_edges(sql_text, model, schema, dialect=DIALECT):
+    """컴파일된 SQL 하나의 간선 목록. 실패해도 예외를 던지지 않고 status='parse_error' 행 하나를 돌려준다.
+    dialect: dbt 모델은 postgres, Spark SQL 묶음(lineage/spark_sql.py)은 spark."""
     base = {"target_table": model}
     try:
-        tree = qualify(sqlglot.parse_one(sql_text, dialect=DIALECT), schema=schema, dialect=DIALECT,
+        tree = qualify(sqlglot.parse_one(sql_text, dialect=dialect), schema=schema, dialect=dialect,
                        validate_qualify_columns=False)
         root = build_scope(tree)
         resolver = Resolver(root)

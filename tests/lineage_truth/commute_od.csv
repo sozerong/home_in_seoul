@@ -1,27 +1,25 @@
 target_column,source_table,source_column,kind,subkind,note
 origin_dong_id,wh.map_dong_2021,dong_id,DIRECT,IDENTITY,mo.dong_id
 dest_dong_id,wh.map_dong_2021,dong_id,DIRECT,IDENTITY,md.dong_id
-avg_minutes_age20_34,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population*avg_minutes)/sum(population)
-avg_minutes_age20_34,wh.fact_commute,avg_minutes,DIRECT,AGGREGATION,
-avg_minutes_all_ages,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population*avg_minutes)/sum(population)
-avg_minutes_all_ages,wh.fact_commute,avg_minutes,DIRECT,AGGREGATION,
-avg_minutes,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population*avg_minutes)/sum(population)
-avg_minutes,wh.fact_commute,avg_minutes,DIRECT,AGGREGATION,
+avg_minutes_age20_34,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population_minutes)/sum(population)
+avg_minutes_age20_34,wh.fact_commute,population_minutes,DIRECT,AGGREGATION,
+avg_minutes_all_ages,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population_minutes)/sum(population)
+avg_minutes_all_ages,wh.fact_commute,population_minutes,DIRECT,AGGREGATION,
+avg_minutes,wh.fact_commute,population,DIRECT,AGGREGATION,가중 평균 sum(population_minutes)/sum(population)
+avg_minutes,wh.fact_commute,population_minutes,DIRECT,AGGREGATION,
 population_age20_34,wh.fact_commute,population,DIRECT,AGGREGATION,
 population_all_ages,wh.fact_commute,population,DIRECT,AGGREGATION,
 copied_from_2021_split_dong,wh.map_dong_2021,*,DIRECT,AGGREGATION,split: count(*) > 1
 distance_km,wh.dim_dong,geom,DIRECT,TRANSFORMATION,"dgo, dgd의 ST_PointOnSurface 사이 거리"
 target_months,wh.fact_commute,target_ym,DIRECT,AGGREGATION,string_agg(distinct target_ym)
-avg_minutes_age20_34,wh.fact_commute,age,INDIRECT,CONDITIONAL,"집계 filter (where age in 20, 25, 30)"
-population_age20_34,wh.fact_commute,age,INDIRECT,CONDITIONAL,"집계 filter (where age in 20, 25, 30)"
-avg_minutes_age20_34,wh.fact_commute,population,INDIRECT,CONDITIONAL,집계 filter (where population is not null)
-avg_minutes_all_ages,wh.fact_commute,population,INDIRECT,CONDITIONAL,집계 filter (where population is not null)
+avg_minutes_age20_34,wh.fact_commute,age_group,INDIRECT,CONDITIONAL,집계 filter (where age_group = '20_34')
+population_age20_34,wh.fact_commute,age_group,INDIRECT,CONDITIONAL,집계 filter (where age_group = '20_34')
 avg_minutes,wh.fact_commute,population,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
 basis,wh.fact_commute,population,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
-avg_minutes,wh.fact_commute,age,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
-basis,wh.fact_commute,age,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
-avg_minutes,wh.fact_commute,avg_minutes,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
-basis,wh.fact_commute,avg_minutes,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
+avg_minutes,wh.fact_commute,age_group,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
+basis,wh.fact_commute,age_group,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
+avg_minutes,wh.fact_commute,population_minutes,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
+basis,wh.fact_commute,population_minutes,INDIRECT,CONDITIONAL,case when population_age20_34 >= 30 and avg_minutes_age20_34 is not null
 copied_from_2021_split_dong,wh.map_dong_2021,dong_cd_2021,INDIRECT,GROUP_BY,split: group by dong_cd_2021
 origin_dong_id,wh.map_dong_2021,dong_cd_2021,INDIRECT,JOIN,"mo, md, so, sd의 dong_cd_2021 = b.origin_cd/dest_cd"
 dest_dong_id,wh.map_dong_2021,dong_cd_2021,INDIRECT,JOIN,"mo, md, so, sd의 dong_cd_2021 = b.origin_cd/dest_cd"
@@ -133,22 +131,22 @@ basis,wh.fact_commute,population,INDIRECT,FILTER,본문 where avg_minutes_all_ag
 copied_from_2021_split_dong,wh.fact_commute,population,INDIRECT,FILTER,본문 where avg_minutes_all_ages is not null
 distance_km,wh.fact_commute,population,INDIRECT,FILTER,본문 where avg_minutes_all_ages is not null
 target_months,wh.fact_commute,population,INDIRECT,FILTER,본문 where avg_minutes_all_ages is not null
-origin_dong_id,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-dest_dong_id,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-avg_minutes_age20_34,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-population_age20_34,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-avg_minutes_all_ages,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-population_all_ages,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-avg_minutes,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-basis,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-copied_from_2021_split_dong,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-distance_km,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
-target_months,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
+origin_dong_id,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+dest_dong_id,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+avg_minutes_age20_34,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+population_age20_34,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+avg_minutes_all_ages,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+population_all_ages,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+avg_minutes,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+basis,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+copied_from_2021_split_dong,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+distance_km,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
+target_months,wh.fact_commute,population_minutes,INDIRECT,FILTER,같은 where
 *,wh.fact_commute,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
 *,wh.map_dong_2021,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
 *,wh.dim_dong,*,ROWSET,FROM,결정 80 (1) FROM/JOIN 원천표
 *,wh.dim_dong,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
-*,wh.fact_commute,avg_minutes,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+*,wh.fact_commute,population_minutes,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
 *,wh.fact_commute,dest_cd,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
 *,wh.fact_commute,dest_cd,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
 *,wh.fact_commute,origin_cd,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
@@ -158,3 +156,39 @@ target_months,wh.fact_commute,avg_minutes,INDIRECT,FILTER,같은 where
 *,wh.map_dong_2021,dong_cd_2021,ROWSET,GROUP_BY,결정 80 (2) 행 조건 컬럼
 *,wh.map_dong_2021,dong_cd_2021,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
 *,wh.map_dong_2021,dong_id,ROWSET,JOIN,결정 80 (2) 행 조건 컬럼
+origin_dong_id,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+dest_dong_id,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_age20_34,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_all_ages,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_age20_34,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_all_ages,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+copied_from_2021_split_dong,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+distance_km,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+target_months,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+basis,wh.fact_commute,day_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+*,wh.fact_commute,day_type,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+origin_dong_id,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+dest_dong_id,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_age20_34,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_all_ages,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_age20_34,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_all_ages,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+copied_from_2021_split_dong,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+distance_km,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+target_months,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+basis,wh.fact_commute,hour_group,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+*,wh.fact_commute,hour_group,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼
+origin_dong_id,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+dest_dong_id,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_age20_34,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes_all_ages,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+avg_minutes,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_age20_34,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+population_all_ages,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+copied_from_2021_split_dong,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+distance_km,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+target_months,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+basis,wh.fact_commute,move_type,INDIRECT,FILTER,"commute: 평일, 07_09, HW (3.5)"
+*,wh.fact_commute,move_type,ROWSET,FILTER,결정 80 (2) 행 조건 컬럼

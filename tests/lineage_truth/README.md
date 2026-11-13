@@ -60,3 +60,16 @@
 | mart.dong_profile | 82 | 33 | 49 |
 | wh.map_congestion_station | 19 | 7 | 12 |
 | wh.map_dong_mois | 33 | 4 | 29 |
+
+## 생활이동 이전 뒤 (design_remaining_work.md 3.7, 결정 91, 2026-11-13 추가)
+
+- `commute_od.csv`를 다시 썼다. 마트가 경계 표(`stg.living_commute`, `wh.fact_commute` 경유)를 읽고 범위 조건(평일, 07_09, HW)을 마트 WHERE에 두게 되어 출처 컬럼이 바뀌었다. 193줄(DIRECT 13, INDIRECT 163, ROWSET 17).
+- `stg_living_commute.csv`를 새로 두었다. 대상 표는 `stg.living_commute`, 출처는 Spark SQL 묶음(`spark_sql/living`)이 읽는 물리 표 둘이다: Iceberg `lh.living.migration_rows`와 코드표 `lake.seoul_living_migration.code_table`(실행기가 만드는 임시 뷰 `codes`의 원천, `spark_sql/iceberg_tables.sql`). 임시 뷰(`checked`, `clean`, `quarantine`, `batch_status`)는 CTE처럼 풀어 물리 표 컬럼까지 쓴다(원칙 1). 378줄(DIRECT 10, INDIRECT 340, ROWSET 28).
+- `day_type`, `hour_group`, `age_group`은 CASE/IF 결과가 상수뿐이라 원칙 5대로 INDIRECT CONDITIONAL만 있다. **처음에는 DIRECT로 적었다가 추출기 결과를 본 뒤 고쳤다.** 정답이 파서 결과를 본 뒤 바뀐 유일한 곳이고 측정 33에 밝혔다.
+- 관문(`batch_status`)이 원본 전체를 세므로 `latest`(승인된 최근 수집일)를 거친 모든 출력 컬럼에 원본의 검증 열 전부가 INDIRECT로 붙는다. INDIRECT가 많은 이유다.
+
+| 모델 | 줄 | DIRECT | INDIRECT | ROWSET |
+|---|---|---|---|---|
+| mart.commute_od (다시 씀) | 193 | 13 | 163 | 17 |
+| stg.living_commute (새로) | 378 | 10 | 340 | 28 |
+

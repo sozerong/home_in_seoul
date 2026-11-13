@@ -103,3 +103,30 @@ SELECT source, good, quarantined, round(100.0 * quarantined / nullif(good + quar
 
 -- 생활이동 최신 대상연월과 달별 행 수를 표 전체를 훑지 않고 얻는다 (ops.freshness가 12.5초 걸렸다).
 CREATE INDEX IF NOT EXISTS living_migration_target_ym_idx ON stg.living_migration (target_ym);
+
+-- 엔진 실행 한 번 x 단계(stage) 하나 = 한 행 (결정 94-1, design_remaining_work.md 3.3). transform/spark_sql_runner.py가
+-- 실행이 끝나면(실패해도) Spark 이벤트 로그에서 읽어 쓴다. 3.10 엔진 분석의 지표. 시간은 ms, 크기는 byte.
+CREATE TABLE IF NOT EXISTS ops.engine_run (
+    run_id              text NOT NULL,         -- Spark application id
+    engine              text NOT NULL,         -- spark
+    started_at          timestamptz NOT NULL,
+    settings            jsonb NOT NULL,        -- 바꾼 설정(메모리, 셔플 파티션, AQE)
+    ok                  boolean NOT NULL,      -- 실행 전체 성공
+    run_ms              bigint NOT NULL,
+    error               text,
+    stage_id            integer NOT NULL,
+    attempt             integer NOT NULL,
+    job                 text,                  -- 이 단계를 부른 작업 설명(show, test, write)
+    tasks               integer NOT NULL,      -- 끝난 태스크 수
+    failed_tasks        integer NOT NULL,
+    stage_ms            bigint,                -- 제출 ~ 완료. 끝나지 못한 단계는 NULL
+    task_ms_max         bigint,
+    task_ms_median      bigint,
+    shuffle_read_bytes  bigint NOT NULL,
+    shuffle_write_bytes bigint NOT NULL,
+    memory_spill_bytes  bigint NOT NULL,
+    disk_spill_bytes    bigint NOT NULL,
+    peak_exec_mem_bytes bigint,                -- 태스크 최대 실행 메모리(Peak Execution Memory)의 최대
+    jvm_heap_peak_bytes bigint,                -- 단계 동안 JVM 힙 최대 (StageExecutorMetrics)
+    PRIMARY KEY (run_id, stage_id, attempt)
+);
