@@ -7,4 +7,4 @@ select c.collected_date, c.source_file, c.row_no, c.dow, c.line, c.sttn_no,
        c.number::numeric(5, 1) as congestion
 from {{ ref('congestion_cells') }} c
 where c.number between 0 and 300
-  and c.collected_date in (select collected_date from {{ ref('batch_status') }} where source = 'congestion' and approved)  -- 관문(결정 75)
+  and c.collected_date in (select collected_date from {{ ref('batch_status_congestion') }} where source = 'congestion' and approved)  -- 관문(결정 75)

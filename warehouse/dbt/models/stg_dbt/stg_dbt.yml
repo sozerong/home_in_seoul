@@ -91,7 +91,7 @@ unit_tests:
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0730', null
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 2, '2311', 'TIME0800', 34
           union all select '2026-11-02', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 3, '150', 'TIME0530', 50
-      - input: ref('batch_status')  # 관문(결정 75): 거절된 수집일(11-02)의 칸은 빠진다
+      - input: ref('batch_status_congestion')  # 관문(결정 75): 거절된 수집일(11-02)의 칸은 빠진다
         format: sql  # 배열 컬럼이 있어 dict로 주면 dbt가 빠진 컬럼을 cast(null as ARRAY)로 채워 실패한다(failure_analysis F-1)
         rows: |
           select 'congestion' as source, '2026-11-01' as batch_key, '2026-11-01'::date as collected_date, null::text as period, true as approved, '{}'::text[] as failed_checks, now() as checked_at
@@ -116,7 +116,7 @@ unit_tests:
         rows: |
           select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, '-0.1' as value, 3 as row_no, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1", "TIME0830": "5"}'::jsonb as raw, 'TIME0800' as key, -0.1::double precision as number
           union all select '2026-11-01', 'f.xml', '평일', '1호선', '150', '서울역', '상선', '5', 3, '{"TIME0830": "5"}', 'TIME0830', 5
-      - input: ref('batch_status')
+      - input: ref('batch_status_congestion')
         format: sql
         rows: |
           select 'congestion' as source, '2026-11-01' as batch_key, '2026-11-01'::date as collected_date, null::text as period, true as approved, '{}'::text[] as failed_checks, now() as checked_at

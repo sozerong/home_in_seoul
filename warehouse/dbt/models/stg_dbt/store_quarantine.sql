@@ -2,4 +2,4 @@
 select collected_date, source_file, row_no, string_to_array(reasons, ',')::text[] as reasons, raw, now() as quarantined_at
 from {{ ref('store_rows') }}
 where reasons <> ''
-  and concat_ws('/', collected_date, source_file) in (select batch_key from {{ ref('batch_status') }} where source = 'store' and approved)  -- 관문(결정 75)
+  and concat_ws('/', collected_date, source_file) in (select batch_key from {{ ref('batch_status_store') }} where source = 'store' and approved)  -- 관문(결정 75)

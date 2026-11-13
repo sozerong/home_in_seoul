@@ -6,4 +6,4 @@ select collected_date, base_ym::char(6) as base_ym, source_file, row_no,
        adm_cd::char(8) as adm_cd, bjd_cd::char(10) as bjd_cd, lon, lat
 from {{ ref('store_rows') }}
 where reasons = ''
-  and concat_ws('/', collected_date, source_file) in (select batch_key from {{ ref('batch_status') }} where source = 'store' and approved)  -- 관문(결정 75)
+  and concat_ws('/', collected_date, source_file) in (select batch_key from {{ ref('batch_status_store') }} where source = 'store' and approved)  -- 관문(결정 75)

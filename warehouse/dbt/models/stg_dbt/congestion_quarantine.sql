@@ -3,7 +3,7 @@
 select r.collected_date, r.source_file, r.row_no, r.reasons, r.raw, now() as quarantined_at
 from {{ ref('congestion_rows') }} r
 where cardinality(r.reasons) > 0
-  and r.collected_date in (select collected_date from {{ ref('batch_status') }} where source = 'congestion' and approved)  -- 관문(결정 75)
+  and r.collected_date in (select collected_date from {{ ref('batch_status_congestion') }} where source = 'congestion' and approved)  -- 관문(결정 75)
 union all
 select c.collected_date, c.source_file, c.row_no, array['CV5']::text[],
        jsonb_build_object('DOW_SE', c.raw -> 'DOW_SE', 'LINE', c.raw -> 'LINE', 'STTN_NO', c.raw -> 'STTN_NO',
@@ -11,4 +11,4 @@ select c.collected_date, c.source_file, c.row_no, array['CV5']::text[],
        now()
 from {{ ref('congestion_cells') }} c
 where (c.number is null or c.number not between 0 and 300)
-  and c.collected_date in (select collected_date from {{ ref('batch_status') }} where source = 'congestion' and approved)
+  and c.collected_date in (select collected_date from {{ ref('batch_status_congestion') }} where source = 'congestion' and approved)

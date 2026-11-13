@@ -28,4 +28,7 @@ def product_edges(schema, mart_db="mart_build"):
         edges += [{"target_table": f"product.{name}", "target_column": c, "source_table": f"{CATALOG}.{mart_db}.{name}",
                    "source_column": c, "kind": "DIRECT", "subkind": "IDENTITY", "status": "ok", "detail": None}
                   for c in columns]
+        # 상품 파일의 행 집합 = 마트 표의 행 집합 (F-5 처방 A, 결정 97). 없으면 ROWSET 경로가 마트의 '*'에서 끊긴다
+        edges.append({"target_table": f"product.{name}", "target_column": "*", "source_table": f"{CATALOG}.{mart_db}.{name}",
+                      "source_column": "*", "kind": "ROWSET", "subkind": "FROM", "status": "ok", "detail": None})
     return edges

@@ -7,4 +7,4 @@ select source_type, collected_date, source_file, item_no, deal_ymd, sgg_cd, umd_
        deal_date, deposit, monthly_rent, contract_type, contract_term, pre_deposit, pre_monthly_rent, use_rr_right
 from {{ ref('rent_rows') }}
 where reasons = ''
-  and {{ rent_batch_key() }} in (select batch_key from {{ ref('batch_status') }} where source = 'rent' and approved)  -- 관문(결정 75)
+  and {{ rent_batch_key() }} in (select batch_key from {{ ref('batch_status_rent') }} where source = 'rent' and approved)  -- 관문(결정 75)
