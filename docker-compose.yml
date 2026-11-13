@@ -1,6 +1,10 @@
 services:
   db:
     image: postgis/postgis:17-3.5
+    # 자원 상한(결정 101, resource_guard.md L2, 측정 37): db 최대 3.20GiB(dbt 전체 빌드 중) x 1.2 = 3.84 -> 4g. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    # 넘치면 이 컨테이너만 cgroup OOM으로 죽고 OOMKilled=true로 드러난다. 다시 만들지 않고 바꿀 때: docker update --memory 4g --memory-swap 4g <컨테이너>
+    mem_limit: 4g
+    memswap_limit: 4g
     environment:
       POSTGRES_USER: seoul
       POSTGRES_DB: seoul
@@ -20,6 +24,11 @@ services:
   airflow:
     build: .
     image: seoul-airflow:3.3.2
+    # 자원 상한(결정 101, resource_guard.md L2, 측정 37): VM 30.91GiB - 이웃 상한(db 4 + metabase 2 + pgadmin 0.5) - OS·페이지 캐시 2 = 22.41 -> 22g. 그중 평시 몫(최대 1.34 x 1.2 = 1.61)을 뺀 약 20.4GiB가 무거운 작업 몫. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    # 넘치면 이 컨테이너만 cgroup OOM으로 죽고 OOMKilled=true로 드러난다. 다시 만들지 않고 바꿀 때: docker update --memory 22g --memory-swap 22g --cpus 12 <컨테이너>
+    mem_limit: 22g
+    memswap_limit: 22g
+    cpus: 12
     # 개발용 한 컨테이너 실행: 스케줄러, 화면(API 서버), DAG 처리기, 트리거러를 함께 띄운다 (결정 19).
     command: standalone
     depends_on:
@@ -46,6 +55,10 @@ services:
   pgadmin:
     # 브라우저에서 DB에 SQL을 던져 보는 개발용 화면. 파이프라인은 쓰지 않는다.
     image: dpage/pgadmin4:9.10
+    # 자원 상한(결정 101, resource_guard.md L2, 측정 37): 최대 0.26GiB x 1.2 = 0.31 -> 512m. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    # 넘치면 이 컨테이너만 cgroup OOM으로 죽고 OOMKilled=true로 드러난다. 다시 만들지 않고 바꿀 때: docker update --memory 512m --memory-swap 512m <컨테이너>
+    mem_limit: 512m
+    memswap_limit: 512m
     depends_on:
       db:
         condition: service_healthy
@@ -66,6 +79,10 @@ services:
   metabase:
     # 파이프라인 운영 대시보드 (결정 38). 화면 설정은 전용 DB에, 데이터는 읽기 전용 계정으로 본다 (warehouse/metabase_setup.py).
     image: metabase/metabase:v0.64.5.2
+    # 자원 상한(결정 101, resource_guard.md L2, 측정 37): 최대 1.64GiB(JVM) x 1.2 = 1.96 -> 2g. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    # 넘치면 이 컨테이너만 cgroup OOM으로 죽고 OOMKilled=true로 드러난다. 다시 만들지 않고 바꿀 때: docker update --memory 2g --memory-swap 2g <컨테이너>
+    mem_limit: 2g
+    memswap_limit: 2g
     depends_on:
       db:
         condition: service_healthy

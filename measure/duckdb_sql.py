@@ -28,6 +28,7 @@ import psycopg
 
 from common import ROOT, read_env
 from transform.living_migration import load_codes
+from common import heavy_lock, temp_budget
 from transform.spark_sql_runner import record, sql_files
 
 PROFILE_DIR = "/tmp/duckdb-profiles"
@@ -91,7 +92,7 @@ def run(r, args, views, tests):
     for name, sql in tests:
         bad = r.execute(f"test {name}", f"SELECT * FROM ({translate(sql)}) LIMIT 20")
         print(f"{name}: {'통과' if not bad else f'위반 {len(bad)}행 이상'}")
-        failed += [name] if bad else []
+        failed += [name] if bad and name.startswith("test_") else []  # warn_은 출력만(결정 100)
     if failed:
         raise SystemExit(f"테스트 실패: {failed}")
     r.execute("write result", f"CREATE TEMP TABLE result AS SELECT * FROM {views[-1][0]}")
@@ -112,6 +113,7 @@ def main():
     parser.add_argument("--show", nargs="*", default=[])
     parser.add_argument("--memory-limit")
     parser.add_argument("--threads")
+    parser.add_argument("--max-temp", help="임시 폴더 상한(예: 100GiB). 기본: common.temp_budget() (L3)")
     parser.add_argument("--compare", action="store_true")
     args = parser.parse_args()
     views, tests = sql_files(ROOT / args.folder)
@@ -121,10 +123,15 @@ def main():
     con = duckdb.connect()
     con.execute(f"SET temp_directory = '{TEMP_DIR}'")
     settings = {"duckdb": duckdb.__version__}
-    for key, value in (("memory_limit", args.memory_limit), ("threads", args.threads)):
+    lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때까지 잡는다(L5)
+    budget = temp_budget()
+    if not args.max_temp and budget <= 0:
+        raise SystemExit(f"임시 공간 여유가 없습니다(호스트 C: 여유에서 남길 몫을 뺀 값 {budget / 2 ** 30:.1f}GiB). 실행하지 않습니다")
+    max_temp = args.max_temp or f"{budget // 2 ** 30}GiB"  # 기본값(보이는 디스크의 90%)은 가상 디스크의 거짓 용량을 본다(F-16)
+    for key, value in (("memory_limit", args.memory_limit), ("threads", args.threads), ("max_temp_directory_size", max_temp)):
         if value:
             con.execute(f"SET {key} = '{value}'")
-    for key in ("memory_limit", "threads", "preserve_insertion_order"):
+    for key in ("memory_limit", "threads", "preserve_insertion_order", "max_temp_directory_size"):
         settings[key] = con.execute(f"SELECT current_setting('{key}')").fetchone()[0]
     con.execute("LOAD iceberg")
     con.execute("PRAGMA enable_profiling = 'json'")

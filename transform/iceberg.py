@@ -9,6 +9,8 @@ import sys
 
 from common import ROOT, read_env
 
+SPARK_LOCAL = "/tmp/spark-local"  # 컨테이너 안. 호스트 C:에서 늘어나는 가상 디스크 위다(F-16)
+
 
 def spark_session(app, conf=None):
     """conf: 덮어쓸 Spark 설정. 엔진 분석(3.10)에서 메모리, 셔플 파티션, AQE, 이벤트 로그를 바꾼다."""
@@ -23,6 +25,7 @@ def spark_session(app, conf=None):
              .config("spark.sql.catalog.lh.jdbc.password", read_env("POSTGRES_PASSWORD"))
              .config("spark.sql.catalog.lh.warehouse", f"file:{ROOT / 'lakehouse'}")
              .config("spark.driver.memory", "8g")  # local 모드에서는 드라이버가 일꾼이다. 측정 5와 같은 값
+             .config("spark.local.dir", SPARK_LOCAL)  # 셔플·spill 전용 폴더: 크기를 보고 남은 것을 찾기 쉽게(resource_guard.md L3)
              .config("spark.ui.enabled", "false").config("spark.ui.showConsoleProgress", "false"))
     for key, value in (conf or {}).items():
         builder = builder.config(key, value)

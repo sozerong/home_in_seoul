@@ -861,3 +861,36 @@
   - M3이 7 → 8로 하나 늘었다. 회차 27과 32 사이에 F-5(상품 층 ROWSET) 처방이 들어가 `product.<표>.*` 노드가 생겼다. 늘어난 하나가 그 노드인지 확인하지 않았다 [확인 필요].
   - M5: 생활이동이 Spark SQL로 옮겨 dbt 원천이 `stg.living_commute`가 되어 `stg.living_migration`에서 나가는 간선이 없다. 같은 질문(나이 25 → 26)은 이제 Iceberg `lh.living.migration_rows.age`에 걸어야 하고, 그 변이는 dbt만 다시 돌리는 지금 도구로는 할 수 없다(Spark 실행기를 함께 돌려야 함).
 
+
+## 측정 36. Docker 가상 디스크 공간 회수 (resource_guard.md L4, F-16, 2026-11-13)
+- 조건: Windows 11, Docker Desktop WSL2 백엔드, 데이터 디스크 `C:\Users\dudfo\AppData\Local\Docker\wsl\disk\docker_data.vhdx`(동적 VHDX, 가상 상한 1TB). VM 안 데이터 디스크 `/dev/sdc`는 `discard` 없이 붙어 있다. 회수 전 VM 안 실제 사용 74.86GB(`df`). 압축 전 `pg_dump` 4개와 globals를 `C:\Users\dudfo\pg_backup_20261113_pre_compact\`에(21:00, 162초, `SHA256SUMS`, seoul `TABLE DATA` 66개). 사용자가 실행(관리자 diskpart), Claude가 크기를 읽음.
+- 결과:
+  | 시각 | 한 일 | VHDX (B) | C: 여유 |
+  |---|---|---|---|
+  | 20:49 | 시작 전 | 718,322,794,496 | 11.52GB |
+  | 21:05 | Docker 종료, `wsl --shutdown`, diskpart `compact vdisk` (fstrim 없이) | 718,321,745,920 (−1,048,576) | 11.22GB |
+  | 21:1x | Docker 켬, `wsl -d docker-desktop -e /sbin/fstrim -v /mnt/docker-desktop-disk` → `936.5 GiB (1005579862016 bytes) trimmed` | 718,321,745,920 (그대로) | 11.17GB |
+  | 21:29 | Docker 종료, `wsl --shutdown`, diskpart `compact vdisk` | **80,160,489,472** (−638,161,256,448) | **649.31GB** |
+- 해석: fstrim 없이 한 압축은 1MiB만 줄었다. `discard` 없는 ext4에서 VM 안에서 지운 블록은 VHDX에 "쓰인 블록"으로 남고, diskpart는 ext4를 읽지 못하기 때문이다(판단 82~84). fstrim으로 빈 블록을 알린 뒤의 압축은 VHDX를 VM 안 실제 사용(74.85GB)에 가까운 80.16GB로 줄였다.
+- 확인: 압축 뒤 컨테이너 4개 `start`만(재생성 없음), PostgreSQL은 정상 종료 기록(`database system was shut down at 12:18:34 UTC`) 뒤 복구 없이 올라왔다. `stg.living_commute` 13,782,826행, `mart.dong_profile` 426행으로 전과 같다.
+- 남은 것: 같은 일이 다시 쌓이지 않게 하는 장치(L3 임시 폴더 상한, 무거운 실행 전 C: 여유 점검)는 resource_guard.md 4절에서. Docker 가상 디스크 상한(`DiskSizeMiB`)을 호스트 여유보다 작게 둘지는 [확인 필요].
+
+## 측정 37. 컨테이너별 메모리와 자원 예산 (resource_guard.md 2절, 결정 101, 2026-11-13)
+- 조건: 측정 36(공간 회수) 뒤. 컨테이너 4개(db, airflow, metabase, pgadmin)가 모두 켜진 상태, 상한 없음. VM `MemTotal` 32,411,976kB(30.91GiB), CPU 16, 스왑 8GiB. 도구: `measure/docker_mem.py`(호스트에서 `docker stats --no-stream`, 한 번에 약 2초 걸려 실제 주기는 설정보다 길다), `measure/vm_watch.py`(Airflow 컨테이너 안, 5초). 각 1회.
+- 결과 (컨테이너별 최대, `docker stats` 기준):
+  | 구간 | 길이 | airflow | db | metabase | pgadmin | VM MemAvailable 최소 | 스왑 사용 |
+  |---|---|---|---|---|---|---|---|
+  | 평시 (21:30~21:40, 10초 주기) | 600초 | 1.340GiB | 0.223GiB | 1.635GiB | 0.260GiB | 26.28GiB | 0 |
+  | dbt 전체 빌드 (빌드용 스키마에만, 교체·내보내기 없음, 5초 주기) | 224초 (dbt 212.9초, PASS 122) | 1.506GiB | **3.201GiB** | 1.636GiB | 0.260GiB | 26.27GiB | 0 |
+  | 리니지 추출 Spark (`lineage.extract --engine spark --trigger manual`, 회차 33, 5초 주기) | 14초 (추출 9.66초) | **2.585GiB** | 2.801GiB | 1.635GiB | 0.260GiB | 25.97GiB | 0 |
+  | 상품 내보내기 `export_product` | 미측정 | | | | | | |
+  | 생활이동 실행기 (Spark) | 5단계 실제 실행 때 | | | | | | |
+- 내보내기를 재지 않은 이유: `warehouse/export_product.py`는 출력 위치가 `product/v{오늘}`로 고정이고 `ops.product_file`에 기록한다. 임시 폴더로 낼 방법이 없어, 재려면 오늘 버전 상품을 실제로 다시 내야 한다(새 격리 표가 비어 `commute_quarantine_rows`가 0으로 나감). 그래서 재지 않았다.
+- 리니지 추출은 14초로 짧아 5초 주기 표본이 순간 최대를 놓쳤을 수 있다. 빌드 스키마는 측정 뒤 `drop_build_schemas`로 지웠다(남은 `*_build` 없음).
+- 예산 (resource_guard.md 2절 방법):
+  - 이웃 몫 = 최대 x 1.2: db 3.84, metabase 1.96, pgadmin 0.31GiB → 상한은 올림해 db 4g, metabase 2g, pgadmin 512m.
+  - Airflow 상한 = VM 30.91 − 이웃 상한 합 6.5 − 운영체제·페이지 캐시 2(제안값) = 22.41 → **22g**(내림). 그중 평시 몫 1.61(1.34 x 1.2)을 뺀 **약 20.4GiB가 무거운 작업 몫**.
+  - DuckDB `memory_limit` = 20.4 x 0.8 = 16.3 → **16GiB**. `threads` 12(Airflow `cpus` 12와 같게).
+  - Spark `spark.driver.memory` 8g는 그대로. 힙 밖까지 합친 RSS는 5단계 실제 실행에서 vm_watch로 잰다.
+- 적용 (L2, 21:5x): `docker-compose.yml`에 `mem_limit`, `memswap_limit`(같은 값, 컨테이너 스왑 금지), Airflow `cpus: 12`. 컨테이너를 다시 만들지 않고 `docker update --memory --memory-swap [--cpus]`로 걸었다. `docker inspect`: db 4,294,967,296 / airflow 23,622,320,128(cpus 12) / metabase 2,147,483,648 / pgadmin 536,870,912, 모두 running. Airflow 컨테이너 안 cgroup `memory.limit_in_bytes`와 `memory.memsw.limit_in_bytes`가 23,622,320,128.
+- 상한 뒤 DuckDB 2.0.0 기본값(컨테이너 안, 설정 없이): `memory_limit` 17.5 GiB(cgroup 상한 22g의 80%), `threads` 12(cpus 할당). **DuckDB는 컨테이너 상한을 스스로 읽는다.** `max_temp_directory_size`는 여전히 `90% of available disk space`(가상 디스크 기준)라 L3 설정이 필요하다.

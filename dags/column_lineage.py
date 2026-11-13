@@ -24,7 +24,8 @@ with DAG(
     # Asset이 깨운 실행은 run_type이 asset_triggered, 손으로 돌린 실행은 manual이다
     BashOperator(
         task_id="extract_lineage",
+        pool="heavy",  # Spark 세션(L5). 잠금 파일은 common.heavy_lock과 같다
         bash_command="set -euo pipefail; cd /opt/project; "
-                     "/opt/airflow/spark-venv/bin/python -m lineage.extract --engine spark "
+                     "flock -n /tmp/heavy.lock /opt/airflow/spark-venv/bin/python -m lineage.extract --engine spark "
                      "--trigger {{ 'asset' if dag_run.run_type == 'asset_triggered' else 'manual' }}",
     )

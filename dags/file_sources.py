@@ -57,5 +57,6 @@ for source, (schedule, timeout, clean, assets) in SOURCES.items():
                           f'for f in "${{files[@]}}"; do python -m ingestion.register_file {source} "$f" --collected-date "$D"; done; '
                           f'{clean}; rm -f "${{files[@]}}"'),
             outlets=assets,
+            pool="heavy" if source == "living_migration" else "default_pool",  # Spark 세 번(L5). 다른 출처 정제는 가볍다
         )
         wait_for_file() >> load

@@ -15,7 +15,7 @@ CODES = "lake.seoul_living_migration.code_table"  # 실행기가 만드는 임�
 
 
 def combined_sql(folder):
-    files = sorted(p for p in (ROOT / folder).glob("*.sql") if not p.stem.startswith("test_"))
+    files = sorted(p for p in (ROOT / folder).glob("*.sql") if not p.stem.startswith(("test_", "warn_")))
     views = [(p.stem.split("_", 1)[1], sqlglot.parse_one(p.read_text(encoding="utf-8"), dialect="spark")) for p in files]
     final = views[-1][1]
     ctes = [exp.CTE(this=sqlglot.parse_one(f"SELECT code FROM {CODES}", dialect="spark"), alias=exp.TableAlias(this=exp.to_identifier("codes")))]

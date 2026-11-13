@@ -354,7 +354,7 @@
 - 재발 방지: 없음. 셸 heredoc으로 백슬래시가 든 코드를 고치지 않는다(Write/Edit 도구를 쓴다).
 
 ## F-16. DuckDB 실행(3.9) 중 Docker VM 전체가 멈춤: 엔진, PostgreSQL, Airflow가 함께 응답 없음
-- 태그: 메모리, 분포(자원 경합), 디스크. 원인 확인됨(디스크), 처방 전
+- 태그: 메모리, 분포(자원 경합), 디스크. 원인 잠정(메모리 → 스왑 소진이 가장 유력, 2026-11-13 정정), 처방 결정 101
 - 언제·어디: 2026-11-13, design_remaining_work.md 3.9. `measure/duckdb_sql.py spark_sql/living --show batch_status --compare`(방언 고침 2곳 뒤 세 번째 실행), Airflow 컨테이너 안 DuckDB 2.0.0. 18:43 KST 시작. 설정은 DuckDB 기본값(threads 16, memory_limit 24.7GiB = 컨테이너가 보는 30.9GiB의 80%, preserve_insertion_order true), 임시 폴더 `/tmp/duckdb-tmp`(컨테이너 안).
 - 증상 (시각 KST):
   - 18:54:59 Docker VM 디스크 파일 `C:\Users\dudfo\AppData\Local\Docker\wsl\disk\docker_data.vhdx`(669.0GB)의 마지막 쓰기. 19:28에도 같다.
@@ -383,8 +383,8 @@
   | C. 흘림을 줄이도록 SQL을 고침(F-9와 같은 원인: 원본 여러 번 읽기, 글자 min/max 묶기) | 두 엔진 모두 이득 | 같은 SQL을 두 엔진으로 비교한다는 3.9의 전제가 바뀐다 |
   | D. Docker Desktop 가상 디스크 상한을 호스트 여유보다 작게 | VM이 디스크 부족을 스스로 알아 프로세스 하나가 오류로 끝난다 | Docker 설정 변경(사용자 몫) |
 - **재시작 뒤 (사용자가 `wsl --shutdown`, 2026-11-13 19:3x)**:
-  - 19:35~19:37 WSL VM은 새로 떴지만(vmmemWSL 작업 집합 2.81GB, 멈추기 전 23~30GB) Docker 엔진은 계속 `no route to host`이고 `docker ps`, `wsl -d docker-desktop -e sh`가 40초 안에 응답하지 않는다. `docker_data.vhdx` 마지막 쓰기는 여전히 18:54:59다. 새 VM도 데이터 디스크에 한 번도 쓰지 못했다. C: 여유 5.9GB 그대로.
-  - 해석(가설): ext4 데이터 디스크를 붙이려면 저널 복구 등 쓰기가 필요하다. 호스트 C:에 VHDX가 늘어날 자리가 없어 새 VM도 같은 자리에서 멈춘다. H3과 같은 원인이다. 확인은 C: 공간을 비운 뒤 엔진이 뜨는지로 한다 [확인 필요].
+  - 19:35~19:37 ~~WSL VM은 새로 떴지만~~ **(정정, 아래 "원인 다시 보기") 새 VM이 아니었다.** vmmemWSL 작업 집합은 2.81GB(멈추기 전 23~30GB)로 줄었지만 Docker 엔진은 계속 `no route to host`이고 `docker ps`, `wsl -d docker-desktop -e sh`가 40초 안에 응답하지 않는다. `docker_data.vhdx` 마지막 쓰기는 여전히 18:54:59다. 새 VM도 데이터 디스크에 한 번도 쓰지 못했다. C: 여유 5.9GB 그대로.
+  - 해석(가설): ext4 데이터 디스크를 붙이려면 저널 복구 등 쓰기가 필요하다. 호스트 C:에 VHDX가 늘어날 자리가 없어 새 VM도 같은 자리에서 멈춘다. H3과 같은 원인이다. 확인은 C: 공간을 비운 뒤 엔진이 뜨는지로 한다 [확인 필요]. **(정정) 이 해석은 "새 VM"을 전제로 했는데 그 전제가 틀렸다. 그 시각은 멈춘 옛 VM이 그대로였다.**
   - 증거를 둘 "호스트 C:가 아닌 곳"은 이 PC에 없다. 드라이브가 C: 하나다(`Get-PSDrive`).
   - C: 사용 중 확인한 것(읽기만): `docker_data.vhdx` 669.0GB, 레포 `lake` 18.2GB, `lakehouse` 11.6GB, `AppData\Local\Temp` 11.5GB. 나머지 약 1.19TB는 이 프로젝트 밖이다.
 - **한 단계 더 내려간 확인 (VM 없이 할 수 있는 것)**:
@@ -404,6 +404,34 @@
 - **원인 확인 한 단계 더 (컨테이너 안에서 실측, 20:04)**:
   - 컨테이너 안 DuckDB 2.0.0: `max_temp_directory_size = 90% of available disk space`, `memory_limit = 24.7 GiB`, `threads = 16`. 같은 순간 `/tmp`가 보는 디스크는 전체 1006.9GiB, 여유 760.6GiB라 상한은 약 684.6GiB가 된다. 실제로 쓸 수 있던 것은 호스트 C: 여유(그 시각 10.76GB)다. **안전 상한이 가상 디스크의 거짓 용량으로 계산되어, 디스크 부족을 오류로 알리지 못하고 VM 전체를 멈췄다.** 18:43 시작 때 C: 여유는 기록이 없다 [확인 필요]. 다만 세 번째 실행이 125.3GiB를 쓰고 VHDX가 669GB에서 멈춘 것을 보면, 시작 때 C: 여유는 125GiB 남짓이었고 이 실행이 그것을 다 썼다고 본다(추론).
   - Spark: 컨테이너에 `SPARK_LOCAL_DIRS` 없음, `spark.local.dir` 설정 없음, `/tmp`는 별도 마운트가 아닌 컨테이너 쓰기 층(overlay). 그래서 Spark 셔플·spill 파일도 같은 VHDX에 쓰이고, F-9 첫 실행의 `/tmp/blockmgr-*` 최대 129GB도 같은 거짓 여유 아래에서 썼다. 그때 멈추지 않은 것은 C:에 그만큼 자리가 있었기 때문이다(추론, 그때 C: 여유 기록 없음).
-- **가설 정리 (복구 뒤 증거 반영)**: H3(디스크)이 원인으로 확인됐다. 쓰기 시각(임시 파일 18:54:36, VHDX 18:54:59)과 멈춘 시각(하트비트 18:54:29~33, PostgreSQL 마지막 로그 18:53:35, VM 로그 18:56:15)이 같은 분이고, C:가 다시 몇 GB 비자 VM이 떴다. H2(메모리)는 OOM 기록이 없어 원인으로 확인되지 않았다. H1(CPU)은 주원인에서 지운 그대로다. H4(실행 겹침)는 임시 파일이 한 프로세스(29903)의 것뿐이고 프로파일 폴더 순서로도 겹침이 없다 → 지움.
+- **가설 정리 (복구 뒤 증거 반영)** ~~H3(디스크)이 원인으로 확인됐다.~~ **(정정, 아래 "원인 다시 보기": 이 단락의 결론은 근거가 약하다)** 쓰기 시각(임시 파일 18:54:36, VHDX 18:54:59)과 멈춘 시각(하트비트 18:54:29~33, PostgreSQL 마지막 로그 18:53:35, VM 로그 18:56:15)이 같은 분이고, ~~C:가 다시 몇 GB 비자 VM이 떴다.~~ H2(메모리)는 OOM 기록이 없어 원인으로 확인되지 않았다. H1(CPU)은 주원인에서 지운 그대로다. H4(실행 겹침)는 임시 파일이 한 프로세스(29903)의 것뿐이고 프로파일 폴더 순서로도 겹침이 없다 → 지움.
 - **백업 (사용자 지시 1번)**: `pg_dump -Fc`로 DB 4개(seoul 1,112,711,738B, metabase 1,320,786B, airflow 580,714B, iceberg 3,461B)와 `pg_dumpall --globals-only`(1,069B)를 `C:\Users\dudfo\pg_backup_20261113\`에 남겼다(157초). 먼저 디스크에 쓰지 않고 바이트만 세어 크기를 확인했다(1.06GB, C: 여유 11.8GB). 각 파일은 `pg_restore --list`로 읽힌다(seoul TABLE DATA 64개). `SHA256SUMS` 함께 둠. 백업 뒤 C: 여유 10.8GB. `globals.sql`에는 역할의 비밀번호 해시가 들어 있어 레포 밖에 두었다.
+- **원인 다시 보기 (2026-11-13 20:3x, Docker 로그와 Windows 이벤트로 다시 본 것, `docs/resource_guard.md` 0절)**. 앞의 "가설 정리"를 아래로 고친다.
+  - 근거 파일: Docker 백엔드 로그 `%LOCALAPPDATA%\Docker\log\host\com.docker.backend.exe.log.20261113-190108.347`, `...20261113-195200.091`(10분 남짓마다 `com.docker.backend.exe.processes] parsed {vmmemWSL <PID> <CPU 시간> ... <생성 시각>}` 줄), VM 로그 `%LOCALAPPDATA%\Docker\log\vm\init.log`(지금은 재시작 뒤 내용으로 덮여 멈춘 시각 줄은 남아 있지 않다), 사용자가 PowerShell로 확인한 Windows 시스템·Hyper-V 이벤트 로그, WSL 스왑 파일 `%LOCALAPPDATA%\Temp\<GUID>\swap.vhdx`.
+  - 정정 (1) "19:35 VM이 새로 떴다"는 틀렸다. 백엔드 로그의 vmmemWSL PID 28320(생성 20261113095614 = 09:56:14 KST)이 멈춘 뒤에도 그대로 찍혔다. Claude가 다시 본 마지막 줄은 10:50:12Z(19:50:12 KST)이고 PID와 생성 시각이 같다(사용자 확인은 19:46까지). 실제 재부팅은 19:55:46 무렵이다: 새 VM의 `swap.vhdx`(다른 GUID 폴더, 37,748,736B) 마지막 쓰기 19:55:43, 컨테이너 종료 시각 19:55:47(위 `docker inspect`). 19:45 무렵 시작 실패는 멈춘 옛 VM과 WSL 서비스가 응답하지 않아서였다.
+  - 정정 (2) "C:가 다시 몇 GB 비자 VM이 떴다"는 로그가 뒷받침하지 않는다. VM이 다시 뜬 것은 19:55:46 재부팅이고, 그 사이 C: 여유와 VM 기동을 잇는 기록은 없다.
+  - 정정 (3) 원인 순위:
+    | 순위 | 후보 | 근거 | 판단 |
+    |---|---|---|---|
+    | 1 | 메모리 → 스왑 소진 → VM 전체 정체 (H2 확장) | 옛 VM의 `swap.vhdx`가 설정 최대치 8.00GB(8,594,128,896B)까지 늘었고 마지막 쓰기 18:45:05(DuckDB 세 번째 실행 시작 2분 뒤). 새 VM 것은 0.04GB. DuckDB 기본 `memory_limit` 24.7GiB, 앞선 실행 RSS 27.03GB, 같은 VM에 PostgreSQL·Airflow·Metabase(JVM). 멈춘 동안 VM이 코어 약 2.3개를 쓰고(백엔드 로그의 vmmemWSL CPU 시간 증가) 네트워크와 디스크 쓰기만 끊겼다 | **가장 유력.** 커널 로그가 VM과 함께 사라져 확정은 아니다 |
+    | 2 | 호스트 C: 부족으로 VHDX가 못 늘어남 (H3) | Windows 시스템 로그에 디스크 부족·가상 디스크 오류 없음, Hyper-V 일시 정지 기록 없음. 19:26 C: 여유 5.9GB(디스크가 찼다면 0 근처였어야 함). VHDX 669GB 안에서 실제 사용은 209GB라 spill이 이미 할당된 블록을 다시 썼을 수 있다 | **약해짐.** 함께 작용했을 가능성은 남음 |
+    | 3 | CPU 독점 (H1) | 19:26 가상 CPU 13.3%로 내려간 뒤에도 응답 없음 | 주원인 아님(그대로) |
+  - 정정 (4) `OOMKilled=false`는 약한 근거다. 컨테이너에 메모리 상한이 없으면 cgroup OOM은 일어나지 않고, VM 전체가 고갈되면 커널 OOM killer보다 스왑 쓰기와 회수(reclaim)로 정체가 먼저 온다. 그래서 "OOM 기록 없음"이 "메모리 아님"을 뜻하지 않는다.
+  - 확정하지 못한 이유: VM 커널 로그(`dmesg`)와 측정 도구 출력(블록 버퍼)이 VM과 함께 사라졌다. 다음에는 L0 관측(5초마다 `/proc/meminfo`, `vmstat`, `df`를 바인드 마운트 파일에, `python -u`)으로 판정한다(resource_guard.md 1절).
+  - 디스크 쪽 사실(컨테이너 `/tmp`가 1TB 가상 디스크를 보고 DuckDB·Spark 안전 상한이 거짓 용량으로 계산된다)은 그대로 맞다. 다만 이번 멈춤의 주원인으로는 확인되지 않았다.
+  - 처방: 결정 101(Airflow 컨테이너 상한, k8s 이식 때 작업 컨테이너 분리)과 resource_guard.md 4절 순서.
 - 남은 것: 처방(A~D) 선택과 DuckDB 재실행(사용자 확인 뒤, 흘림 위치·max_temp_directory_size·memory_limit 명시, threads 12, 한 번에 하나). VHDX 공간 회수 방법 선택. 재실행 때 공간이 모자라면 DuckDB가 오류로 바로 끝나는지도 측정한다.
+
+## F-17. [유도] 자원 상한 시험: 메모리를 넘치게 하면 그 컨테이너만 OOM으로 죽고, 임시 공간을 넘치게 하면 DuckDB가 오류로 끝남
+- 태그: 메모리, 디스크, 분포(자원 경합). 일부러 일으킨 오류(F-16 처방 확인, resource_guard.md 4절 5번)
+- 언제·어디: 2026-11-13 21:4x~22:0x. 측정 36(공간 회수), 측정 37(예산, L2 상한 적용) 뒤. `measure/induce_guard.py`
+- 어떻게 일으켰나:
+  - 메모리: `seoul-airflow:3.3.2` 이미지로 일회용 컨테이너(`--memory 2g --memory-swap 2g --cpus 4 --network none`). DuckDB 2.0.0에 `memory_limit = 12GB`(컨테이너 상한보다 크게), `threads 4`, `SELECT count(*) FROM (SELECT i % 300000000 AS k, list(i) FROM range(600000000) t(i) GROUP BY k)`.
+  - 디스크: Airflow 컨테이너 안 DuckDB에 `memory_limit 1GB`, `threads 4`, `max_temp_directory_size 1GiB`, 2억 행을 해시로 정렬해 임시 표로.
+- 증상(기대한 것):
+  - 메모리: 컨테이너가 종료 코드 137, `OOMKilled=true`로 끝남(3회, 210·192·234초). 그동안 PostgreSQL 탐침 실패 0(2·3회차 103회, 169회), 다른 컨테이너 4개 그대로, Airflow 컨테이너의 vm_watch는 줄을 빠뜨리지 않음(1회차 46줄, 5초 간격 그대로, VM MemAvailable 최소 24.49GiB, 스왑 0).
+  - 디스크: 6.8~7.2초 만에 `Out of Memory Error: failed to offload data block of size 64.0 KiB (1.0 GiB/1.0 GiB used). This limit was set by the 'max_temp_directory_size' setting.` 임시 폴더는 남지 않음(0B).
+- F-16과 비교: F-16은 상한이 없어(컨테이너 상한 0, DuckDB 임시 상한 = 가상 디스크 여유의 90%) 넘친 작업이 VM 전체를 1시간 멈췄다. 상한을 걸자 같은 종류의 넘침이 그 작업 하나의 드러나는 실패(종료 코드 137 또는 DuckDB 오류)로 끝났다.
+- 관찰: 메모리 쪽은 상한에 닿고 OOM까지 3~4분 걸렸다. 그동안 무엇을 했는지(페이지 회수 등)는 재지 않았다 [확인 필요]. DuckDB는 상한 뒤 기본 `memory_limit`를 cgroup 상한의 80%(22g → 17.5GiB)로 스스로 잡는다(측정 37). 이번 시험은 그 자동값을 일부러 무시했을 때의 마지막 방어선을 본 것이다.
+- 한계: Airflow 컨테이너 자체를 넘치게 하지는 않았다(스케줄러가 함께 죽음). VM 전체 상한(L1 `.wslconfig`)은 사용자 파일이라 아직 없다. Spark에는 임시 폴더 상한이 없다.
+- 처방과 결과: 처방 자체가 이 시험의 대상(결정 101, L2·L3). 증명은 guarantees.md 2.7.

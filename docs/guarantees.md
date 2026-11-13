@@ -95,6 +95,8 @@
 | 쓰는 키가 원천에서 사라짐 | 키 이름을 바꾼 입력 → 관문 거절 | 측정 23(S1 재측정), 측정 30 | ③ 관문 |
 | 격리 비율 초과 | 나쁜 배치 | 측정 25 | ③ 관문 |
 | 상품 스키마가 계약과 다름 | 마트 컬럼을 바꾸고 계약 파일을 안 고침 → 내보내기 실패 | 측정 30 | ③ 계약 검사 |
+| 메모리가 넘치면 그 컨테이너만 죽는다(VM·PostgreSQL은 산다) (F-16 처방, 결정 101 L2) | [유도] 같은 이미지의 일회용 컨테이너(`--memory 2g`, 스왑 금지)에서 DuckDB `memory_limit`를 일부러 12GB로 잡고 메모리를 많이 쓰는 집계 → `OOMKilled=true`, 종료 코드 137. 끝날 때까지 1초마다 PostgreSQL `SELECT 1` | `measure/induce_guard.py mem`, F-17, 측정 37 | ② (2026-11-13 3회: 210초, 192초, 234초에 OOM. 탐침은 1회차 90회(죽기 1분 전까지만), 2회차 103회, 3회차 169회 모두 성공. 다른 컨테이너 4개 그대로, VM 스왑 사용 0). 한계: Airflow 컨테이너 자체가 아니라 같은 이미지의 쌍둥이로 봤다(스케줄러가 함께 죽는 것은 결정 101 A의 알려진 단점). VM 전체 상한(L1)은 아직 없다 |
+| 임시 공간이 넘치면 DuckDB가 오류로 끝난다 (F-16 처방, L3) | [유도] Airflow 컨테이너 안 DuckDB(`memory_limit` 1GB, `max_temp_directory_size` 1GiB)로 2억 행 정렬 → `Out of Memory Error: failed to offload data block ... max_temp_directory_size` | `measure/induce_guard.py disk`, F-17 | ② (2026-11-13 2회: 7.2초, 6.8초. 남은 임시 파일 0B). 실제 도구(`measure/duckdb_sql.py`)는 이 상한을 호스트 C: 여유에서 계산한다(`common.temp_budget`). 한계: Spark에는 임시 폴더 상한이 없어 시작 전 여유 점검(`--min-temp-gb`)만 한다 |
 
 ## 3. 증명하지 않았거나 깨진 것
 

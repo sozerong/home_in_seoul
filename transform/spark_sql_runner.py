@@ -1,7 +1,7 @@
 """Spark SQL 파일 묶음 실행기 (design_remaining_work.md 3.3, 결정 88, 90, 94-1).
 
 폴더 안 *.sql을 이름순으로 임시 뷰로 만든다. 파일 하나 = 뷰 하나, 뷰 이름 = 파일 이름에서 번호를 뺀 것(10_checked.sql -> checked).
-test_*.sql은 위반 행을 돌려주는 SQL이다. 하나라도 행이 있으면 경계 표(마지막 뷰)는 바꾸지 않고 종료 코드 1(dbt 테스트와 같은 모양).
+test_*.sql은 위반 행을 돌려주는 SQL이다. warn_*.sql도 같지만 위반을 출력만 한다(결정 100). test_ 하나라도 행이 있으면 경계 표(마지막 뷰)는 바꾸지 않고 종료 코드 1(dbt 테스트와 같은 모양).
 --save 뷰는 테스트가 실패해도 쓴다: 거절된 배치가 운영 카드·알림에 보여야 하므로(판단 64).
 마지막 뷰를 JDBC로 {target}_new에 쓰고 PostgreSQL 트랜잭션 하나에서 {target}으로 옮긴다(결정 90). 매번 전체 재계산.
 옮기기 = 비우고 복사(F-13 처방 A). 표를 지우고 이름을 바꾸면 그 표를 읽는 dbt 뷰(wh.fact_commute) 때문에 거절된다.
@@ -25,7 +25,7 @@ import time
 
 import psycopg
 
-from common import ROOT, read_env
+from common import ROOT, heavy_lock, read_env, temp_budget
 from transform.iceberg import spark_session
 from transform.living_migration import load_codes
 
@@ -34,8 +34,9 @@ EVENT_DIR = "/tmp/spark-events"
 
 def sql_files(folder):
     files = sorted(folder.glob("*.sql"))
-    views = [(p.stem.split("_", 1)[1], p.read_text(encoding="utf-8")) for p in files if not p.stem.startswith("test_")]
-    tests = [(p.stem, p.read_text(encoding="utf-8")) for p in files if p.stem.startswith("test_")]
+    checks = ("test_", "warn_")  # warn_: 위반을 출력만 하고 실패시키지 않는다(결정 100)
+    views = [(p.stem.split("_", 1)[1], p.read_text(encoding="utf-8")) for p in files if not p.stem.startswith(checks)]
+    tests = [(p.stem, p.read_text(encoding="utf-8")) for p in files if p.stem.startswith(checks)]
     return views, tests
 
 
@@ -126,7 +127,7 @@ def run(spark, args, views, tests):
         print(f"{name}: {'통과' if not bad else f'위반 {len(bad)}행 이상'}")
         for r in bad:
             print("  ", r)
-        failed += [name] if bad else []
+        failed += [name] if bad and name.startswith("test_") else []
     if args.no_write:
         if failed:
             raise SystemExit(f"테스트 실패: {failed}")
@@ -165,7 +166,13 @@ def main():
     parser.add_argument("--aqe", default="true")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--explain", action="store_true")
+    parser.add_argument("--min-temp-gb", type=int, default=200,  # 측정 32: 셔플 쓰기 143GB + 디스크 spill 57GB
+                        help="임시 공간이 이보다 적으면 시작하지 않는다(Spark에는 임시 폴더 상한이 없다, L3·L4)")
     args = parser.parse_args()
+    lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때까지 잡는다(L5)
+    budget = temp_budget()
+    if not args.explain and budget < args.min_temp_gb * 1e9:
+        raise SystemExit(f"임시 공간 {budget / 1e9:.0f}GB < 필요 {args.min_temp_gb}GB(호스트 C: 여유에서 남길 몫을 뺀 값). 시작하지 않습니다")
     views, tests = sql_files(ROOT / args.folder)
     settings = {"spark.driver.memory": args.driver_memory, "spark.sql.shuffle.partitions": args.shuffle_partitions,
                 "spark.sql.adaptive.enabled": args.aqe}

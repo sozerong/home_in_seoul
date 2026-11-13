@@ -87,6 +87,10 @@ docker build -t seoul-airflow:3.3.2 .
 docker compose up -d
 ```
 http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG는 처음에 일시정지 상태다.
+무거운 작업(생활이동 정제, dbt 전체 빌드, 리니지 추출)은 pool `heavy`(크기 1)로 한 번에 하나만 돈다(`docs/resource_guard.md` L5). 처음 한 번 만든다:
+```
+docker compose exec airflow airflow pools set heavy 1 "무거운 작업 한 번에 하나"
+```
 이미지 안에 dbt(`/opt/airflow/dbt-venv`)와 Spark 3.5.9 + Iceberg 1.12.0(`/opt/airflow/spark-venv`, Java 17)이 각자 가상환경으로 들어 있다. Iceberg 연결 확인:
 ```
 docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m transform.iceberg --selftest
