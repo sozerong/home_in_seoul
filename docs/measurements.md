@@ -768,3 +768,96 @@
 
 - M7: '신규계약'은 V7(계약 구분이 신규·갱신이 아님) 격리 사유다. 바꾼 item 32,035개는 전월세 원본 450,968개의 7.1%라 처리 단위 대부분이 격리 비율 5%(관문 `rent_quarantine_ratio`)를 넘어 거절됐고, 모든 수집일이 같이 바뀌어 기댈 직전 승인 배치도 없어 `rent_listing`이 비었다. 2.5-4가 보려던 `dong_profile.monthly_deals` 변화는 일어났고 지도(rowset 경로)에도 있었다. 다만 표기 변경 하나가 상품 행 전체를 없앨 수 있다는 것도 함께 보였다(관문이 설계대로 동작한 결과).
 - raw 변이의 지도 예측이 모두 40개로 넓은 이유는 관문 표 하나가 세 출처 판정을 함께 담아서다(failure_analysis F-7). stg 변이(M3, M5)는 예측과 실제가 같다.
+
+## 측정 32. 생활이동 Spark SQL 실행기 첫 실행과 경계 표 (design_remaining_work.md 3.3~3.4, 결정 88~90, 96, 2026-11-13)
+- 방법: `/opt/airflow/spark-venv/bin/python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status` (Airflow 컨테이너, Spark 3.5.9 local[*], driver 8g, 셔플 파티션 200, AQE 켬). 입력 Iceberg `lh.living.migration_rows` 10달 1,405,791,964행. 1회. 다른 무거운 작업 없이 돌렸다. Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop.
+- 결과: 종료 코드 0, 2,094.0초. `stg.living_commute` 13,782,826행(출발 코드 424개, 묶인 정제 행 합 221,151,612, 가려진 행 합 42,793,524). 테스트 2개(`test_population_exact`, `test_month_approved`) 통과. `ops.engine_run`에 단계 23행(run_id `local-1794556106209`).
+- 관문(`batch_status`): 10개 배치 모두 승인.
+
+| 대상연월 | 수집일 | 원본 행 | 통과(C4 뒤) | 격리 | C4로 뺀 행 | 격리 비율 |
+|---|---|---|---|---|---|---|
+| 202510 | 2026-11-03 | 143,626,263 | 139,742,984 | 3,805,488 | 77,791 | 2.651% |
+| 202511 | 2026-11-03 | 142,286,585 | 138,706,524 | 3,505,857 | 74,204 | 2.465% |
+| 202512 | 2026-11-03 | 143,522,748 | 140,244,177 | 3,203,001 | 75,570 | 2.233% |
+| 202601 | 2026-11-03 | 133,446,086 | 130,579,607 | 2,794,465 | 72,014 | 2.095% |
+| 202602 | 2026-11-03 | 127,741,749 | 124,716,465 | 2,961,945 | 63,339 | 2.320% |
+| 202603 | 2026-11-03 | 141,201,661 | 138,134,814 | 2,994,954 | 71,893 | 2.122% |
+| 202604 | 2026-11-03 | 142,773,003 | 139,432,095 | 3,259,262 | 81,646 | 2.284% |
+| 202605 | 2026-10-21 | 148,671,100 | 145,124,757 | 3,471,113 | 75,230 | 2.336% |
+| 202606 | 2026-10-21 | 141,344,621 | 138,288,133 | 2,983,346 | 73,142 | 2.112% |
+| 202607 | 2026-10-21 | 141,178,148 | 138,147,183 | 2,956,327 | 74,638 | 2.095% |
+
+  - 옛 경로(범위 C만 검증)의 격리 비율은 202607에서 0.21%였다(측정 2, 3). 새 경로는 범위 밖 행도 검증하므로 2.1~2.7%다. 분모와 분자가 모두 바뀐 값이라 5% 기준과의 여유가 줄었다(옛 0.21% → 새 최대 2.65%).
+- **3.4 체크포인트(경계 표 행 수 = 측정 29 f 13,842,750): 같지 않다. 59,924행 적다.** `python -m measure.living_boundary_gap`(같은 `10_checked` 뷰, f grain으로 묶어 통과 행 유무와 격리 사유 묶음을 셈, 139.5초, 1회): 통과 행이 하나도 없는 그룹이 59,924개이고 사유는 모두 `V6`(평균 이동 시간 1분 미만 또는 240분 초과), 원본 71,161행. 통과 행이 있는 그룹 13,782,826개 = 경계 표 행 수. 측정 29는 정제 전 원본으로 셌으므로 위쪽 한계였다(판단 기록 54). 차이는 전부 정제로 설명된다.
+- 단계 지표와 실행 계획은 `failure_analysis.md` F-9(관문 계산이 원본을 다섯 번 읽고 정제 묶기가 SortAggregate로 220GB를 흘림).
+- **두 번째 실행(같은 코드·같은 입력, 3.5 뒤, run_id `local-1794558670739`)**: 2,057.8초, 계산과 `stg.living_commute_new` 쓰기까지 끝나고 교체에서 실패(F-13). 단계 23행, 메모리 흘림 합 504.4GB·디스크 흘림 합 56.9GB(첫 실행 504.6GB·57.0GB). 남은 `_new`(13,782,826행)와 지금 표(첫 실행)를 두 방향 `EXCEPT ALL`로 비교: 차이 0행. 같은 입력에서 계산 결과가 같다(교체 단계는 증명 못 함).
+
+## 측정 33. 생활이동 이전 같음 증명과 리니지 (design_remaining_work.md 3.5~3.7, 결정 91, 2026-11-13)
+- 3.6 같음 증명: 3.5 전 `mart.commute_od`를 `keep.commute_od_before_3_5`(141,411행)로 보관한 뒤, dbt 모델 3개(`fact_commute`, `commute_od`, `map_dong_2021`)를 경계 표로 바꾸고 wh_load(manual__2026-11-13T08:24:28)를 돌렸다.
+  - 새 `mart.commute_od` 141,411행. 두 방향 `EXCEPT ALL` 차이 0 / 0. 부동소수 끝자리 차이 없음(경계 표 이동인구를 DECIMAL(12, 2)로 넘겨 합이 정확하다).
+  - 상품 파일 v2026.11.13 데이터 파일 8개(csv, parquet 4쌍) sha256 모두 같음. `manifest.json`은 `created_at`만 다름.
+  - `wh.map_dong_2021` 426행.
+- 3.7 리니지:
+  - 정답 기준: `commute_od.csv`를 새 SQL에 맞춰 159줄 → 193줄(평균은 `population_minutes`, 나이는 `age_group`, 범위 C 조건 `day_type`, `hour_group`, `move_type` FILTER 33줄 + ROWSET 3줄, 사라진 `population is not null` 집계 조건 2줄 뺌). Spark SQL 묶음 정답 `stg_living_commute.csv` 378줄을 새로 썼다(임시 뷰를 CTE로 보고 물리 표 Iceberg 원본·코드표까지 한 단계).
+  - `python -m measure.lineage_score`(sqlglot 30.31.0):
+
+| 모델 | DIRECT 맞음 / 놓침 / 틀림 | INDIRECT 맞음 / 놓침 / 틀림 (subkind 일치) | ROWSET 맞음 / 놓침 / 틀림 (subkind 일치) |
+|---|---|---|---|
+| mart.commute_od | 13 / 0 / 0 | 125 / 0 / 0 (115) | 14 / 0 / 0 (14) |
+| stg.living_commute (Spark SQL) | 9 / 1 / 1 | 192 / 0 / 0 (12) | 17 / 0 / 0 (3) |
+| 전체 7개 | 87 / 1 / 1 | 443 / 0 / 0 (253) | 65 / 0 / 0 (51) |
+
+  - Spark 묶음의 DIRECT 1쌍: `masked_rows = count_if(population IS NULL)`를 정답은 `*` 집계 + `population_raw` 조건으로, 추출기는 `population_raw` 집계로 본다. subkind 불일치는 대부분 코드표 LEFT JOIN 조건이 모든 출력에 JOIN으로 붙고(결정 68 규칙), `lag` 정렬(WINDOW)이 관문 승인 경로에서 FILTER로만 보이는 것이다.
+  - 처음 쓴 정답에서 `day_type`, `hour_group`, `age_group`(결과가 상수뿐인 IF/CASE)을 DIRECT로 적었다가 README 원칙 5에 맞춰 INDIRECT CONDITIONAL로 고쳤다. 추출 결과를 본 뒤 고친 것이라 기록한다.
+  - 리니지 회차 31(spark 엔진, 21.19초): 간선 2,627개, 실패 0. 이전 전(회차 27, 2,052개) 대비 더한 간선 658, 뺀 간선 82(`stg.living_commute` +535, `mart.commute_od` +57 / -23, `wh.fact_commute` +13 / -44, `wh.map_dong_2021` +15 / -15, `stg_dbt.raw_shape` +34, 상품 층 `*` +4).
+  - 확인: `lineage.upstream`에서 `product.commute_od`의 상류에 Iceberg `lh.living.migration_rows` 열 15개(`*` 포함)가 나온다. `product.commute_od.avg_minutes`의 값 경로는 `population_raw`, `avg_minutes_raw` 2개다.
+  - 3.7에서 함께 한 것: 스키마 추론 입력에 `warehouse/sql/[0-9][0-9]_stg_*.sql`(F-11 처방 A)과 `spark_sql/iceberg_tables.sql`, `star()`의 UNION 처리(F-10 처방 A, 결정 91 "추출기를 고친다"), `lineage.edge_raw.file_kind`에 `spark_sql` 허용.
+- F-5 처방 A 전후(상품 층 ROWSET, `lineage/product.py`): `wh.fact_rent.contract_type`의 상품 하류 중 `rowset_path` 참 2/18행(회차 27) → 4/20행(회차 31, `product.rent_listing.*`, `product.dong_profile.*` 더함). 상품 층 `rowset_path` 참 전체 2,234 → 2,795.
+
+## 측정 34. S6b 재측정: 생활이동 Spark SQL 이전 뒤 저녁 귀가 더하기 (design_remaining_work.md 3.8, 결정 96, 측정 18과 같은 질문, 2026-11-13)
+- 방법: `python -m measure.s6b_sql`(Airflow 컨테이너, dbt 1.12.6). dbt 프로젝트 사본에 `models/mart/commute_od_evening.sql`을 **더한다**(commute_od 사본, 범위 조건 한 줄 `where day_type = '평일' and hour_group = '07_09' and move_type = 'HW'`를 `hour_group = '18_20' and move_type = 'WH'`로). Spark SQL, Python, 경계 표 `stg.living_commute`, 기존 모델은 고치지 않았다. `build_suffix=_s6b`로 전체 빌드한 뒤 기존 상품 4개를 지금 mart와 두 방향 `EXCEPT ALL`로 비교하고, 빌드 스키마는 지웠다. 1회. Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop.
+- 결과:
+
+| 항목 | 측정 18 (이전 전, 정제 Python) | 측정 34 (이전 뒤, 경계 표 + dbt) |
+|---|---|---|
+| 고친 곳 | 더하려면 정제 Python 4곳 이상, stg DDL(PK 변경), wh, 마트, 시험, 문서 (읽고 셈, 실행 안 함) | 새 마트 파일 1개 52줄(그중 범위 조건 1줄만 다름). 다른 파일 0개 (도구가 목록을 못 냄, F-14. 손으로 셈) |
+| 어디부터 다시 만드나 | Iceberg부터 정제 다시(202607 하나 101.5초, 10달 [미측정]) | 경계 표부터. Spark 재실행 없음 |
+| 빌드 | 해당 없음 | `dbt build` 전체 121개 통과(PASS 121, ERROR 0), 221.1초 |
+| 기존 상품 영향 | 바꾸면 출근 평균에 귀가가 조용히 섞이는 경로 있음(숨은 결합) | dong_profile, commute_od, rent_listing, dong_mois_map 모두 두 방향 차이 0행 |
+| 저녁 결과 | (변경 시 202607 통과 3,707,684행) | commute_od_evening 142,777행, 평균 이동 시간 평균 67.3분, 20~34세 기준 59,813행. 출근 commute_od는 141,411행, 61.0분 |
+
+- 해석: 범위(이동유형, 시간대)를 경계 표의 열로 내리고(결정 96 grain f) 마트 SQL의 조건으로 올린 뒤에는, 요구 "저녁도 보고 싶다"가 마트 파일 하나로 끝났다. 숨은 결합(측정 18)은 마트에 범위 조건이 명시돼 있어 없어졌다. 상품으로 내려면 `warehouse/export_product.py`의 `TABLES`와 계약 문서를 더 고쳐야 한다(이번 측정 범위 밖, [미측정]).
+- 한계: 빌드 221.1초는 전체 프로젝트 빌드이고 저녁 모델만의 시간이 아니다. 저녁 결과의 대상연월 묶음이 행마다 다르다(202602~202607 중 일부). 출근 쪽과 같은 계산 규칙(승인된 최근 월) 때문이며 따로 확인하지 않았다 [확인 필요].
+
+## 측정 35. F-7 처방 A(출처별 관문 모델): 같음 증명과 지도 정밀도 (결정 97, failure_analysis F-7, 2026-11-13)
+- 조건: Airflow 컨테이너, dbt 1.12.6, dbt-postgres 1.11.0, sqlglot 30.31.0. Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. 데이터는 지금 원본 전체. 각 1회.
+- 바꾼 것: `stg_dbt/batch_status_congestion.sql`, `batch_status_rent.sql`, `batch_status_store.sql`을 새로 두고 `batch_status.sql`은 그 셋의 `union all`(운영 카드용). 정제 모델 6개(`congestion`, `congestion_quarantine`, `rent`, `rent_quarantine`, `store`, `store_quarantine`)는 자기 출처 관문 모델만 읽는다. `stg_dbt.yml`의 unit test 입력도 출처 모델로 바꿨다.
+- **같음 증명 (측정 25와 같은 방법):** `dbt build --vars '{build_suffix: _f7}'` 120개 통과(PASS 120, ERROR 0), 225.1초. 빌드 스키마와 실제 스키마를 두 방향 `EXCEPT ALL`로 비교했고 빌드 스키마는 지웠다.
+
+| 표 | 행 (실제 / 빌드) | 컬럼 이름·순서·타입 | 두 방향 차이 |
+|---|---|---|---|
+| `stg_dbt.rent`, `congestion`, `store` | 450,957 / 같음, 325,845 / 같음, 554,092 / 같음 | 같음 | 0, 0, 0 |
+| `stg_dbt.rent_quarantine`, `congestion_quarantine`, `store_quarantine` (`quarantined_at` 뺌) | 11, 0, 0 / 같음 | 같음 | 0, 0, 0 |
+| `stg_dbt.batch_status` (`checked_at` 뺌) | 1,358 / 1,358 | 같음 | 0 |
+| `wh.fact_rent`, `fact_congestion`, `fact_store` | 86,903, 65,169, 554,092 / 같음 | 같음 | 0, 0, 0 |
+| `mart.dong_profile`, `rent_listing`, `commute_od`, `dong_mois_map` | 426, 62,291, 141,411, 427 / 같음 | 같음 | 0, 0, 0, 0 |
+
+- 배포: wh_load DAG 수동 실행 1회 성공(09:24:45 ~ 09:29:21, 4분 36초). 상품 `v2026.11.13`의 데이터 파일 8개 sha256은 배포 전과 같고 `manifest.json`만 다르다(만든 시각). 뒤이어 asset으로 lineage DAG가 돌아 회차 32(SQL 34개, 간선 2,651) 성공.
+- 리니지 `run_diff`(31 → 32): 더함 430, 지움 406. 지운 것: `stg_dbt.batch_status`로 들어가던 간선 184개, 정제 모델 6개로 들어가던 간선 222개. 더한 것: 출처별 관문 모델 3개(혼잡도 63, 전월세 114, 상가정보 7), 합집합 `batch_status` 24, 정제 모델 6개 222(같은 수, 출처 관문 모델에서 옴).
+- **지도 정밀도 (변이별 상품 컬럼 수):** 실제로 바뀐 컬럼은 측정 31의 실행 결과다(같음 증명으로 계산이 같으므로 처방이 바꾸지 않는다). 예측은 `lineage.downstream`(is_product)을 처방 전(회차 27, 측정 31)과 처방 뒤(회차 32)로 센 것이다.
+
+| 변이 | 원천 | 실제 | 예측 전 (회차 27) | 예측 뒤 (회차 32) | 정밀도 전 → 뒤 | 놓침 |
+|---|---|---|---|---|---|---|
+| M1 | `raw.congestion` `DOW_SE` | 4 | 40 | 5 | 10% → 80% | 0 |
+| M2 | `raw.congestion` TIME 칸 | 1 | 40 | 5 | 2.5% → 20% | 0 |
+| M3 | `stg.station_master` 좌표 | 7 | 7 | 8 | 100% → 88% | 0 |
+| M4 | `raw.rent` `monthlyRent` | 7 | 40 | 20 | 17.5% → 35% | 0 |
+| M5 | `stg.living_migration` 나이 | 4 | 4 | 0 | 100% → 해당 없음 | 이 원천은 더 쓰이지 않음 |
+| M6 | `raw.sbiz_store` 업종 코드 | 2 | 40 | 40 | 5% → 5% | 0 |
+| M7 | `raw.rent` `contractType` | 18 | 40 | 20 | 45% → 90% | 0 |
+
+  - 놓침 열은 처방 뒤 예측이 측정 31의 실제 컬럼을 모두 담는지를 SQL로 본 것이 아니라 수로 본 것이다. 변이 시험 도구를 다시 돌린 결과는 아래 "변이 시험 재실행"에 적는다.
+  - M6이 그대로 40인 것은 관문 때문이 아니다. `lineage.downstream`(회차 32)에서 `raw.sbiz_store.raw.상권업종소분류코드`는 두 길로 다른 출처에 닿는다: `store → bjd_code → rent_rows → rent`(행 경로, 법정동 코드표를 승인된 상가 배치로 만든다)와 `fact_store → map_dong_mois → dim_dong`(행 집합 경로, 다수결 대응표). `dim_dong`은 모든 상품 표가 읽는다. 업종 코드 변이가 코드표나 다수결을 실제로 바꾸지는 않았지만(측정 31 실제 2개) 지도는 행 관계로 모두 닿는다고 본다.
+  - M3이 7 → 8로 하나 늘었다. 회차 27과 32 사이에 F-5(상품 층 ROWSET) 처방이 들어가 `product.<표>.*` 노드가 생겼다. 늘어난 하나가 그 노드인지 확인하지 않았다 [확인 필요].
+  - M5: 생활이동이 Spark SQL로 옮겨 dbt 원천이 `stg.living_commute`가 되어 `stg.living_migration`에서 나가는 간선이 없다. 같은 질문(나이 25 → 26)은 이제 Iceberg `lh.living.migration_rows.age`에 걸어야 하고, 그 변이는 dbt만 다시 돌리는 지금 도구로는 할 수 없다(Spark 실행기를 함께 돌려야 함).
+
