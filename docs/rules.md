@@ -131,6 +131,8 @@
 
 ### 구현과 실측
 - 구현: transform/congestion.py, warehouse/sql/03_stg_congestion.sql(기본 키 (collected_date, dow, line, sttn_no, direction, slot)).
+- **2026-11-13 SQL로 이전 (결정 42, 60~64).** 규칙은 그대로이고 자리만 옮겼다. 파싱: `transform/congestion_raw.py` → `raw.congestion`(jsonb, `warehouse/sql/09_raw_congestion.sql`). 정제·격리: `warehouse/dbt/models/stg_dbt/` (`congestion_rows`에 CV1~CV4, `congestion_cells`에 CC3·CC5, `congestion`에 CC2·CC4·CV5, `congestion_quarantine`). 원천 키 목록: 매크로 `congestion_keys.sql`. 규칙 시험: `stg_dbt.yml`의 unit test 4개(옛 tests/test_congestion.py의 경우). 파일 단위 검사는 dbt 테스트: CF1은 쓰는 키가 없으면 실패(`congestion_raw_keys_present`), 모르는 키는 경고(`congestion_raw_unknown_keys`), CF2 `congestion_cell_unique`, CF3 `congestion_quarantine_ratio`(수집일별), CF4 `congestion_raw_shrink`(가장 최근 수집일만). 변경 알림은 운영 카드 `warehouse/sql/ops/13_congestion_change.sql`.
+  - 옛 결과와 같음: 수집일 5개(10-21, 10-26, 11-02, 11-03, 11-13) 325,845행, 두 방향 `EXCEPT ALL` 0, 컬럼 이름·순서·타입 같음, 격리 0 대 0 (측정 23).
 - 실측 (2026-10-21 수집분): 원본 1,671행 → 세로 65,169칸, 통과 65,169, **격리 0칸(0.00%)**. 혼잡도 0.0 ~ 159.4. 두 번째 실행 뒤에도 65,169행(멱등), 실행 1.8초(bash time, 1회). 직전 스냅샷이 없어 변경 알림은 "비교하지 않음"이었다.
 - 시험: tests/test_congestion.py. 시간대 이름 39개(처음과 자정 넘는 두 칸), 정상 행 39칸 통과와 값 변환, CV1~CV4는 통과 0칸(원본 행 전체 격리), CV5는 38칸 통과 1칸 격리(격리 조각은 신원 필드 5개 + 그 칸), "nan", 경계값 0과 300. 혼잡도 상한을 400으로 바꾼 변형 코드로 돌리면 시험이 실패하는 것을 확인했다(2026-10-21).
 - **미확인**: CF4와 변경 알림의 비교 경로는 다른 날 다시 수집할 때 처음 지나간다.

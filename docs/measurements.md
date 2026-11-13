@@ -141,6 +141,8 @@
 | seoul_api | 매주 월 05:00 | 2회째 | 10-26 05:00 | 10-26 10:23 | 0.2분 | 성공 |
 | molit_rent | 매주 월 04:00 | 3회째 | 11-02 04:00 | 11-02 10:39 | 6.9분 | 성공 |
 | seoul_api | 매주 월 05:00 | 3회째 | 11-02 05:00 | 11-02 10:39 | 0.2분 | 성공 |
+| molit_rent | 매주 월 13:00 | 4회째 | 11-09 13:00 | 실행 안 됨 | | Airflow가 꺼져 있었음 (측정 11) |
+| seoul_api | 매주 월 13:30 | 4회째 | 11-09 13:30 | 실행 안 됨 | | Airflow가 꺼져 있었음 (측정 11) |
 | file_living_migration | 매월 21일 06:00 | 0회 | | | | |
 | wh_load | Asset | (정기 실행에 이어 10-21 1회, 10-26 3회: 10:23, 10:25, 10:30, 1.7~2.0분 / 11-02 3회: 10:39, 10:41, 10:46, 1.7~2.0분, 모두 성공) | | | | |
 
@@ -216,3 +218,280 @@
 - 메모리: 입력(58.15GiB)이 컨테이너 RAM(30.9GiB)의 두 배에 가까웠지만, 네 방법 모두 데이터를 메모리에 다 올리지 않고 흘려 읽어 최대 7.42GiB를 넘지 않았다. 이 집계에서는 "입력이 메모리를 넘는다"가 문제가 되지 않았다.
 - Spark가 CSV에서 Iceberg로 바뀌자 약 5.8배 빨라졌다(약 168초 → 약 29초). 같은 엔진이므로 차이는 저장 형식(열 단위 Parquet에서 쓰는 5개 열만 읽음, 압축) 때문으로 본다. 나눠 재지는 않았다.
 - 재지 않은 것: DuckDB로 Iceberg 표 읽기, 한 대를 넘는 Spark(클러스터).
+
+## 측정 11. S5 수집이 멈춤: 기준값 (변경에 강한 파이프라인 P0, 2026-11-12)
+- 목적: 정기 실행이 멈췄을 때 사람이 알기까지의 기준값을 남긴다(change_resilience_plan.md 7절 S5, P7의 비교 기준).
+- 방법: DB 컨테이너만 켜고 Airflow는 켜지 않은 상태에서 읽었다. Airflow를 켜면 밀린 예정분이 바로 돌아(측정 7, 결정 34에서 본 동작) 기록이 바뀌기 때문이다. 읽은 것: Airflow 메타데이터 `dag_run`(2026-11-03 이후 전체), `job`(스케줄러·트리거러·DAG 처리기의 마지막 하트비트), `docker inspect`의 컨테이너 종료 기록, `logs/alerts.log`, 레이크 출처별 최신 `collected_date` 폴더, Docker Desktop 설정 파일. 2026-11-12 저녁(KST), 1회.
+- 환경: Docker Desktop(엔진 29.7.2, Compose 5.4.0), Airflow 3.3.2 standalone(LocalExecutor), Windows 11.
+
+| 항목 | 값 |
+|---|---|
+| 11-03 이후 dag_run | 11개. 마지막은 wh_load 11-03 15:57 종료. 그 뒤 실행 0개 |
+| 일정 변경(결정 34) 뒤 예정된 정기 실행 | molit_rent 11-09 13:00, seoul_api 11-09 13:30. 2개 중 0개 실행(dag_run 행 자체가 없음) |
+| Airflow가 마지막으로 살아 있던 시각 | 2026-11-05 22:35 (SchedulerJob, TriggererJob, DagProcessorJob 하트비트가 같은 분에 멈춤. 상태는 running·failed로 남아 정상 종료 기록이 아님) |
+| 레이크 최신 수집일 | 모든 출처 2026-11-03 이하 |
+| 멈춘 동안 남은 신호 | 0건 (`logs/alerts.log` 마지막 기록 2026-10-21. 운영 대시보드 Metabase도 같은 Docker 위라 함께 멈춰 있었음) |
+| 사람이 안 시각과 경로 | 2026-11-12, 대화 중 레이크 폴더를 직접 보고 알았다. 정확한 시각은 기록하지 않았다 |
+| 멈춘 뒤 알기까지 | 6일 이상 (11-05 22:35 → 11-12) |
+| 첫 누락 예정 뒤 알기까지 | 약 3일 (11-09 13:00 → 11-12) |
+
+- 11-03 15:49의 scheduled 실행 2개(logical 11-02)는 일정 변경으로 생긴 것이라 측정 7과 같이 정시 실행으로 세지 않았다. 결정 34 뒤 예정 시각에 돈 정기 실행은 0/2다.
+- Docker 엔진째 멈춘 것으로 본다(추정). 근거: 세 작업의 하트비트가 같은 분에 멈췄고, 이 PC의 모든 컨테이너가 같은 종료 코드(255)와 같은 종료 시각(2026-11-12 17:56, Docker Desktop을 다시 켠 시각)으로 기록됐다. 그래서 컨테이너 종료 시각으로는 실제로 멈춘 때를 알 수 없고, 마지막 하트비트로만 안다.
+- 멈춘 상태가 이어진 이유(설정을 읽어 확인): Docker Desktop 자동 시작이 꺼져 있다(`%APPDATA%\Docker\settings-store.json`의 `AutoStart: false`). docker-compose.yml의 서비스에는 재시작 정책(`restart`)이 없다. 그래서 PC를 다시 켜도 사람이 Docker와 컨테이너를 켜기 전까지 아무것도 돌지 않는다.
+- 알림이 남지 않은 이유: 지금 알림은 작업 실패 콜백(`dags/alerting.py`)뿐이라, Airflow가 꺼져 있으면 콜백도 돌지 않는다. "실행되지 않음"은 Airflow 밖에서 봐야 드러난다.
+- 이 측정 뒤에도 Airflow는 켜지 않았다. 켜면 catchup=False라도 가장 최근에 놓친 예정분(11-09)이 바로 돈다.
+
+## 측정 12. S2 무해한 필드 추가: 기준값 (변경에 강한 파이프라인 P0, 2026-11-12)
+- 목적: 원천에 쓰지 않는 필드가 하나 늘었을 때 지금 정제가 어떻게 반응하는지 실측한다(change_resilience_plan.md 7절 S2, 2.3절 문제 2).
+- 입력: 오피스텔, 강남구(11680), 계약월 202610, 수집일 2026-11-03의 레이크 XML 1개(item 207개). 같은 처리 단위의 stg.rent 통과 행은 207행이다(2026-11-12 DB에서 읽어 확인).
+- 방법: `python -m measure.change_cost s2`. 레이크 파일을 임시 폴더에 복사하고 `transform.rent.main()`을 코드 수정 없이 돌렸다. 바꾼 것은 레이크 위치(임시 폴더)와 DB 접속(막음)뿐이다. 법정동 코드표는 실제 레이크의 상가정보에서 읽기만 했다. 대조군은 원본 그대로 복사한 것, 변형은 item마다 `<newField>x</newField>`를 덧붙인 것. 2회 반복.
+- 환경: Windows 11 호스트, 프로젝트 .venv(Python 3.12.8). 실제 레이크와 DB에는 쓰지 않았다(측정 뒤 해당 처리 단위 stg.rent 207행 그대로).
+
+| | 대조군 (원본 그대로) | 변형 (item마다 필드 1개 추가) |
+|---|---|---|
+| 결과 | 정제·검증 통과, 적재 직전(DB 차단)까지 진행 | 실패: `F1 스키마 변경: 11680_202610_p001.xml 1번째 item, 다른 필드 ['newField']` |
+| 통과 / 격리 | 207 / 0 | 0 (첫 item에서 멈춤) |
+| 적재될 행 | 207 | 0 |
+| 시간 (1회, 2회) | 5.18초, 5.15초 | 5.87초, 6.25초 |
+
+- 두 번 돌려 결과가 같았다. 시간은 대부분 법정동 코드표를 만들려고 상가정보 서울 CSV(약 300MB)를 읽는 데 든다(`load_bjd_codes`). 실패 판정 자체의 비용은 따로 재지 않았다.
+- 흡수하려면 사람이 하는 일(지금 구조): 실패를 알아차린다(Airflow가 켜져 있으면 실패 콜백이 alerts.log에 남긴다) → 메시지에서 새 필드 이름을 본다 → 그 필드가 무해한지 판단한다 → `transform/rent.py`의 `EXPECTED_FIELDS`에 이름을 넣는다(코드 파일 1개). `docs/data_sources.md` 필드 표도 맞춰 고친다(문서 1개). 시험(`tests/test_rent.py`)은 F1을 다루지 않아 고칠 필요가 없다 → 실패한 처리 단위를 다시 돌린다.
+- 같은 모양의 검사가 6개 정제 모듈에 있으므로(2.3절 문제 2) 다른 출처도 같은 반응일 것으로 보지만, 이번에 잰 것은 전월세 오피스텔 한 처리 단위뿐이다. 새 필드가 API 응답 전체에 붙으면 molit_rent DAG의 처리 단위(`BashOperator.partial(...).expand(...)`)가 모두 같은 이유로 실패할 것으로 보지만 재지 않았다 [미측정].
+
+## 측정 13. S1 쓰는 필드 이름 변경(혼잡도): 기준값 (변경에 강한 파이프라인 P0, 2026-11-12)
+- 목적: 정제가 쓰는 필드 이름이 원천에서 바뀌었을 때, 지금 구조에서 흔히 하는 고침(코드 안의 옛 이름을 새 이름으로 바꾸기)을 한 뒤 새 수집일과 옛 수집일을 모두 처리할 수 있는지 실측한다(change_resilience_plan.md 7절 S1, P1의 [확인 필요]).
+- 가정한 변경: `DPTRE_STTN`(역 이름) → `STTN_NM`. 가상의 이름이다. 실제로 혼잡도 분기 파일은 2025년 csv에서 2026년 xlsx로 바뀌며 컬럼 이름이 바뀐 적이 있다(5절 표).
+- 입력: 레이크 `seoul_subway_congestion`의 `subwConfusion_p001.xml`, `p002.xml`(1671행). 새 수집일은 2026-11-03, 옛 수집일은 2026-10-21. 네 수집일(10-21, 10-26, 11-02, 11-03)의 XML은 내용이 같다(md5 일치, 2026-11-12 확인).
+- 방법: `python -m measure.change_cost s1`. 레이크 파일을 임시 폴더에 복사하고 정제 `main()`을 돌렸다. 바꾼 것은 레이크 위치와 DB 접속(막음)뿐이다. "흔한 고침"은 레포의 `transform/congestion.py`를 고치지 않고, 그 내용에서 옛 이름을 새 이름으로 모두 바꾼 사본을 임시 폴더에 만들어 불러왔다. 2회 반복.
+- 환경: Windows 11 호스트, 프로젝트 .venv(Python 3.12.8). 측정 뒤 stg.congestion 260,676행 그대로, 레이크 XML md5 그대로.
+
+| 경우 | 입력 | 코드 | 결과 | 시간 (1회, 2회) |
+|---|---|---|---|---|
+| ① 대조군 | 11-03 원본 | 지금 코드 | 통과: 1671행 → 65,169칸, 격리 0, 적재 직전(DB 차단)까지 | 0.13초, 0.13초 |
+| ② | 11-03, `DPTRE_STTN` 요소 1671개를 개명 | 지금 코드 | 실패: `CF1 스키마 변경: subwConfusion_p001.xml 1번째 row, 다른 필드 ['DPTRE_STTN', 'STTN_NM']` | 0.02초, 0.02초 |
+| ③ | ②와 같음 | 흔한 고침(정제 파일 2곳 바꿈) | 통과: ①과 같은 65,169칸, 격리 0 | 0.18초, 0.14초 |
+| ④ | 10-21 원본(개명 전) | 흔한 고침 | 실패: ②와 같은 CF1 메시지 | 0.03초, 0.02초 |
+
+- 두 번 돌려 결과가 같았다.
+- ④가 이번 측정의 핵심이다. 흔한 고침 뒤에는 개명 전 수집일을 다시 돌릴 수 없다. 지금 레이크의 혼잡도 수집일 4개가 모두 여기에 해당한다. 옛 수집일과 새 수집일을 둘 다 처리하려면 수집일에 따라 이름 대응을 고르는 장치가 있어야 하는데, 지금 구조에는 없다(2.3절 문제 1, 3).
+- 고쳐야 하는 곳(지금 구조, `DPTRE_STTN` 검색): 정제 코드 `transform/congestion.py` 2곳(`ID_FIELDS`, `clean`), 시험 `tests/test_congestion.py` 2곳, 문서 `docs/data_flow.md`, `docs/data_sources.md`, `docs/rules.md` 각 1곳. 코드 파일 1개, 시험 1개, 문서 3개다. 시험은 고친 정제에서 `BASE`에 `STTN_NM`이 없어 실패할 것으로 보지만 코드를 읽고 판단했을 뿐 돌리지 않았다 [미측정]. stg 컬럼 이름(`sttn_nm`)은 그대로라 dbt 이후는 고칠 필요가 없다(`*.py`, `*.sql`, `*.yml` 검색 결과 위 파일 외에 없음).
+- 흡수하려면 사람이 하는 일(지금 구조): 실패를 알아차린다 → 메시지의 두 이름(사라진 것, 새로 생긴 것)을 보고 개명인지 판단한다 → 위 5개 파일을 고친다 → 실패한 수집일을 다시 돌린다. 이때부터 옛 수집일은 다시 돌릴 수 없다.
+
+## 측정 14. S3 규칙 정정(전월세 C6 산 지번): 기준값 (변경에 강한 파이프라인 P0, 2026-11-12)
+- 목적: 정제 규칙을 고쳤을 때 다시 만들어야 할 처리 단위가 몇 개인지(정답), 지금 구조에서 그 단위를 데이터로 고를 수 있는지 실측한다(change_resilience_plan.md 7절 S3, 2.3절 문제 4, P6).
+- 실사례: C6 정정. 옛 규칙(커밋 b824215, 2026-10-21)은 지번 정규식에 "산"이 없어 산 지번을 V9로 격리하고 대지구분을 항상 1로 만들었다. 지금 규칙(56915bd)은 산 지번을 통과시키고 대지구분을 2로 만든다. 두 커밋의 규칙 차이는 이 두 곳뿐이다(`git diff b824215 56915bd -- transform/rent.py`).
+- 방법: `python -m measure.change_cost s3`. 옛 `transform/rent.py`를 git에서 꺼내 임시 모듈로 불러오고, 레이크 전월세 XML 전체의 item마다 옛 `clean()`과 지금 `clean()`의 결과(정제 값, 위반 규칙)를 비교했다. 법정동 코드표는 한 번만 읽어 두 규칙에 같은 것을 썼다. DB는 쓰지 않았다. 2회 반복.
+- 환경: Windows 11 호스트, 프로젝트 .venv(Python 3.12.8, psutil 7.2.2). 메모리는 psutil `peak_wset`(프로세스 최대 작업 집합). 측정 뒤 stg.rent 403,110행, stg.rent_quarantine 11행 그대로, 레이크 XML md5 그대로.
+
+| 항목 | 값 (1회, 2회 같음) |
+|---|---|
+| 레이크 처리 단위 / XML / item | 1,202 / 1,243 / 403,121 (stg.rent 403,110 + 격리 11 = 403,121, 단위 수도 stg.rent와 같음) |
+| 정답: 결과가 달라지는 처리 단위 | 51개 (모두 연립다세대), item 100개 |
+| 수집일별 단위 | 10-21: 5, 10-22: 9, 10-23: 9, 10-26: 5, 10-28: 5, 10-30: 4, 11-02: 7, 11-03: 7 |
+| 전부 다시 돌릴 때 결과가 같은데 다시 도는 단위 | 1,151개 (1,202개 중) |
+| 규칙 전용 고르기(지번이 "산"으로 시작하는 item이 있는 단위) | 51개, 정답과 같음. DB에서 `stg.rent WHERE jibun LIKE '산%'`로 골라도 51개 |
+| s3 전체 시간 | 12.07초, 11.44초 (코드표 읽기 4.31초, 4.24초 포함) |
+| s3 최대 메모리 | 45MB, 45MB |
+
+- 실제 처리 단위 하나(`python -m measure.change_cost unit offi 2026-11-03 11680 202610`, 실제 `transform.rent.main()`, DB 차단): 4.02초, 4.07초, 최대 메모리 40MB, 40MB. `main()`은 단위마다 법정동 코드표(상가정보 zip)를 다시 읽는다. 1,202개를 다시 돌리는 전체 시간과 DB 쪽 비용은 재지 않았다 [미측정].
+- 지금 구조에서 고르는 방법: stg.rent에는 규칙 버전도 적재 시각도 없다(컬럼 확인). 그래서 "옛 규칙으로 만든 단위"를 데이터로 고를 수 없다. 남는 방법은 (1) 전부 다시 돌리기(1,202개, 그중 1,151개는 결과가 같음), (2) 바뀐 규칙의 뜻을 아는 사람이 규칙 전용 조건을 쓰기다. 이번 C6는 (2)가 정답과 같았지만, 그건 정정 내용이 "산 지번"이라는 눈에 보이는 조건 하나로 표현됐기 때문이다. 조건으로 표현하기 어려운 정정(예: 코드표나 계산식 변경)에도 통하는지는 재지 않았다 [미측정].
+- 이 측정에서 정답을 구할 수 있었던 이유: 옛 규칙이 git에 남아 있었고 원본이 레이크에 그대로 있었다. 하지만 DB의 어느 행이 어느 규칙으로 만들어졌는지는 이번에도 알 수 없다. 이번 정답은 "지금 레이크 전체를 두 규칙으로 돌리면 달라지는 단위"이지 "DB에 옛 규칙 행이 남은 단위"가 아니다.
+- 참고: `pg_stat_user_tables`의 stg.rent `n_live_tup`, `n_dead_tup`가 모두 0이고 vacuum 기록이 없다(테이블 크기 83MB). 측정 11의 비정상 종료(exit 255) 뒤 통계가 초기화된 것으로 보이지만 확인하지 않았다 [확인 필요].
+
+## 측정 15. S4-1 상류 컬럼이 바뀔 때 영향받는 상품 컬럼 찾기: 기준값 (변경에 강한 파이프라인 P0, 2026-11-13)
+- 목적: 리니지가 없는 지금 방법으로 "이 컬럼이 바뀌면 어느 상품 컬럼이 영향받나"를 찾을 때의 후보 수, 찾은 결과, 거친 단계를 남긴다(change_resilience_plan.md 7절 S4, 결정 40의 검증 기준). 리니지 추출기를 만들기 전에 잰다. 지도를 본 뒤에 찾으면 찾는 과정이 지도의 답을 따라가 기준값이 오염되기 때문이다.
+- 대상 변경: `stg.congestion.dow`(요일). 두 경우를 나눈다. (가) 컬럼 이름이 바뀜. (나) 값 표기가 바뀜(예: '평일'이 다른 표기로). 원천 혼잡도 파일은 요일 컬럼 이름이 `요일구분` → `구분`으로 바뀐 기록이 있다(`docs/data_sources.md`). 값 표기가 바뀐 기록은 없고 가정이다.
+- 방법 (지금 쓸 수 있는 수단만): (1) dbt `target/manifest.json`(2026-11-03 생성)의 `depends_on`으로 source `stg.congestion`의 하류 모델을 모두 따라감(테이블 리니지). (2) 하류 모델 중 상품으로 나가는 것을 `warehouse/export_product.py`의 `TABLES`로 확인. (3) `warehouse/dbt/models`에서 `dow`를 단어 단위로 검색. (4) 하류 모델 SQL 4개를 읽어 판단. 실행(빌드)으로 확인하지는 않았다.
+- 거친 단계: manifest 조회 1회, 검색 1회(걸린 곳 2곳: `wh/fact_congestion.sql` select, `mart/dong_station.sql` where), 파일 읽기 6개(`fact_congestion.sql`, `map_congestion_station.sql`, `dong_station.sql`, `dong_profile.sql`, `export_product.py`, `mart.yml`). 시간은 적지 않는다. 이번에 찾은 것은 Claude라 사람이 찾는 시간과 다르다.
+
+| 항목 | 값 |
+|---|---|
+| 테이블 리니지(manifest)가 낸 하류 모델 | 4개: fact_congestion(view), map_congestion_station, dong_station, dong_profile |
+| 그중 상품 파일 | dong_profile 1개(csv, parquet). dong_station은 상품이 아니고 dong_profile을 거쳐 나간다 |
+| 테이블 리니지 기준 후보 상품 컬럼 | 28개 (dong_profile 전체 컬럼, product/v2026.11.05/dong_profile.csv 헤더) |
+| SQL을 읽고 판단한 실제 영향 상품 컬럼 (나) 값 표기 변경 | 1개: `dong_profile.am_peak_congestion`. 경로: stg.congestion.dow → fact_congestion.dow → dong_station의 `where f.dow = '평일'` 필터(행 관계) → dong_station.am_peak_congestion → dong_profile.am_peak_congestion. 값 표기가 바뀌면 필터에 걸리는 행이 없어져 오류 없이 비게 될 것으로 판단 [미실행: 변이 시험에서 확인] |
+| 영향 없다고 판단한 것 | map_congestion_station은 fact_congestion에서 (line, sttn_no)만 distinct로 읽어 dow와 무관. 그래서 nearest_congestion_station_* 3개는 영향 없음. 나머지 24개는 혼잡도와 무관한 출처에서 옴 |
+| (가) 컬럼 이름 변경 | `fact_congestion.sql`이 `c.dow`를 직접 고르므로 dbt 빌드가 실패한다고 판단. blue/green(결정 30, 32)으로 실제 wh·mart와 상품은 그대로 남고, 그 회차의 모든 상품 갱신이 멈춘다 [미실행] |
+
+- 후보 28개 중 실제 영향 1개다. 테이블 리니지만으로는 나머지 27개를 사람이 SQL을 읽어 걸러야 했다. 그리고 실제 영향 1개는 값 관계가 아니라 필터(행 관계)로 이어져, 결과 컬럼의 출처만 따라가는 방법으로는 보이지 않는다(결정 46의 근거와 같음).
+- 이 판단 목록은 결정 49의 사람 정답 일부로 쓴다. 파서를 돌리기 전에 기록했다.
+- 한계: manifest는 2026-11-03 빌드 기준이다. 그 뒤 모델 변경 커밋(3c69976, 2026-11-04)이 있지만 이 경로의 모델 4개는 2026-11-03 커밋(f2dd4f6) 뒤로 바뀌지 않았다(git log 확인). 판단은 SQL을 읽어 내린 것이고 실행으로 확인하지 않았다. 이 측정 전에 같은 대화에서 `dong_station.sql`의 dow 필터를 이미 읽은 적이 있다(결정 46 작성 때). 그래서 "무엇을 봐야 하는지 미리 알았다"는 점에서 완전히 처음 찾는 경우보다 단계가 적었을 수 있다.
+- 남은 것: S4-2(마트 컬럼이 바뀌면 상품 파일과 manifest가 표시하는가)는 P5 직전에 잰다. export_product.py가 P5 전까지 바뀌지 않아 결과가 같기 때문이다.
+
+## 측정 16. sqlglot 사전 시험: 우리 컴파일된 SQL로 무엇이 되고 무엇이 안 되나 (P4 설계 전, 2026-11-13)
+- 목적: 리니지 설계(결정 53, 54)가 기대는 사실을 실행으로 확인한다. 정확성 측정이 아니라 설계 근거다. 정답과 대조하지 않았다.
+- 입력: `warehouse/dbt/target/compiled/seoul_dong/models/` 모델 SQL 17개(2026-11-03 컴파일), `target/manifest.json`, `warehouse/sql/01~06` stg DDL.
+- 환경: Claude 작업 공간(Linux 컨테이너, 사용자 PC 아님), Python 3, sqlglot 30.31.0, dialect postgres. 1회 실행.
+- 결과:
+  - 스키마 추론: stg DDL의 `CREATE TABLE` 14개(격리 표 포함)를 파싱해 컬럼을 얻고, manifest 의존 순서대로 모델을 `qualify`했더니 17개 모두 성공했다. `dong_profile` 출력 컬럼 28개가 `product/v2026.11.05/dong_profile.csv` 헤더 28개와 같다. DB 없이 스키마를 만들 수 있다.
+  - `lineage()`로 본 값 관계: `dong_station.am_peak_congestion`의 잎은 `f.congestion` 하나뿐이다. `where f.dow = '평일' and f.slot between ...` 필터 컬럼은 나오지 않는다. 행 관계는 따로 뽑아야 한다.
+  - 과다 귀속: `dong_station.nearest_station_id`의 잎이 `s.bldn_id`, `s.bldn_nm`, `s.route`, `s.point`, `s.dong_id`, `s.source_collected_date`, `dim_dong.geom` 7개다. LATERAL 안 `select s.*`에서 하나를 고르는 구조라 s의 컬럼이 모두 출처로 나온다.
+  - `count(*)`: `dong_rent_summary.deals`의 잎이 출력 이름 `deals` 자신이다. 출처 테이블이 나오지 않는다.
+  - 별칭: `dong_profile.am_peak_congestion`의 잎 이름은 `st.am_peak_congestion`(별칭)이다. 노드의 `source`로 실제 테이블을 찾아야 한다.
+  - PostGIS: `nearest_station_distance_m`의 잎에 `ST_Distance` 인자 `s.point`, `dim_dong.geom`이 들어 있다.
+  - jsonb: `raw->>'DOW_SE'`는 `JSONExtractScalar`로 파싱되고, lineage는 `congestion.raw`(컬럼 전체)를 돌려준다. 키 단위는 따로 풀어야 한다. `cross join lateral jsonb_each_text(r.raw)`의 key·value는 `r.raw`로 이어진다.
+  - 행 관계 시제품: `optimizer.scope.build_scope`로 scope마다 WHERE, JOIN ON/USING, GROUP BY, ORDER BY의 컬럼을 모으면 `dong_station`에서 FILTER `fact_congestion.dow`, `fact_congestion.slot`, `dim_station.bldn_id`, JOIN `fact_congestion.line`, `sttn_no`, `map_congestion_station.line`, `sttn_no`, GROUP_BY `map_congestion_station.bldn_id`, SORT `dim_station.point`가 나왔다. CTE를 가리키는 참조(`covered`, `k`, `pk`, `c`)는 그 scope 안으로 더 풀어야 한다. `dong_profile`에서는 JOIN `dong_rent_summary.lease_type`(LEFT JOIN ON의 상수 조건)이 나왔다.
+- 해석: sqlglot `lineage()`는 값 관계(DIRECT)를 주고, 행 관계(INDIRECT)는 scope를 직접 훑어 보완해야 한다. 과다 귀속, `count(*)`, 별칭, jsonb 키는 보정 규칙이 필요하다(결정 54).
+- 재지 않은 것: 정답 대조, 테스트 SQL 65개, Spark 실행, 사용자 PC 환경에서의 동작.
+
+## 측정 17. S6a 요구사항 변경: 편의 업종 추가: 기준값 (변경에 강한 파이프라인 P0, 2026-11-13)
+- 목적: "생활 편의에 업종 하나를 더하고 싶다"는 요구가 왔을 때, 지금 구조에서 고칠 곳, 다시 만드는 범위, 정제 시간, 상품에 번지는 범위를 실측한다(change_resilience_plan.md 7절 S6a, 결정 52, 65).
+- 더할 업종: 헬스장 `R10307`(2026-11-13 사용자 선택). 레이크 상가정보 서울 202606(수집일 2026-10-21, 554,092행)에서 지금 6코드 밖이면서 고르게 있는 후보 중 하나다: 3,570곳, 행정동 427개 중 417개(97.7%)에 있음, 동별 업소 수 CV(표준편차/평균) 0.98. 참고로 편의점은 CV 0.76, 슈퍼마켓은 0.60이다. 함께 본 후보: 치과의원 Q10210(4,406곳, 98.8%, 0.87), 미용실 S20701(20,278곳, 100%, 0.69), 반찬/식료품 G20509(2,279곳, 96.0%, 0.98).
+- 방법 (결정 65의 B, 레포 코드는 고치지 않음):
+  - `python -m measure.change_cost s6a`: 실제 레이크 zip을 `transform.sbiz_store.main()`으로 돌린다. 바꾼 것은 `ESSENTIAL` 값(대조군 6코드, 변경 7코드)과 DB 접속(막음)뿐이다. 2회 반복.
+  - `python -m measure.change_cost s6a-map`: 헬스장 통과 행을 배열 파라미터로 넘겨, 읽기 전용 트랜잭션 안에서 `wh/fact_store.sql`과 같은 공간 조인과 `wh/map_dong_mois.sql`과 같은 다수결을 다시 낸 뒤 지금 `wh.map_dong_mois`와 두 방향 `EXCEPT ALL`로 비교한다. 재현이 맞는지 보려고 `wh.fact_store`만으로 낸 다수결(대조)도 같이 비교한다. 2회 반복. 처음에는 임시 표로 하려 했지만 PostgreSQL이 읽기 전용 트랜잭션에서 임시 표 생성을 거부해 배열 파라미터로 바꿨다.
+  - 고칠 곳: 코드 번호(`G20405` 등), `ESSENTIAL`, 마트 컬럼 이름, "6코드" 문구를 레포에서 검색하고 걸린 파일을 읽었다.
+- 환경: Windows 11 호스트, 프로젝트 .venv(Python 3.12.8), DB는 Docker의 PostgreSQL + PostGIS(localhost:5433). 측정 뒤 stg.sbiz_store 30,394행 그대로다. DB에는 쓰지 않았다(s6a는 접속 차단, s6a-map은 읽기 전용).
+
+| 항목 | 대조군 (지금 6코드) | 변경 (+헬스장, 7코드) |
+|---|---|---|
+| 정제 결과 | 통과, 적재 직전(DB 차단)까지 | 통과, 적재 직전(DB 차단)까지 |
+| 통과 / 격리 | 30,394 / 0 (지금 DB의 stg.sbiz_store와 같음) | 33,964 / 0 (+3,570 = 헬스장 업소 수) |
+| 정제 시간 (1회, 2회) | 4.52초, 4.77초 | 4.60초, 4.88초 |
+| 최대 메모리 (두 경우를 한 프로세스에서) | 173MB, 173MB | |
+
+| 다수결 대응표 (`wh.map_dong_mois`, 상품 `dong_mois_map`) | 결과 (1회, 2회 같음) |
+|---|---|
+| 대조: `wh.fact_store`만으로 다시 낸 다수결 vs 지금 표 | 427행, 차이 0 (재현이 맞음) |
+| 헬스장 공간 조인 | 3,570행 모두 행정동 안 (경계 밖 0) |
+| 변경: 헬스장을 더한 다수결 vs 지금 표 | 427행, 전체 컬럼 기준 차이 417행 (양쪽 417씩) |
+| 그중 대응(코드, 동, 1위) 차이 | 0행. `stores`, `share` 값만 바뀜 |
+| 1위 코드가 바뀐 행정동 (`dim_dong.mois_dong_cd`로 번짐) | 0 |
+
+- 고칠 곳 (지금 구조, 검색과 읽기로 셈):
+  - 동작이 바뀌는 코드 3개: `transform/sbiz_store.py`의 `ESSENTIAL` 1곳(MF3는 이 값을 따라가 따로 고칠 필요 없음), `mart/dong_amenity.sql` 1줄(업종마다 컬럼 하나인 넓은 표), `mart/dong_profile.sql` 2줄(업소 수, km²당 밀도).
+  - 시험 1개: `tests/test_sbiz_store.py` 94줄이 행 번호 `[1, 2, 3, 4, 5, 6]`을 고정으로 비교한다. `ESSENTIAL`을 7코드로 바꿔 돌리면 `AssertionError`로 실패했다(실행 확인).
+  - 문서 3개: `docs/question.md` 3절(범위 A 업종 목록), `docs/rules.md` 5절, `docs/data_contract.md` 컬럼 표. 선택적으로 `warehouse/sql/demo.sql`, `docs/data_flow.md` 예시.
+  - 주석·출력 문구의 "6코드"·"필수 5종": `transform/sbiz_store.py` 3곳, `warehouse/sql/05_stg_sbiz_store.sql`, `wh/fact_store.sql`, `mart/dong_amenity.sql`, `warehouse/export_product.py` 각 1곳. 동작에는 영향이 없다. stg DDL은 업종을 행(`sub_cd`)으로 담아 고칠 필요가 없다.
+- 다시 만드는 범위: stg에 6코드 행만 들어 있으므로(결정 10) **레이크 zip부터 다시 정제**해야 한다(수집일 1개, 약 4.6초). 그 뒤 dbt 전체 빌드(wh, mart), 상품 내보내기가 이어진다. dbt 빌드와 내보내기 시간은 이번에 재지 않았다(측정 8의 wh_load 기준을 참고) [미측정].
+- 상품에 번지는 범위:
+  - `dong_profile`: 컬럼 28개 → 30개(추가). 요구한 변화다.
+  - `dong_mois_map`: 427행 중 417행의 `stores`, `share` 값이 바뀐다. 요구와 무관한 상품 파일인데 바뀐다. 이유: `map_dong_mois`가 "행정안전부 코드 → 행정동" 대응을 `fact_store` 업소의 다수결로 정하므로(결정 25), 편의 업종 범위가 그 투표의 표본이기도 하다. 이번 업종에서는 대응(1위 코드)이 하나도 뒤집히지 않아 `dim_dong`과 다른 상품에는 번지지 않았다. 업종이 다르면(예: 업소가 많고 동 경계 근처에 몰린 업종) 1위가 뒤집힐 수 있는지는 재지 않았다 [미측정].
+- 해석: 정제 자체는 값 하나만 바꾸면 통과하고 시간도 그대로다. 비용은 (1) stg가 요구사항(6코드)에 맞춰 잘려 있어 레이크부터 다시 정제해야 한다는 것, (2) 고정값을 가진 시험과 문서 여러 곳, (3) 업종 범위가 다수결 표본을 겸하는 숨은 결합이라 요구와 무관한 상품 파일(`dong_mois_map`)이 바뀐다는 것이다. (3)은 테이블 리니지(`ref`)로는 "fact_store 하류"로만 보이고, 어느 컬럼이 바뀌는지는 이번처럼 SQL을 읽고 재 봐야 알았다.
+
+## 측정 18. S6b 요구사항 변경: 저녁 귀가 18~20시: 기준값 (변경에 강한 파이프라인 P0, 2026-11-13)
+- 목적: "직장에서 집으로 오는 저녁 시간도 보고 싶다"는 요구가 왔을 때, 지금 구조에서 고칠 곳, 어디부터 다시 만드는지, 정제 시간을 실측한다(change_resilience_plan.md 7절 S6b, 결정 52, 65).
+- 귀가 방향 이동유형(U5, 문서로 닫음): **WH**(주간상주지 → 야간상주지). 근거는 `docs/data_sources.md` 생활이동 절의 설명서 문구 "H = 야간상주지, W = 주간상주지"다. 08시 파일 하나에 WH 145,136행(같은 절 표). 출근 쪽 HW와 마찬가지로 집·직장을 직접 뜻하지는 않는다.
+- 방법 (결정 65의 B): `python -m measure.change_cost s6b`를 Airflow 이미지(seoul-airflow:3.3.2)의 spark-venv에서 일회성 컨테이너로 돌렸다(`docker compose run --rm --no-deps airflow ...`, 스케줄러는 띄우지 않음). 처리 단위는 (2026-10-21, 202607) 하나. 대조군은 지금 `transform/living_migration.py`, 변경은 "흔한 고침" 사본이다. 사본에서는 `HOURS`를 18·19·20으로, `out_of_scope`와 Spark 미리 거르기의 `"HW"`를 `"WH"`로 바꿨다(3곳. 스크립트가 각 문자열이 정확히 한 곳인지 확인한다). 레포 파일은 고치지 않았다. Iceberg는 읽기만 했고 DB 접속은 막았다. 1회.
+- 환경: Docker Desktop의 Airflow 컨테이너(Linux), spark-venv(pyspark 3.5.9, Spark 로컬 모드). Ryzen 7 7800X3D, RAM 63GB, Windows 11. 측정 뒤 stg.living_migration 202607은 4,171,351행 그대로다.
+
+| 항목 | 대조군 (HW, 07~09시) | 변경: 흔한 고침 (WH, 18~20시) |
+|---|---|---|
+| 결과 | 통과, 적재 직전(DB 차단)까지 | 통과, 적재 직전(DB 차단)까지 |
+| Spark에서 넘어온 행 | 4,183,410 | 3,724,122 |
+| C4 완전 중복 | 3,122 | 1,703 |
+| 통과 / 격리 | 4,171,351 (지금 DB와 같음) / 8,937 (0.21%, 모두 V6) | 3,707,684 / 14,735 (0.40%, 모두 V6) |
+| 시간 (Spark 세션 시작부터, 1회) | 117.11초 | 101.49초 |
+
+- 컨테이너 생성부터 두 경우를 모두 끝내기까지 실제 경과 시간은 3분 40.7초였다. 10개월을 모두 다시 돌리는 시간은 재지 않았다 [미측정].
+- **어디부터 다시 만드나:** Iceberg부터 된다. Iceberg 표에는 24시간이 모두 있어(결정 35) 레이크 zip을 다시 풀 필요가 없었다. 측정 17(S6a)이 레이크 zip부터 다시 정제해야 했던 것과 다르다. 원천 모양 그대로 담은 층이 있으면 요구가 바뀌어도 그 층부터 다시 꺼낼 수 있다는 것을 보여 주는 실측이다(결정 42의 근거).
+- **흔한 고침의 함정:** 위 변경은 출근(HW 07~09시)을 저녁으로 *바꾼* 것이다. 요구는 저녁을 *더하는* 것이다. 더하려면 지금 구조에서 다음을 고쳐야 한다(읽고 셈, 실행하지 않음):
+  - `transform/living_migration.py`: 범위가 (이동유형, 시간) 쌍 두 개가 된다. `HOURS`, `out_of_scope`의 HW 조건, Spark 미리 거르기 조건, 통과 행에 방향(이동유형) 값 추가(`clean`, `GOOD_COLUMNS`). 1개 파일, 4곳 이상.
+  - `warehouse/sql/04_stg_living_migration.sql`: 지금은 "이동유형은 범위상 HW뿐이라 컬럼을 두지 않는다"(6줄)라서 방향 컬럼을 더하고 PK에 넣어야 한다. 이미 적재된 10개월(약 4천만 행)이 있는 표의 PK를 바꾸는 일이다.
+  - `wh/fact_commute.sql`: 방향 컬럼을 고른다. `mart/commute_od.sql`: HW만 거르는 조건을 더한다. 저녁용 마트 모델을 새로 만들고, 상품으로 낼 거면 `warehouse/export_product.py`의 `TABLES`도 고친다.
+  - 시험 `tests/test_living_migration.py`, 문서 `docs/rules.md` 4절(범위 C), `docs/question.md`, `docs/data_contract.md`.
+- **숨은 결합(조용히 틀리는 경로):** `wh/fact_commute.sql`과 `mart/commute_od.sql`에는 시간이나 방향 조건이 없다. 범위 C가 stg에서 이미 걸러졌다는 가정에 기대고 있기 때문이다. 그래서 정제만 고쳐 저녁 행을 stg에 함께 넣으면 PK는 충돌하지 않는다(`arrive_hour`가 달라서). 그 결과 상품 `commute_od`의 출근 평균 이동 시간에 귀가 이동이 섞이는데, 실패도 경고도 나지 않는다. 이 결합은 테이블 리니지로는 보이지 않는다. 이번에는 SQL을 읽어 찾았다.
+- 해석: 원천 모양을 보존한 층(Iceberg)이 있어 다시 만드는 범위는 S6a보다 좁다. 하지만 꺼내는 규칙(범위 C)이 정제 코드와 stg 표 모양에 굳어 있어, 고칠 곳이 정제·DDL·wh·마트·시험·문서로 번진다. "범위를 정제가 아니라 꺼내는 SQL에서 정한다"(결정 42)는 개선이 줄여야 할 비용이 이것이다.
+
+## 측정 19. 컬럼 리니지 정답 대조 (P4-2·P4-6, 2026-11-13)
+- 목적: 추출기(`lineage/edges.py`)가 사람이 쓴 정답(`tests/lineage_truth`, 결정 66, 커밋 921901a, 파서보다 먼저)을 얼마나 맞추는지 잰다. 고치기 전 점수와 패턴 분류를 먼저 남긴다(설계서 1.11).
+- 입력: dbt 컴파일 결과(2026-11-13 `dbt compile`, 모델 17개), 정답 6개 모델 353줄. 키 (출력 컬럼, 출처 표, 출처 컬럼, kind)로 중복을 없애면 DIRECT 78, INDIRECT 218이다(같은 키가 FILTER와 SORT 두 줄인 경우가 있다).
+- 방법: `python -m measure.lineage_score --detail`. DB 없이 돈다. 맞음 = 두 쪽 모두 있는 키, 놓침 = 정답에만, 틀림 = 추출에만. subkind는 맞은 키 안에서 정답 subkind 집합과 추출 집합이 같은지 센다.
+- 환경: Windows 11 호스트, .venv Python 3.12.8, sqlglot 30.31.0.
+
+| 판 | DIRECT 맞음 / 놓침 / 틀림 | INDIRECT 맞음 / 놓침 / 틀림 | subkind 일치 (INDIRECT) | 모델 17개 간선 (status) |
+|---|---|---|---|---|
+| v1 (설계서 규칙 그대로, 결정 67) | 78 / 0 / 0 | 212 / 6 / 0 | 195 / 212 | 695 (모두 ok) |
+| v2 (결정 68 + 하위 쿼리 subkind 보존 + select 별칭 풀기) | 78 / 0 / 0 | 218 / 0 / 0 | 208 / 218 | 851 (모두 ok) |
+
+- v1의 놓침 6개는 모두 한 패턴이다(고치기 전 분류).
+  - `commute_od`: `origin_dong_id`, `dest_dong_id`, `distance_km`, `copied_from_2021_split_dong` ← `fact_commute.target_ym`(최근 6개월 FILTER·SORT). 이 출력들은 `by_code`를 거치지 않지만, INNER JOIN 조건 `b.origin_cd`가 `by_code`를 거친다.
+  - `dong_station`: `am_peak_congestion` ← `dim_station.point`, `dim_dong.geom`(LATERAL k의 SORT). LEFT JOIN 조건 `k.bldn_id`가 k를 거친다.
+  - v1의 subkind 차이 17개도 같은 패턴에서 왔다(GROUP_BY, FILTER가 빠짐).
+- v2의 subkind 차이 10개는 모두 `commute_od` 출력 10개 ← `map_dong_2021.dong_cd_2021`이다. 정답은 JOIN, 추출은 JOIN + GROUP_BY다. 결정 68 규칙으로는 `split`의 GROUP BY가 조인을 따라 번지는 것이 맞아서, 해석 차이로 두었다(결정 68).
+- 틀림(과다 귀속)은 두 판 모두 0이다. 측정 16에서 본 LATERAL `s.*` 과다 귀속은 해석기가 qualify로 펼친 컬럼 하나만 따라가서 생기지 않았다.
+- 한계: 정답과 추출기를 같은 작성자(Claude, 같은 밤)가 썼다. 정답을 먼저 커밋했지만 같은 사람이 같은 SQL을 읽은 것이라, 둘이 같은 착각을 공유하면 점수에 드러나지 않는다. 독립된 확인은 실행으로 하는 변이 시험(설계서 1.11 M1~M6)이 맡는다. 정답에 없는 모델 11개는 status만 확인했다(모두 ok).
+
+## 측정 20. S4-1 재측정과 S6 컬럼의 영향 조회: 컬럼 리니지로 (P4-3, 2026-11-13)
+- 목적: 측정 15(리니지 없이 사람이 찾음)와 같은 질문을 `lineage.downstream`으로 풀어 후보 수, 결과, 단계를 비교한다(결정 40의 검증). S6a·S6b 컬럼도 같은 방법으로 조회해 지도가 측정 17·18의 숨은 결합을 보이는지 본다.
+- 입력: lineage 회차 1(엔진 python, trigger manual, 커밋 921901a 위 작업 트리, dbt 컴파일 2026-11-13, 모델 17개 간선 851 + 상품 층 58 = 909, 모두 ok). `lineage.downstream` 전체는 2,867쌍.
+- 방법: `docker exec ... psql`로 뷰 조회 한 번씩. 시간은 psql `\timing`(뷰를 매번 재귀로 다시 계산한다).
+
+| 질문 | 측정 15 (리니지 없음) | 이번 (컬럼 리니지) |
+|---|---|---|
+| `stg.congestion.dow`가 바뀌면 영향받는 상품 컬럼 | 후보 28개(테이블 리니지) → 사람이 SQL 6개 읽고 판단해 1개 | 1개: `product.dong_profile.am_peak_congestion`, 깊이 4, 값 경로 없음·행 경로 있음(필터로만 이어짐) |
+| 거친 단계 | manifest 조회, 검색, 파일 읽기 6개 | 뷰 조회 1회, 0.24초 |
+
+- 측정 15에서 사람이 내린 판단(영향 1개, 필터 경로, `nearest_congestion_station_*`는 영향 없음)과 지도가 같다.
+- S6 컬럼 조회 (지도가 못 보는 것):
+
+| 출발 컬럼 | 상품 영향 (지도) | 실제 (측정 17·18) | 이유 |
+|---|---|---|---|
+| `stg.living_migration.arrive_hour` | 0개 | 저녁 행을 stg에 더하면 `commute_od` 출근 값이 조용히 섞인다 | 마트 SQL이 이 컬럼을 읽지 않는다. 범위(07~09시, HW)가 stg 정제 안에 있어 SQL에 의존이 안 적혀 있다 |
+| `stg.sbiz_store.sub_cd` | 10개: `dong_profile`의 편의 5종 수와 밀도(CONDITIONAL 경로) | 위 10개 + `dong_mois_map`의 `stores`, `share` | `map_dong_mois`는 `fact_store`의 행 수(`count(*)`)로 투표한다. 업종 범위가 바뀌면 행 집합이 바뀌는데, 지금 지도는 행 집합을 `count(*)` 자리에서만 노드(`*`)로 다루고 `stg.sbiz_store.* → wh.fact_store.*` 같은 "행 집합 간선"이 없다 |
+
+- 해석: 컬럼 리니지는 SQL에 적힌 값·행 의존을 정확히 줄여 보여 준다(S4-1). 하지만 정제 코드 안에 숨은 범위(S6b)와 행 집합을 통한 결합(S6a)은 보이지 않는다. 앞의 것은 범위를 SQL로 옮기면(결정 42) 지도에 드러난다. 뒤의 것은 행 집합 간선을 더하는 확장이 필요하다. 설계 밖이라 이번에 구현하지 않고 제안으로 남긴다(judgment_log 12번).
+
+## 측정 21. 리니지 추출 엔진 비교: Python 단독과 Spark (P4-6, 결정 44, 56, 2026-11-13)
+- 목적: 같은 추출 함수(`lineage/edges.py`의 `extract_edges`)를 두 엔진으로 돌려 간선 집합이 같은지, 시간과 메모리가 어떤지 본다(결정 44의 검증).
+- 조건: Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. 둘 다 같은 Airflow 컨테이너(seoul-airflow:3.3.2, `docker compose run --rm --no-deps`, nproc 16) 안에서 돌렸다. Python 3.12.14, sqlglot 30.31.0, PySpark 3.5.9(local 모드), OpenJDK 17.0.21. 입력: dbt 컴파일 SQL 17개 + 상품 층(내보내기 표 4개), 간선 909개. 엔진마다 3회 연속.
+- 시간: 프로세스 시작부터 끝까지(셸에서 `date +%s%N` 차이). 메모리: 컨테이너 안 모든 프로세스 VmRSS 합의 최대(0.1초 표본, 셸 몇 MB 포함). 회차 9~14.
+
+| 엔진 | 1회 | 2회 | 3회 | 추출기 안 시간(설정 읽기부터 저장 끝까지) | 최대 메모리 |
+|---|---|---|---|---|---|
+| python (`map` + psycopg COPY) | 0.626초 | 0.624초 | 0.626초 | 0.35~0.36초 | 64~65MB |
+| spark (`parallelize`+`flatMap`, JDBC append) | 7.265초 | 7.132초 | 7.180초 | 6.82~6.94초 | 1,502~1,515MB |
+
+- 간선 집합: 회차 1~14(python 7회, spark 7회, 앞선 확인·시운전 포함) 14개의 정규화 간선 집합 md5가 모두 같다(서로 다른 값 1개). `lineage.run_diff`(회차 1 python → 2 spark)도 0행.
+- 해석: 이 규모에서 Spark는 약 11.5배 느리고 메모리는 약 23배 더 쓴다. 차이는 거의 JVM과 SparkContext를 띄우는 고정 비용이다(파싱 일 17개는 Python으로 0.35초 안에 끝난다). Spark를 쓰는 이유는 성능이 아니라 결정 44의 "엔진은 바꾸는 부분" 구조를 다뤄 보는 것이고, 그 구조는 간선 집합이 같다는 것으로 확인했다. 개선은 없다.
+- 남은 것: lineage DAG(결정 50, 57)는 결정 44대로 spark 엔진으로 돈다. 7초 남짓이라 운영에 걸림은 없다.
+
+## 측정 22. 변이 시험: 지도가 말한 영향과 실행으로 바뀐 것 (P4-6, 결정 49, 59, 2026-11-13)
+- 목적: 정답 대조(측정 19)는 정답과 파서를 같은 작성자가 썼다는 한계가 있다. 실제 stg 값을 바꿔 dbt를 다시 돌리고 바뀐 상품 컬럼을 실행으로 얻어, 지도(`lineage.downstream`)가 말한 상품 컬럼과 비교한다.
+- 방법: `measure/lineage_mutation.py` (Airflow 컨테이너, dbt 1.12.6). `stg_mut` 스키마에 stg 표마다 뷰를 두고 변이 컬럼만 식으로 바꾼다. `dbt seed --full-refresh` + `dbt run`을 `--vars '{source_schema: stg_mut, build_suffix: _mut}' --target-path target/mut`로 돌린다. 상품 표 4개를 대조군(M0, 변이 없음, `_mut0`)과 컬럼마다 두 방향 `EXCEPT ALL`로 비교한다. 키는 export_product 정렬 키(dong_profile: dong_id, commute_od: origin·dest, dong_mois_map: mois_dong_cd)이고, rent_listing은 키가 없어 컬럼 값의 다중집합으로 본다. 지도는 lineage 회차 17(git 921901a).
+- 사전 확인 (설계서 U2): var 기본값으로 `dbt compile`한 SQL이 바꾸기 전 wh_load가 컴파일한 SQL과 `diff -r`로 같다. M0(뷰 경유, var 지정) 결과가 실제 mart와 상품 4표 모두 행 수와 모든 컬럼이 같다.
+  - 첫 시도는 M0이 rent_listing에서 달랐다(62,068행 vs 62,291행). 같은 시각 Airflow에서 molit_rent 수집이 끝나 stg.rent가 늘고 wh_load가 다시 도는 중이었다. 그 wh_load가 끝난 뒤 다시 돌려 같음을 확인했다. 대조군 검사가 이 어긋남을 잡아 실패시켰다.
+
+| # | 변이 | 실행으로 바뀐 상품 컬럼 | 지도가 말한 상품 컬럼 | 지도가 놓친 것 | 지도에만 있음 |
+|---|---|---|---|---|---|
+| M1 | congestion.dow '평일'→'주중' | 1 (am_peak_congestion) | 1 | 0 | 0 |
+| M2 | congestion.congestion +1 | 1 (am_peak_congestion) | 1 | 0 | 0 |
+| M3 | station_master 역 0317의 lat, lot +0.05 | 7 (nearest_station_* 3, nearest_congestion_station_* 3, am_peak_congestion) | 7 | 0 | 0 |
+| M4 | rent.monthly_rent 일부(item_no 끝자리 0)를 0으로 | 7 (dong_profile monthly_* 3, jeonse_* 2, rent_listing lease_type, monthly_rent_10k_won) | 7 | 0 | 0 |
+| M5 | living_migration.age '25'→'26' | 4 (commute_od avg_minutes_age20_34, population_age20_34, basis, avg_minutes) | 4 | 0 | 0 |
+| M6 | sbiz_store.sub_cd 편의점(G20405) 절반을 Z99999로 | 2 (convenience_store, _per_km2) | 10 | 0 | 8 |
+
+- 행 수가 바뀐 상품 표: 6개 변이 모두 없음.
+- 시간: 변이 하나에 129~132초(뷰 만들기 + dbt seed + run + 비교), 전체 15분 13초.
+- 해석:
+  - 6개 모두 실행으로 바뀐 컬럼이 지도 안에 있다(놓침 0). 설계서가 예상한 컬럼보다 실제가 넓은 경우(M3의 혼잡도 역 3개와 am_peak_congestion, M4의 rent_listing 2개)도 지도는 맞혔다. 사람의 예상보다 지도가 정확했다.
+  - M6의 "지도에만 있음" 8개는 지도 오류가 아니다. `sub_cd`는 CASE 조건으로 편의 5종 모두에 쓰이므로 다른 값으로 바꾸면 5종 모두 바뀔 수 있다. 이번 변이는 편의점 코드만 건드려 나머지 4종이 우연히 그대로였다. 지도는 "바뀔 수 있는 것"을, 변이는 "이번에 바뀐 것"을 보인다.
+  - 한계: 변이 6개가 고른 경로만 확인한다. 행 집합 결합(측정 20의 `dong_mois_map`)은 M6이 편의점 일부를 다른 코드로 바꿨을 뿐 5종 밖으로 빼지 않아 이번에는 드러나지 않았다(dong_mois_map 변화 0).
+
+## 측정 23. 혼잡도 정제 SQL 이전: 같음 증명, 지도 변화, S1 재측정 (순서 8, 결정 42, 60~64, 71, 2026-11-13)
+- 조건: Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. dbt 1.12.6(postgres 1.11.0), Airflow 컨테이너. 혼잡도 수집일 5개(10-21, 10-26, 11-02, 11-03, 11-13), 원본 1,671행씩 = raw.congestion 8,355행.
+- **같음 증명 (설계서 2.6)**
+  1. 원본 적재: `transform/congestion_raw.py`로 5개 수집일을 넣었다(각 1,671행). 11-03을 한 번 더 돌려도 1,671행(멱등).
+  2. 정제: `dbt build --select stg_dbt source:raw+ --exclude wh mart`(빌드 스키마까지만) 14개 통과(unit test 4, 데이터 테스트 7, 모델 4 중 표 2·뷰 2. 경고 0).
+  3. 옛 `stg.congestion`과 `stg_dbt_build.congestion`: 둘 다 325,845행, 두 방향 `EXCEPT ALL` 0, 컬럼 이름·순서·타입 모두 같음(pg_attribute 비교 0행). 격리 표는 둘 다 0행이라 이 데이터로는 격리 경로가 같은지 보이지 않는다. 그 경로는 unit test(옛 Python 시험의 경우를 옮김)로 확인했다. 상한 300을 400으로 바꾼 변형으로 unit test가 실패하는 것도 확인했다.
+  4. 교체 뒤: Airflow에서 wh_load를 손으로 돌려(빌드 → stg_dbt·wh·mart 교체 → 내보내기) 성공. 상품 파일 8개(4표 × parquet·csv) sha256이 바꾸기 전 manifest(2026-11-13 01:17)와 모두 같다. `wh.fact_congestion` 65,169행. `ops.quality` 혼잡도 325,845 / 격리 0.
+  5. 검사 위치(결정 63): 원본에 모르는 키(`NEW_FIELD`)를 단 행을 넣으면 `congestion_raw_unknown_keys` WARN 1, 빌드는 통과. 쓰는 키(`DPTRE_STTN`)를 지우면 `congestion_raw_keys_present` FAIL. 시험 행(수집일 2000-01-01)은 바로 지웠다.
+- **지도 변화 (결정 45, `lineage.run_diff` 회차 17 → 18)**: 추가 108개(raw → congestion_rows 14, congestion_rows → cells 37, rows → quarantine 10, cells → congestion 22, cells → quarantine 9, stg_dbt.congestion → wh.fact_congestion 16), 삭제 16개(stg.congestion → wh.fact_congestion 16). wh 이하 간선은 변화 0. 회차 18: 간선 1,001개, ok 아님 0.
+  - 원천 키까지 보인다: `raw.congestion.raw.DOW_SE`에서 상품 4개(`am_peak_congestion` 깊이 7, `nearest_congestion_station_nm·route·distance_m` 깊이 8, 모두 행 경로). 옛 지도의 `stg.congestion.dow`(상품 1개)보다 넓은 것은 오류가 아니다. 이제 검증 규칙(CV2: 요일 값 범위)도 SQL에 있어서, 요일 값이 이상해지면 행이 격리되고 그 역이 빠져 가장 가까운 혼잡도 역이 바뀔 수 있다는 것까지 지도에 나온다. Python에 있을 때는 보이지 않던 의존이다(측정 20의 결론과 같다).
+  - `stg_dbt.congestion.dow`에서는 옛 `stg.congestion.dow`와 같이 상품 1개(`am_peak_congestion`, 깊이 4, 행 경로만). MCP 확인(`tests/check_lineage_mcp.py`)도 새 이름으로 통과.
+- **S1 재측정** (`python -m measure.s1_sql`, 측정 13과 같은 가정: `DPTRE_STTN` → `STTN_NM`). raw_s1 스키마에 10-21(원본)과 11-03을 넣고 stg_dbt만 `stg_dbt_s1`에 빌드. 실제 표는 건드리지 않음. 1회.
+
+| 경우 | 입력 | 코드 | 결과 | 시간 |
+|---|---|---|---|---|
+| ① 대조군 | 두 수집일 원본 | 지금 | 통과 14/14. 수집일마다 65,169행, 실제 stg_dbt와 차이 0 | 6.6초 |
+| ② | 11-03 키 개명 | 지금 | 멈춤: `congestion_raw_keys_present` FAIL 1671, 함께 `congestion_raw_unknown_keys` WARN 1(새 키 `STTN_NM`) | 3.5초 |
+| ③ | ②와 같음 | 두 줄 고침 | 통과 14/14. **10-21과 11-03 모두** 65,169행, 역 이름 빈 행 0, 실제 stg_dbt와 차이 0 | 6.1초 |
+
+| 항목 | 측정 13 (이전 전) | 이번 (이전 뒤) |
+|---|---|---|
+| 고칠 곳 | 정제 코드 1개 2곳 + 시험 1개 2곳 + 문서 3개 | 매크로 별칭 1줄 + 정제 모델 coalesce 1줄 (시험은 고칠 필요 없음) |
+| 고친 뒤 옛 수집일 | 다시 돌릴 수 없음(④ 실패) | 새 수집일과 함께 처리됨 |
+| 멈출 때 사람이 받는 정보 | 사라진 이름과 새 이름 한 줄 | 쓰는 키가 없는 행 수(FAIL) + 모르는 새 키(WARN) |
+
+- 대가 (결정 63): ②처럼 멈추면 혼잡도만이 아니라 그 회차 wh_load 전체(모든 출처 갱신)가 멈추고 실제 stg_dbt·wh·mart·상품은 이전 것 그대로다. 측정 13에서는 혼잡도 정제만 멈췄다.
+- 빌드 시간(설계서 U6): wh_load 전체 dbt 빌드에서 `stg_dbt.congestion` 325,845행 생성 1.07초, 격리 표 0.32초, 뷰 2개 0.04초씩(dbt 로그, 1회). wh_load `dbt_build` 작업은 이전 뒤 2분 15초, 이전 직전 회차 2분 37초였지만 1회씩이고 같은 시각 다른 작업과 겹쳐 비교하지 않는다.

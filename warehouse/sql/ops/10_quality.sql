@@ -8,7 +8,7 @@ WITH reasons AS (
     SELECT source, string_agg(reason || ' ' || n, ', ' ORDER BY n DESC) AS reasons FROM (
         SELECT '전월세' AS source, r AS reason, count(*) AS n FROM stg.rent_quarantine, unnest(reasons) r GROUP BY 2
         UNION ALL SELECT '생활이동', r, count(*) FROM stg.living_migration_quarantine, unnest(reasons) r GROUP BY 2
-        UNION ALL SELECT '혼잡도', r, count(*) FROM stg.congestion_quarantine, unnest(reasons) r GROUP BY 2
+        UNION ALL SELECT '혼잡도', r, count(*) FROM stg_dbt.congestion_quarantine, unnest(reasons) r GROUP BY 2
         UNION ALL SELECT '상가정보', r, count(*) FROM stg.sbiz_store_quarantine, unnest(reasons) r GROUP BY 2
         UNION ALL SELECT '역사마스터', r, count(*) FROM stg.station_master_quarantine, unnest(reasons) r GROUP BY 2
         UNION ALL SELECT '행정동 경계', r, count(*) FROM stg.sgis_dong_quarantine, unnest(reasons) r GROUP BY 2

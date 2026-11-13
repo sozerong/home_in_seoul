@@ -1,7 +1,7 @@
 """서울 열린데이터광장 Open API(역사마스터, 지하철 혼잡도) 주간 수집·정제 DAG. 단계 7 기본안 1.
 
 매주 월요일 13:30(한국 시간, molit_rent 약 7분 뒤에 겹치지 않게, 결정 34). 두 출처는 서로 기다리지 않고 따로 돈다. 처리 단위는 수집일 하나(전체 목록 스냅샷)라
-data interval로 고를 기간이 없다. 혼잡도 정제는 직전 스냅샷과 값을 비교해 "직전과 같음/바뀜"을 로그에 남긴다(결정 7).
+data interval로 고를 기간이 없다. 혼잡도는 원본 표에 담기만 하고, 정제·검증·격리는 wh_load의 dbt가 한다(결정 42). 직전 스냅샷과의 값 비교(결정 7)는 운영 뷰가 맡는다 [이전 중].
 재시도는 스크립트 안에서만(일시 오류만). 두 정제가 모두 끝나면 스테이징 Asset 두 개를 한 번에 갱신해 웨어하우스 DAG가 한 번만 돌게 한다(결정 29).
 """
 import pendulum
@@ -9,11 +9,11 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, task
 
 from alerting import notify_failure
-from assets import STG_CONGESTION, STG_STATION_MASTER
+from assets import RAW_CONGESTION, STG_STATION_MASTER
 
 SOURCES = {  # 이름: (수집 스크립트 인자, 정제 모듈)
     "station_master": ("station_master", "transform.station_master"),
-    "congestion": ("congestion", "transform.congestion"),
+    "congestion": ("congestion", "transform.congestion_raw"),  # 파싱만. 정제·검증은 wh_load의 dbt(stg_dbt)가 한다(결정 42)
 }
 
 with DAG(
@@ -25,7 +25,7 @@ with DAG(
     default_args={"retries": 0, "on_failure_callback": notify_failure},
     tags=["seoul", "weekly"],
 ):
-    @task(outlets=[STG_STATION_MASTER, STG_CONGESTION])
+    @task(outlets=[STG_STATION_MASTER, RAW_CONGESTION])
     def stg_updated():
         """두 출처가 모두 성공한 뒤 한 번에 알린다. 작업마다 알리면 wh_load가 두 번 돈다(측정 7)."""
 

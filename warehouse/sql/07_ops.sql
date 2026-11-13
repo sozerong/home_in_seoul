@@ -22,13 +22,24 @@ CREATE TABLE IF NOT EXISTS ops.failure_log (
     PRIMARY KEY (dag_id, task_id, map_index, run_id, try_number)
 );
 
+-- 표 행 수를 이름으로 센다. dbt가 빌드마다 스키마를 통째로 바꾸는 표(stg_dbt.*)는 뷰가 직접 가리키면 교체 때
+-- drop schema ... cascade로 뷰까지 지워지므로 이름으로만 부른다(결정 61). 표가 없으면 null.
+CREATE OR REPLACE FUNCTION ops.row_count(table_name text) RETURNS bigint
+LANGUAGE plpgsql STABLE AS $$
+DECLARE n bigint;
+BEGIN
+    IF to_regclass(table_name) IS NULL THEN RETURN NULL; END IF;
+    EXECUTE format('SELECT count(*) FROM %s', to_regclass(table_name)) INTO n;
+    RETURN n;
+END $$;
+
 -- 출처 하나 = 한 행. 전월세와 생활이동은 수집일만으로는 멈춘 것을 모른다(다시 받아도 수집일은 새로워진다).
 -- 그래서 최신 기간도 함께 본다. 생활이동은 다음 달 20일 공개(매뉴얼)에 센서 7일을 더해, 그 다음 달 자료가 올 때가 지나면 늦음이다.
 CREATE OR REPLACE VIEW ops.freshness AS
 WITH src (source, last_collected, last_period, expected_days, period_late, rule) AS (
     SELECT '전월세', (SELECT max(collected_date) FROM stg.rent), (SELECT max(deal_ymd) FROM stg.rent), 7, false, '7일 안에 수집'
     UNION ALL SELECT '역사마스터', (SELECT max(collected_date) FROM stg.station_master), NULL, 7, false, '7일 안에 수집'
-    UNION ALL SELECT '혼잡도', (SELECT max(collected_date) FROM stg.congestion), NULL, 7, false, '7일 안에 수집'
+    UNION ALL SELECT '혼잡도', (SELECT max(collected_date) FROM raw.congestion), NULL, 7, false, '7일 안에 수집'  -- 원본 표(결정 42)
     UNION ALL SELECT '생활이동', (SELECT max(collected_date) FROM stg.living_migration), m.ym, 38,
                      current_date > to_date(m.ym || '01', 'YYYYMMDD') + interval '2 months 27 days',
                      '다음 달 자료가 공개(20일) 후 7일 안에 도착'
@@ -48,7 +59,7 @@ CREATE OR REPLACE VIEW ops.quality AS
 WITH src (source, good, quarantined) AS (
     SELECT '전월세', (SELECT count(*) FROM stg.rent), (SELECT count(*) FROM stg.rent_quarantine)
     UNION ALL SELECT '역사마스터', (SELECT count(*) FROM stg.station_master), (SELECT count(*) FROM stg.station_master_quarantine)
-    UNION ALL SELECT '혼잡도', (SELECT count(*) FROM stg.congestion), (SELECT count(*) FROM stg.congestion_quarantine)
+    UNION ALL SELECT '혼잡도', ops.row_count('stg_dbt.congestion'), ops.row_count('stg_dbt.congestion_quarantine')  -- dbt 정제(결정 42)
     UNION ALL SELECT '생활이동', (SELECT count(*) FROM stg.living_migration), (SELECT count(*) FROM stg.living_migration_quarantine)
     UNION ALL SELECT '상가정보', (SELECT count(*) FROM stg.sbiz_store), (SELECT count(*) FROM stg.sbiz_store_quarantine)
     UNION ALL SELECT '행정동 경계', (SELECT count(*) FROM stg.sgis_dong), (SELECT count(*) FROM stg.sgis_dong_quarantine)

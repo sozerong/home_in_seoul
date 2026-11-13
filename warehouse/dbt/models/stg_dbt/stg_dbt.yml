@@ -1,0 +1,95 @@
+# 혼잡도 정제(결정 42, 61). 규칙 시험은 옛 tests/test_congestion.py의 경우를 dbt unit test로 옮긴 것이다(설계서 2.6 5번).
+# unit test는 DB 표를 읽지 않고 주어진 입력 행으로 모델 SQL만 돌린다. dbt build가 모델보다 먼저 돌려, 실패하면 빌드가 멈춘다.
+models:
+  - name: congestion
+    description: 한 행 = 수집일 x 요일 x 호선 x 역 x 방향 x 30분 구간. 옛 stg.congestion과 같은 모양.
+    columns:
+      - name: congestion
+        data_tests: [not_null]
+  - name: congestion_quarantine
+    description: 행 단위(CV1~CV4)는 원본 row 하나에 한 줄, 칸 단위(CV5)는 칸 하나에 한 줄.
+
+unit_tests:
+  - name: congestion_rows_row_rules  # CV1~CV4: 신원 필드가 잘못되면 사유가 붙는다. 여러 규칙에 함께 걸리면 번호 순서로
+    model: congestion_rows
+    given:
+      - input: source('raw', 'congestion')
+        format: sql
+        rows: |
+          select '2026-11-01'::date as collected_date, 'f.xml' as source_file, 1 as row_no, now() as loaded_at, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": " 150 ", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb as raw
+          union all select '2026-11-01', 'f.xml', 2, now(), '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": " ", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 3, now(), '{"DOW_SE": "공휴일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 4, now(), '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "북행"}'
+          union all select '2026-11-01', 'f.xml', 5, now(), '{"DOW_SE": "평일", "LINE": "9호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 6, now(), '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "15", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 7, now(), '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "A150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 8, now(), '{"DOW_SE": "평일", "LINE": "", "STTN_NO": "15", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'
+          union all select '2026-11-01', 'f.xml', 9, now(), '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "UP_DOWN_SE": "상선"}'
+    expect:
+      format: sql
+      rows: |
+        select '2026-11-01'::date as collected_date, 'f.xml' as source_file, 1 as row_no, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": " 150 ", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb as raw, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, '{}'::text[] as reasons
+        union all select '2026-11-01'::date, 'f.xml', 2, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": " ", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '1호선', '', '서울역', '상선', '{CV1}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 3, '{"DOW_SE": "공휴일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '공휴일', '1호선', '150', '서울역', '상선', '{CV2}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 4, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "북행"}'::jsonb, '평일', '1호선', '150', '서울역', '북행', '{CV2}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 5, '{"DOW_SE": "평일", "LINE": "9호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '9호선', '150', '서울역', '상선', '{CV3}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 6, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "15", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '1호선', '15', '서울역', '상선', '{CV4}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 7, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "A150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '1호선', 'A150', '서울역', '상선', '{CV4}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 8, '{"DOW_SE": "평일", "LINE": "", "STTN_NO": "15", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '', '15', '서울역', '상선', '{CV1,CV4}'::text[]
+        union all select '2026-11-01'::date, 'f.xml', 9, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "UP_DOWN_SE": "상선"}'::jsonb, '평일', '1호선', '150', '', '상선', '{CV1}'::text[]
+
+  - name: congestion_cells_parse  # CC3, CC5: 시간 키만 세로로 풀고, 숫자로 읽히지 않으면 null. 행 규칙에 걸린 row는 풀지 않는다
+    model: congestion_cells
+    given:
+      - input: ref('congestion_rows')
+        format: sql
+        rows: |
+          select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, 1 as row_no, '{"DOW_SE": "평일", "TIME0530": "10.5", "TIME0600": "abc", "TIME0630": "nan", "TIME0700": " 7 ", "TIME0730": "1e2", "TIME0800": "-0.1", "NEW_FIELD": "3"}'::jsonb as raw, '{}'::text[] as reasons
+          union all select '2026-11-01', 'f.xml', '평일', '', '150', '서울역', '상선', 2, '{"TIME0530": "10.5"}', '{CV1}'
+    expect:
+      rows:
+        - {row_no: 1, key: TIME0530, number: 10.5}
+        - {row_no: 1, key: TIME0600, number: null}
+        - {row_no: 1, key: TIME0630, number: null}
+        - {row_no: 1, key: TIME0700, number: 7}
+        - {row_no: 1, key: TIME0730, number: 100}
+        - {row_no: 1, key: TIME0800, number: -0.1}
+
+  - name: congestion_values  # CC2, CC4, CV5: 0과 300은 통과, 범위 밖과 null은 빠진다. TIME0030은 00:30
+    model: congestion
+    given:
+      - input: ref('congestion_cells')
+        format: sql
+        rows: |
+          select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '서울역' as sttn_nm, '상선' as direction, '{}'::jsonb as raw, '' as value, 1 as row_no, '150' as sttn_no, 'TIME0530' as key, 10.5::double precision as number
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0030', 0
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0600', 300
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0630', 300.1
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0700', -0.1
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 1, '150', 'TIME0730', null
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '서울역', '상선', '{}', '', 2, '2311', 'TIME0800', 34
+    expect:
+      rows:
+        - {row_no: 1, sttn_no4: '0150', slot: '05:30:00', congestion: 10.5}
+        - {row_no: 1, sttn_no4: '0150', slot: '00:30:00', congestion: 0}
+        - {row_no: 1, sttn_no4: '0150', slot: '06:00:00', congestion: 300}
+        - {row_no: 2, sttn_no4: '2311', slot: '08:00:00', congestion: 34}
+
+  - name: congestion_quarantine_pieces  # 행 규칙은 raw 전체, CV5는 신원 필드 5개 + 그 칸(원문 그대로)
+    model: congestion_quarantine
+    given:
+      - input: ref('congestion_rows')
+        format: sql
+        rows: |
+          select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, 1 as row_no, '{"LINE": "", "STTN_NO": "15"}'::jsonb as raw, '{CV1,CV4}'::text[] as reasons
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '150', '서울역', '상선', 2, '{"DOW_SE": "평일"}', '{}'
+      - input: ref('congestion_cells')
+        format: sql
+        rows: |
+          select '2026-11-01'::date as collected_date, 'f.xml' as source_file, '평일' as dow, '1호선' as line, '150' as sttn_no, '서울역' as sttn_nm, '상선' as direction, '-0.1' as value, 3 as row_no, '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1", "TIME0830": "5"}'::jsonb as raw, 'TIME0800' as key, -0.1::double precision as number
+          union all select '2026-11-01', 'f.xml', '평일', '1호선', '150', '서울역', '상선', '5', 3, '{"TIME0830": "5"}', 'TIME0830', 5
+    expect:
+      format: sql
+      rows: |
+        select '2026-11-01'::date as collected_date, 'f.xml' as source_file, 1 as row_no, '{CV1,CV4}'::text[] as reasons, '{"LINE": "", "STTN_NO": "15"}'::jsonb as raw, now() as quarantined_at  -- 같은 문장 안의 now()라 모델과 같다
+        union all select '2026-11-01', 'f.xml', 3, '{CV5}', '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1"}', now()

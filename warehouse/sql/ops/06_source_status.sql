@@ -8,7 +8,7 @@ WITH reflected (source, reflected, expected) AS (
     SELECT '전월세', (SELECT max(collected_date)::text FROM wh.fact_rent), (SELECT max(collected_date)::text FROM stg.rent)
     UNION ALL SELECT '생활이동', (SELECT max(right(target_months, 6)) FROM mart.commute_od), (SELECT max(target_ym) FROM stg.living_migration)
     UNION ALL SELECT '상가정보', (SELECT max(base_ym) FROM wh.fact_store), (SELECT max(base_ym) FROM stg.sbiz_store)
-    UNION ALL SELECT '혼잡도', (SELECT max(collected_date)::text FROM wh.fact_congestion), (SELECT max(collected_date)::text FROM stg.congestion)
+    UNION ALL SELECT '혼잡도', (SELECT max(collected_date)::text FROM wh.fact_congestion), (SELECT max(collected_date)::text FROM raw.congestion)
     UNION ALL SELECT '역사마스터', (SELECT max(source_collected_date)::text FROM wh.dim_station), (SELECT max(collected_date)::text FROM stg.station_master)
     UNION ALL SELECT '행정동 경계', (SELECT max(source_collected_date)::text FROM wh.dim_dong), (SELECT max(collected_date)::text FROM stg.sgis_dong)
     UNION ALL SELECT '연속지적도', (SELECT max(source_collected_date)::text FROM wh.dim_parcel), (SELECT max(collected_date)::text FROM stg.parcel)

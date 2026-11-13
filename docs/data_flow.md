@@ -51,7 +51,7 @@ flowchart LR
     R3 & R4 & R5 & R6 -->|lake/_inbox → ingestion/register_file.py| L2
     L1 -->|transform/rent.py| S1
     L1 -->|transform/station_master.py| S2
-    L1 -->|transform/congestion.py| S3
+    L1 -->|transform/congestion_raw.py 파싱만 → raw.congestion jsonb → dbt stg_dbt 정제 (결정 42)| S3
     L2 -->|transform/living_iceberg.py, Spark| IC[(Iceberg lh.living.migration_rows<br>24시간대 전체 행)]
     IC -->|transform/living_migration.py| S4
     L2 -->|transform/sbiz_store.py| S5
@@ -155,7 +155,7 @@ target_ym | weekday | arrive_hour | origin_cd | dest_cd | sex | age | avg_minute
 ```
 원본: DOW_SE=평일 LINE=1호선 STTN_NO=150 DPTRE_STTN=서울역 UP_DOWN_SE=상선
       TIME0530=8.3 TIME0600=20.8 ... TIME0700=37.4 TIME0730=65.8 TIME0800=72.3 TIME0830=95.7 ... TIME0030=1.4
-stg.congestion:
+stg_dbt.congestion (2026-11-13부터 dbt SQL 정제, 그 전에는 stg.congestion):
 dow  | line  | sttn_no | sttn_no4 | sttn_nm | direction | slot  | congestion
 평일 | 1호선 | 150     | 0150     | 서울역  | 상선      | 07:00 | 37.4
 평일 | 1호선 | 150     | 0150     | 서울역  | 상선      | 07:30 | 65.8

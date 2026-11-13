@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lineage": {
+      "command": ".venv\Scripts\python.exe",
+      "args": ["-m", "lineage_mcp.server"]
+    }
+  }
+}

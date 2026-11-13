@@ -1,13 +1,16 @@
 # Python 정제가 채우는 스테이징(warehouse/sql/01~06). dbt는 읽기만 한다 (결정 30 D1).
 sources:
+  - name: raw  # Python이 파싱만 해서 원천 모양(jsonb)으로 담는 원본 (warehouse/sql/09, 결정 42, 60)
+    schema: "{{ var('raw_schema', 'raw') }}"  # S1 실험(measure)만 바꾼다
+    tables:
+      - name: congestion
   - name: stg
-    schema: stg
+    schema: "{{ var('source_schema', 'stg') }}"  # 변이 시험(measure/lineage_mutation.py)만 stg_mut으로 바꾼다
     tables:
       - name: sgis_dong
       - name: sbiz_store
       - name: parcel
       - name: station_master
-      - name: congestion
       - name: rent
       - name: living_migration
         columns:  # 08 검사: 2021 대응표에 없는 생활이동 코드

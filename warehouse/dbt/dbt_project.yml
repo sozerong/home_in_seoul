@@ -6,6 +6,8 @@ profile: seoul
 models:
   seoul_dong:
     +materialized: table
+    stg_dbt:  # 원본(raw)을 SQL로 정제한 스테이징. 혼잡도부터 옮긴다 (결정 42, 61)
+      +schema: stg_dbt
     wh:
       +schema: wh
     mart:  # 부동산 플랫폼에 줄 데이터 상품의 원천 (결정 12). wh만 읽는다

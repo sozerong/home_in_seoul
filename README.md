@@ -74,10 +74,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06은 순서대로 실행기로. wh·mart는 `wh_load`가 dbt로 만든다):
+DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06, 운영 07, 리니지 08, 혼잡도 원본 09는 순서대로 실행기로. 혼잡도 정제(stg_dbt)와 wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
-for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops) do python -m warehouse.run_sql warehouse/sql/%f.sql
+for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops 08_lineage 09_raw_congestion) do python -m warehouse.run_sql warehouse/sql/%f.sql
 ```
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
