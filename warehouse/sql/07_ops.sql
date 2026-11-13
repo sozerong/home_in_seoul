@@ -74,10 +74,10 @@ WITH src (source, last_collected, last_period, expected_days, period_late, rule)
     SELECT '전월세', (ops.last_approved('rent')).collected, (ops.last_approved('rent')).period::char(6), 7, false, '7일 안에 수집'  -- 승인된 배치(결정 75)
     UNION ALL SELECT '역사마스터', (SELECT max(collected_date) FROM stg.station_master), NULL, 7, false, '7일 안에 수집'
     UNION ALL SELECT '혼잡도', (ops.last_approved('congestion')).collected, NULL, 7, false, '7일 안에 수집'  -- 승인된 배치(결정 75)
-    UNION ALL SELECT '생활이동', (SELECT max(collected_date) FROM stg.living_migration), m.ym, 38,
-                     current_date > to_date(m.ym || '01', 'YYYYMMDD') + interval '2 months 27 days',
+    UNION ALL SELECT '생활이동', l.collected, l.period, 38,  -- 승인된 배치(판단 64. 관문은 Spark SQL, stg.living_batch_status)
+                     current_date > to_date(l.period || '01', 'YYYYMMDD') + interval '2 months 27 days',
                      '다음 달 자료가 공개(20일) 후 7일 안에 도착'
-              FROM (SELECT max(target_ym) AS ym FROM stg.living_migration) m
+              FROM ops.last_approved('living') l
     UNION ALL SELECT '상가정보', (ops.last_approved('store')).collected, (ops.last_approved('store')).period::char(6), 100, false, '100일 안에 수집'  -- 승인된 배치(결정 75, 78)
     UNION ALL SELECT '행정동 경계', (SELECT max(collected_date) FROM stg.sgis_dong), NULL, 380, false, '380일 안에 수집'
     UNION ALL SELECT '연속지적도', (SELECT max(collected_date) FROM stg.parcel), NULL, NULL, false, '수시'
@@ -94,7 +94,7 @@ WITH src (source, good, quarantined) AS (
     SELECT '전월세', ops.row_count('stg_dbt.rent'), ops.row_count('stg_dbt.rent_quarantine')  -- dbt 정제(결정 72)
     UNION ALL SELECT '역사마스터', (SELECT count(*) FROM stg.station_master), (SELECT count(*) FROM stg.station_master_quarantine)
     UNION ALL SELECT '혼잡도', ops.row_count('stg_dbt.congestion'), ops.row_count('stg_dbt.congestion_quarantine')  -- dbt 정제(결정 42)
-    UNION ALL SELECT '생활이동', (SELECT count(*) FROM stg.living_migration), (SELECT count(*) FROM stg.living_migration_quarantine)
+    UNION ALL SELECT '생활이동', (SELECT sum(passed)::bigint FROM stg.living_batch_status), (SELECT count(*) FROM stg.living_quarantine)  -- 관문과 같은 분모(판단 64). 통과 = C4 뒤 원본 행
     UNION ALL SELECT '상가정보', ops.row_count('stg_dbt.store'), ops.row_count('stg_dbt.store_quarantine')  -- dbt 정제, 서울 전체 업종(결정 78)
     UNION ALL SELECT '행정동 경계', (SELECT count(*) FROM stg.sgis_dong), (SELECT count(*) FROM stg.sgis_dong_quarantine)
     UNION ALL SELECT '연속지적도', (SELECT count(*) FROM stg.parcel), (SELECT count(*) FROM stg.parcel_quarantine)

@@ -1,11 +1,15 @@
 """Spark SQL 파일 묶음 실행기 (design_remaining_work.md 3.3, 결정 88, 90, 94-1).
 
 폴더 안 *.sql을 이름순으로 임시 뷰로 만든다. 파일 하나 = 뷰 하나, 뷰 이름 = 파일 이름에서 번호를 뺀 것(10_checked.sql -> checked).
-test_*.sql은 위반 행을 돌려주는 SQL이다. 하나라도 행이 있으면 아무것도 쓰지 않고 종료 코드 1(dbt 테스트와 같은 모양).
-마지막 뷰를 JDBC로 {target}_new에 쓰고 PostgreSQL 트랜잭션 하나에서 {target}과 바꾼다(결정 90). 매번 전체 재계산.
+test_*.sql은 위반 행을 돌려주는 SQL이다. 하나라도 행이 있으면 경계 표(마지막 뷰)는 바꾸지 않고 종료 코드 1(dbt 테스트와 같은 모양).
+--save 뷰는 테스트가 실패해도 쓴다: 거절된 배치가 운영 카드·알림에 보여야 하므로(판단 64).
+마지막 뷰를 JDBC로 {target}_new에 쓰고 PostgreSQL 트랜잭션 하나에서 {target}으로 옮긴다(결정 90). 매번 전체 재계산.
+옮기기 = 비우고 복사(F-13 처방 A). 표를 지우고 이름을 바꾸면 그 표를 읽는 dbt 뷰(wh.fact_commute) 때문에 거절된다.
+--save 뷰=표: 마지막 뷰 말고도 PostgreSQL에 남길 뷰(관문 판정, 격리 행. 판단 64). 같은 트랜잭션에서 옮긴다.
 Spark 이벤트 로그를 켜고, 끝나면(실패해도) 단계별 지표를 ops.engine_run에 남긴다. 한 행 = 실행 x 단계.
 실행(Airflow 컨테이너):
   /opt/airflow/spark-venv/bin/python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status
+      --save batch_status=stg.living_batch_status quarantine=stg.living_quarantine
   --show 뷰: 먼저 계산해 캐시하고 출력한다(작은 뷰. 테스트가 여러 번 읽어도 한 번만 계산)
   --driver-memory, --shuffle-partitions, --aqe: 엔진 분석(3.10)에서 바꾼다. --no-write: 쓰지 않고 지표만 남긴다
   --explain: 계산하지 않고 실행 계획(EXPLAIN FORMATTED)만 출력한다
@@ -86,6 +90,19 @@ def record(run_id, started, settings, ok, run_ms, error, rows, engine="spark"):
                          [run_id, engine, started, json.dumps(settings), ok, run_ms, error, *r.values()])
 
 
+def swap(conn, tables):
+    """{표}_new를 {표}로 옮긴다. 부르는 쪽이 커밋하므로 전부 한 트랜잭션이다. 첫 표가 0행이면 아무것도 옮기지 않는다."""
+    for i, table in enumerate(tables):
+        n = conn.execute(f"SELECT count(*) FROM {table}_new").fetchone()[0]
+        if i == 0 and n == 0:
+            raise SystemExit(f"{table}_new가 0행입니다. 옮기지 않습니다")
+        # ponytail: 1,378만 행을 한 번 더 복사한다(시간 [미측정]). 느리면 F-13 선택지 C(이름 바꾸고 뷰 다시 만들기)
+        conn.execute(f"TRUNCATE {table}")
+        conn.execute(f"INSERT INTO {table} SELECT * FROM {table}_new")
+        conn.execute(f"DROP TABLE {table}_new")
+        print(f"{table} 교체: {n:,}행")
+
+
 def run(spark, args, views, tests):
     sc = spark.sparkContext
     spark.createDataFrame([(c,) for c in sorted(load_codes())], "code string").createOrReplaceTempView("codes")
@@ -96,10 +113,12 @@ def run(spark, args, views, tests):
             print(f"===== EXPLAIN FORMATTED {name}")
             print(spark.sql(f"EXPLAIN FORMATTED SELECT * FROM {name}").collect()[0][0])
         return
-    for name in args.show:
-        sc.setJobDescription(f"show {name}")
+    saves = [(views[-1][0], args.target)] + [tuple(s.split("=")) for s in args.save]
+    for name in [v for v, _ in saves[1:] if v not in args.show] + args.show:  # 남길 뷰도 캐시: 테스트·쓰기가 다시 계산하지 않게
+        sc.setJobDescription(f"cache {name}")
         spark.sql(f"CACHE TABLE {name}")
-        spark.table(name).show(100, truncate=False)
+        if name in args.show:
+            spark.table(name).show(100, truncate=False)
     failed = []
     for name, sql in tests:
         sc.setJobDescription(f"test {name}")
@@ -108,26 +127,31 @@ def run(spark, args, views, tests):
         for r in bad:
             print("  ", r)
         failed += [name] if bad else []
-    if failed:
-        raise SystemExit(f"테스트 실패: {failed}. 아무것도 쓰지 않았습니다")
     if args.no_write:
+        if failed:
+            raise SystemExit(f"테스트 실패: {failed}")
         return
-    schema, table = args.target.split(".")
-    new = f"{args.target}_new"
-    with psycopg.connect(read_env("DATABASE_URL")) as conn:
-        conn.execute(f"DROP TABLE IF EXISTS {new}; CREATE TABLE {new} (LIKE {args.target} INCLUDING ALL)")
-    sc.setJobDescription(f"write {new}")
-    (spark.table(views[-1][0]).write.mode("append")
-     .jdbc("jdbc:postgresql://db:5432/seoul?reWriteBatchedInserts=true", new,
-           properties={"user": "seoul", "password": read_env("POSTGRES_PASSWORD"), "driver": "org.postgresql.Driver",
-                       "batchsize": "10000"}))
-    with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 블록이 정상으로 끝나면 커밋: 교체가 한 트랜잭션
-        n = conn.execute(f"SELECT count(*) FROM {new}").fetchone()[0]
-        if n == 0:
-            raise SystemExit(f"{new}가 0행입니다. 교체하지 않습니다")
-        conn.execute(f"DROP TABLE {args.target}")
-        conn.execute(f"ALTER TABLE {new} RENAME TO {table}")
-    print(f"{args.target} 교체: {n:,}행")
+    if failed:  # 관문 판정·격리 행은 남겨 운영 카드·알림에 거절이 보이게 한다(판단 64). 경계 표는 이전 실행 그대로
+        write(spark, saves[1:])
+        raise SystemExit(f"테스트 실패: {failed}. 경계 표 {args.target}은 바꾸지 않았습니다")
+    write(spark, saves)
+
+
+def write(spark, saves):
+    """(뷰, 표)마다 JDBC로 {표}_new에 쓰고, 한 트랜잭션에서 모두 옮긴다."""
+    if not saves:
+        return
+    for view, table in saves:
+        new = f"{table}_new"
+        with psycopg.connect(read_env("DATABASE_URL")) as conn:
+            conn.execute(f"DROP TABLE IF EXISTS {new}; CREATE TABLE {new} (LIKE {table} INCLUDING ALL)")
+        spark.sparkContext.setJobDescription(f"write {new}")
+        (spark.table(view).write.mode("append")
+         .jdbc("jdbc:postgresql://db:5432/seoul?reWriteBatchedInserts=true", new,
+               properties={"user": "seoul", "password": read_env("POSTGRES_PASSWORD"), "driver": "org.postgresql.Driver",
+                           "batchsize": "10000"}))
+    with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 블록이 정상으로 끝나면 커밋: 모든 표 교체가 한 트랜잭션
+        swap(conn, [table for _, table in saves])
 
 
 def main():
@@ -135,6 +159,7 @@ def main():
     parser.add_argument("folder")
     parser.add_argument("target")
     parser.add_argument("--show", nargs="*", default=[])
+    parser.add_argument("--save", nargs="*", default=[], metavar="VIEW=TABLE")
     parser.add_argument("--driver-memory", default="8g")
     parser.add_argument("--shuffle-partitions", default="200")
     parser.add_argument("--aqe", default="true")

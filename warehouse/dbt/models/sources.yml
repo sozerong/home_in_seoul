@@ -13,6 +13,7 @@ sources:
       - name: sbiz_store
       - name: parcel
       - name: station_master
+      - name: living_batch_status  # 생활이동 관문 판정. 실행기 --save가 쓴다(warehouse/sql/12, 판단 64)
       - name: living_commute  # 생활이동 경계 표. Spark SQL 실행기가 쓴다(warehouse/sql/12, spark_sql/living, 결정 88~90, 96)
         columns:  # 08 검사: 2021 대응표에 없는 생활이동 코드
           - name: origin_cd

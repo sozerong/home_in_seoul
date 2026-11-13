@@ -24,7 +24,8 @@ LIVING_CLEAN = ('for f in "${files[@]}"; do n=$(basename "$f"); case "$n" in 생
                 f'ym=${{n#생활이동_행정동_}}; ym=${{ym%.zip}}; {SPARK_PY} -m transform.living_iceberg "$D" "$ym"; '
                 f'{SPARK_PY} -m transform.living_migration "$D" "$ym";; esac; done; '
                 # 경계 표는 Iceberg 원본 전체에서 매번 다시 만든다(결정 88, 90). 옛 경로(living_migration)는 8절에서 뺀다
-                f'{SPARK_PY} -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status')
+                f'{SPARK_PY} -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status '
+                f'--save batch_status=stg.living_batch_status quarantine=stg.living_quarantine')  # 판단 64
 
 SOURCES = {  # 출처: (일정, 센서 최대 대기 초, 정제 명령, 갱신하는 Asset 목록)
     "living_migration": ("0 13 21 * *", 7 * 24 * 3600, LIVING_CLEAN, [STG_LIVING_MIGRATION, STG_LIVING_COMMUTE]),

@@ -118,7 +118,7 @@ def main():
         manifest["quality"] = dict(conn.execute("""
             SELECT 'rent_quarantine_rows', count(*)::text FROM stg_dbt.rent_quarantine  -- fact_rent처럼 처리 단위마다 최신 수집분만
             WHERE (source_type, sgg_cd, deal_ymd, collected_date) IN (SELECT source_type, sgg_cd, deal_ymd, max(collected_date) FROM stg_dbt.rent GROUP BY 1, 2, 3)
-            UNION ALL SELECT 'commute_quarantine_rows', count(*)::text FROM stg.living_migration_quarantine
+            UNION ALL SELECT 'commute_quarantine_rows', count(*)::text FROM stg.living_quarantine  -- 판단 64. 범위 C 밖 행 포함
             UNION ALL SELECT 'dongs_without_mois_code', count(*)::text FROM wh.dim_dong WHERE mois_dong_cd IS NULL
             UNION ALL SELECT 'commute_pairs_age20_34_basis', count(*)::text FROM mart.commute_od WHERE basis = 'age20_34'
             UNION ALL SELECT 'commute_pairs_all_ages_basis', count(*)::text FROM mart.commute_od WHERE basis = 'all_ages'

@@ -126,6 +126,20 @@ unit_tests:
         select '2026-11-01'::date as collected_date, 'f.xml' as source_file, 1 as row_no, '{CV1,CV4}'::text[] as reasons, '{"LINE": "", "STTN_NO": "15"}'::jsonb as raw, now() as quarantined_at  -- 같은 문장 안의 now()라 모델과 같다
         union all select '2026-11-01', 'f.xml', 3, '{CV5}', '{"DOW_SE": "평일", "LINE": "1호선", "STTN_NO": "150", "DPTRE_STTN": "서울역", "UP_DOWN_SE": "상선", "TIME0800": "-0.1"}', now()
 
+  - name: batch_status_living_shape  # 판단 64: Spark 판정(쉼표 글자)을 다른 출처와 같은 열로. 빈 글자 = 빈 배열 = 승인
+    model: batch_status_living
+    given:
+      - input: source('stg', 'living_batch_status')
+        format: sql
+        rows: |
+          select '202607'::char(6) as target_ym, '2026-10-21'::date as collected_date, 10::bigint as raw_rows, 9::bigint as passed, 1::bigint as quarantined, 0::bigint as c4_dropped, 0::bigint as pop_inexact, null::bigint as prev_raw_rows, 0.1::double precision as quarantine_ratio, ''::text as failed_checks, true as approved, '2026-11-13 10:00+09'::timestamptz as checked_at
+          union all select '202608', '2026-10-21', 5, 4, 1, 0, 0, 10, 0.2, 'living_raw_shrink,living_quarantine_ratio', false, '2026-11-13 10:00+09'
+    expect:
+      format: sql
+      rows: |
+        select 'living'::text as source, '202607/2026-10-21'::text as batch_key, '2026-10-21'::date as collected_date, '202607'::text as period, true as approved, '{}'::text[] as failed_checks, '2026-11-13 10:00+09'::timestamptz as checked_at
+        union all select 'living', '202608/2026-10-21', '2026-10-21', '202608', false, '{living_raw_shrink,living_quarantine_ratio}', '2026-11-13 10:00+09'
+
   - name: rent_rows_rules  # 옛 tests/test_rent.py의 경우를 옮김. C2~C6, V1~V9, 경계값, 여러 규칙(번호 순서)
     model: rent_rows
     given:

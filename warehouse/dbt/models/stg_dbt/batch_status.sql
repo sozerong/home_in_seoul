@@ -5,9 +5,11 @@
 -- 검사 이름은 옮기기 전 dbt 테스트 이름 그대로다(결정 76). 매 빌드 지금 상태만 계산한다(이력 없음, 결정 77).
 -- 거절 사유를 보려면 stg_dbt.congestion_rows, stg_dbt.rent_rows(뷰, 거르지 않음)에서 그 배치를 찾는다.
 -- 2026-11-13 F-7 처방 A(결정 97): 판정은 출처마다 batch_status_congestion, batch_status_rent, batch_status_store가 하고,
--- 이 모델은 그 합집합이다. 운영 카드(ops/14)와 wh_load 요약 알림만 읽는다. 정제 모델은 이것을 읽지 않는다.
+-- 이 모델은 그 합집합이다. 2026-11-13 생활이동(batch_status_living, 판정은 Spark SQL)을 더했다(판단 64). 운영 카드(ops/14)와 wh_load 요약 알림만 읽는다. 정제 모델은 이것을 읽지 않는다.
 select * from {{ ref('batch_status_congestion') }}
 union all
 select * from {{ ref('batch_status_rent') }}
 union all
 select * from {{ ref('batch_status_store') }}
+union all
+select * from {{ ref('batch_status_living') }}
