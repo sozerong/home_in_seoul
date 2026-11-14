@@ -7,9 +7,9 @@
 import glob
 import sys
 
-from common import ROOT, read_env
+from common import ROOT, SCRATCH, read_env
 
-SPARK_LOCAL = "/tmp/spark-local"  # 컨테이너 안. 호스트 C:에서 늘어나는 가상 디스크 위다(F-16)
+SPARK_LOCAL = f"{SCRATCH}/spark"  # 작업 공간 전용 볼륨(결정 107 S4, J-5). 여전히 호스트 C:에서 늘어나는 가상 디스크 위다(F-16, F-20)
 
 
 def spark_session(app, conf=None):

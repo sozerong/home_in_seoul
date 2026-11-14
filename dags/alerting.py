@@ -3,16 +3,19 @@
 작업 실패: 프로젝트의 logs/alerts.log(JSON Lines, 컨테이너 안 /opt/project/logs/alerts.log)와 ops.failure_log에 한 줄씩.
 .env(또는 환경 변수)에 SLACK_WEBHOOK_URL이 있으면 같은 내용을 슬랙에도 보낸다. 없으면 파일과 표에만 남긴다.
 wh_load 요약: 마지막 빌드의 dbt 경고, 관문 거절 배치, 늦은 출처를 모아 메시지 하나로 보낸다(wh_load_report). 새 감시 DAG는 없다.
+요약 끝에 디스크 한 줄(호스트 C: 여유, 작업 공간 /scratch 크기)을 늘 붙인다(결정 107 S7).
 """
 import datetime
 import json
 import logging
 import os
+import shutil
 import urllib.request
 from pathlib import Path
 
 ALERT_FILE = Path("/opt/project/logs/alerts.log")
 ENV_FILE = Path("/opt/project/.env")
+SCRATCH = "/scratch"
 
 
 def env(name):
@@ -71,6 +74,14 @@ def notify_failure(context):
         logging.exception("슬랙 실패 알림 전송 실패")
 
 
+def disk_line():
+    """호스트 C: 여유와 작업 공간 크기 한 줄. C:는 레포 바인드 마운트의 여유로 본다(측정 36).
+    작업 공간은 파일 크기를 직접 더한다. disk_usage("/scratch")는 VM 디스크 전체라 쓰지 않는다(F-21)."""
+    free = shutil.disk_usage(ENV_FILE.parent).free
+    used = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(SCRATCH) for f in fs)
+    return f"- 디스크: 호스트 C: 여유 {free / 1e9:.1f}GB, /scratch {used / 1e9:.2f}GB"
+
+
 def wh_load_report():
     """wh_load 마지막 작업: 경고, 거절 배치, 늦은 출처를 메시지 하나로. 보낼 것이 없으면 보내지 않는다. 보낸 글을 돌려준다."""
     import psycopg
@@ -83,8 +94,10 @@ def wh_load_report():
     lines = [f"- dbt 경고 {w['node']}: {w['message']}" for w in (warnings[0] if warnings else None) or []]
     lines += [f"- 관문 거절 {s} {k}: {c}" for s, k, c in rejected]
     lines += [f"- 늦음 {s} (마지막 수집 {d})" for s, d in late]
+    disk = disk_line()
+    print(disk)
     if not lines:
         return None
-    text = f"[wh_load] 경고 {len(lines)}건\n" + "\n".join(lines[:50]) + ("\n..." if len(lines) > 50 else "")
+    text = f"[wh_load] 경고 {len(lines)}건\n" + "\n".join(lines[:50]) + ("\n..." if len(lines) > 50 else "") + "\n" + disk
     print(text, "\n슬랙 전송:", send_slack(text))
     return text

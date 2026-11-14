@@ -1,3 +1,4 @@
+# 8절 은퇴 뒤 재현 불가(옛 표 stg.living_migration·옛 정제 코드 필요, 결정 105로 지움). 재현하려면 커밋 3efb02f를 체크아웃한다.
 """F-6 전수 탐색: dbt 모델 밖(Python, warehouse/sql)에서 SQL 글자로 표를 읽는 곳. 옛 표만 줄 번호와 함께 보인다 (결정 97).
 
 실행: python -m measure.table_refs   (8절에서 옛 표를 지우기 전에 "옛 경로 밖 0"을 확인한다)

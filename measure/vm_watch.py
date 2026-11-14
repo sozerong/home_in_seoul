@@ -7,7 +7,8 @@ F-16 때는 VM이 멈추며 커널 로그와 출력이 함께 사라져 원인(�
 실행(Airflow 컨테이너, 백그라운드): /opt/airflow/spark-venv/bin/python -u -m measure.vm_watch 이름 &
 끝내기: kill <pid>. --once: 한 줄만 찍고 끝(점검용).
 열: ts, VM 메모리 전체·사용 가능(kB), 스왑 전체·남음(kB), 누적 스왑 in/out(페이지), cgroup 사용·상한·rss·failcnt·oom_kill,
-    /tmp 사용·여유(byte), 이 컨테이너에서 RSS가 가장 큰 프로세스(kB, 이름).
+    /tmp가 놓인 파일 시스템의 사용·여유(byte. 폴더 크기가 아니다: 지금은 VM 데이터 디스크 전체, 이미지·볼륨 포함, F-21),
+    이 컨테이너에서 RSS가 가장 큰 프로세스(kB, 이름).
 """
 import datetime
 import os

@@ -16,7 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends openjdk-17-jre-
 ADD https://repo1.maven.org/maven2/org/apache/iceberg/iceberg-spark-runtime-3.5_2.12/1.12.0/iceberg-spark-runtime-3.5_2.12-1.12.0.jar /opt/spark-jars/
 ADD https://repo1.maven.org/maven2/org/postgresql/postgresql/42.7.14/postgresql-42.7.14.jar /opt/spark-jars/
 RUN chmod 644 /opt/spark-jars/*.jar
+# 작업 공간(Spark 셔플·spill, DuckDB 임시) 전용 볼륨의 마운트 지점(결정 107 S4). 빈 이름 볼륨은 처음 붙을 때 이 폴더의 소유자를
+# 물려받으므로 airflow 사용자가 쓸 수 있다. 하위 폴더(spark, duckdb)는 실행기가 잠금을 잡은 뒤 만든다(S5).
+RUN mkdir -p /scratch && chown airflow:root /scratch
 USER airflow
 RUN python -m venv /opt/airflow/spark-venv \
  && /opt/airflow/spark-venv/bin/pip install --no-cache-dir "pyspark==3.5.9" -r /requirements.txt
-# requirements.txt는 정제 규칙(transform.living_migration)을 그대로 불러 쓰기 위해 함께 넣는다.
+# requirements.txt는 Spark SQL 실행기(transform.spark_sql_runner)가 psycopg로 PostgreSQL에 쓰기 위해 함께 넣는다.

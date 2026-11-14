@@ -7,7 +7,7 @@ import time
 
 from common import ROOT
 from transform.iceberg import spark_session
-from transform.living_migration import load_codes
+from transform.living_iceberg import load_codes
 from transform.spark_sql_runner import sql_files
 
 KEYS = """target_ym, origin_cd, dest_cd, IF(weekday IN ('월','화','수','목','금'), '평일', '주말'),

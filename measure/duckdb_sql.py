@@ -27,12 +27,12 @@ import duckdb
 import psycopg
 
 from common import ROOT, read_env
-from transform.living_migration import load_codes
-from common import heavy_lock, temp_budget
+from transform.living_iceberg import load_codes
+from common import SCRATCH, heavy_lock, temp_budget
 from transform.spark_sql_runner import record, sql_files
 
 PROFILE_DIR = "/tmp/duckdb-profiles"
-TEMP_DIR = "/tmp/duckdb-tmp"  # 메모리 DB의 기본 임시 폴더는 작업 폴더 아래 .tmp라 레포(Windows 바인드 마운트)에 쓰게 된다
+TEMP_DIR = f"{SCRATCH}/duckdb"  # 작업 공간 전용 볼륨(결정 107 S4). 메모리 DB의 기본 임시 폴더는 작업 폴더 아래 .tmp라 레포(Windows 바인드 마운트)에 쓰게 된다
 DIALECT = [  # (정규식, 바꿀 글자, 이유). 실행하며 실제로 난 오류만 더한다
     (r"([\w.]+) RLIKE ('[^']*')", r"regexp_matches(\1, \2)",
      "DuckDB 파서에 RLIKE가 없다(Parser Error). regexp_matches는 Spark RLIKE처럼 부분 일치이고 패턴이 ^...$라 같은 뜻"),
@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--threads")
     parser.add_argument("--max-temp", help="임시 폴더 상한(예: 100GiB). 기본: common.temp_budget() (L3)")
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="그 밖의 DuckDB 설정(F-18 가설 시험)")
     args = parser.parse_args()
     views, tests = sql_files(ROOT / args.folder)
     run_id = f"duckdb-{uuid.uuid4().hex[:12]}"
@@ -128,7 +129,8 @@ def main():
     if not args.max_temp and budget <= 0:
         raise SystemExit(f"임시 공간 여유가 없습니다(호스트 C: 여유에서 남길 몫을 뺀 값 {budget / 2 ** 30:.1f}GiB). 실행하지 않습니다")
     max_temp = args.max_temp or f"{budget // 2 ** 30}GiB"  # 기본값(보이는 디스크의 90%)은 가상 디스크의 거짓 용량을 본다(F-16)
-    for key, value in (("memory_limit", args.memory_limit), ("threads", args.threads), ("max_temp_directory_size", max_temp)):
+    for key, value in (("memory_limit", args.memory_limit), ("threads", args.threads), ("max_temp_directory_size", max_temp),
+                       *(kv.split("=", 1) for kv in args.set)):
         if value:
             con.execute(f"SET {key} = '{value}'")
     for key in ("memory_limit", "threads", "preserve_insertion_order", "max_temp_directory_size"):

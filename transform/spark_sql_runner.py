@@ -27,7 +27,7 @@ import psycopg
 
 from common import ROOT, heavy_lock, read_env, temp_budget
 from transform.iceberg import spark_session
-from transform.living_migration import load_codes
+from transform.living_iceberg import load_codes
 
 EVENT_DIR = "/tmp/spark-events"
 
@@ -170,7 +170,10 @@ def main():
     parser.add_argument("--aqe", default="true")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--explain", action="store_true")
-    parser.add_argument("--min-temp-gb", type=int, default=200,  # 측정 32: 셔플 쓰기 143GB + 디스크 spill 57GB
+    # 문턱 = 같은 작업의 실측 최대 C: 사용 x 1.2 (J-7, 결정 107 S6). temp_budget()이 남길 몫 50GiB를 이미 빼므로 여기에는 더하지 않는다.
+    # 생활이동 F-9 처방 전: 측정 38 C: 여유 641.24 → 313.00GB = 328.24GB x 1.2 = 393.9 → 394. 호스트 C: 여유로는 약 447.7GB가 있어야 시작한다.
+    # ponytail: 측정 1회 x 1.2(측정 37 메모리 예산과 같은 방식). F-9 처방 뒤 다시 잰 최대로 바꾼다.
+    parser.add_argument("--min-temp-gb", type=int, default=394,
                         help="임시 공간이 이보다 적으면 시작하지 않는다(Spark에는 임시 폴더 상한이 없다, L3·L4)")
     args = parser.parse_args()
     lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때까지 잡는다(L5)

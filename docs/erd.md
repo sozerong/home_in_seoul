@@ -106,7 +106,7 @@ erDiagram
 | `wh.map_dong_mois` | 행정안전부 행정동 코드 하나와 그 코드가 속한 2025 행정동 (2026-10-23 추가, 결정 25) | 상가정보 업소 다수결. 동마다 대표 코드 + 어느 동의 대표도 아닌 코드 |
 | `wh.map_congestion_station` | 혼잡도의 (호선, 역번호) 하나와 역사_ID의 짝 | 0 채우기 + 손으로 6개 |
 | `wh.fact_rent` | 신고된 전월세 계약 한 건 (오피스텔, 연립다세대) | stg.rent + dim_parcel |
-| `wh.fact_commute` | 대상연월 × 출발 × 도착(2021 코드) × 요일 × 도착시간 × 성별 × 나이 하나 | stg.living_migration |
+| `wh.fact_commute` | 대상연월 × 출발 × 도착(2021 코드) × 요일 × 도착시간 × 성별 × 나이 하나 | stg.living_commute (Spark SQL 경계 표, 2026-11-13 3.5부터. 그 전 stg.living_migration) |
 | `wh.fact_congestion` | 수집일 × 요일 × 호선 × 역 × 방향 × 30분 구간 하나 | stg.congestion |
 | `wh.fact_store` | 필수 6코드 업소 하나, 기준월 하나 | stg.sbiz_store |
 

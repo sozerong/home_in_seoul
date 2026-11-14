@@ -1022,3 +1022,69 @@
 - 결정과 이유 (2026-11-13 사용자 결정): **지금은 A**로 바닥을 깐다. **k8s 이식 때 B**로 간다. 상한 값은 resource_guard.md 2절 방법으로 잰 뒤 근거와 함께 정한다.
 - 검증: [미검증] resource_guard.md 4절 5번 유도 시험(작은 상한에서 DuckDB를 일부러 넘치게 함)으로 확인한다.
 - 결과와 남은 것: L0 관측, L2 상한, L3 엔진 설정, L5 pool은 Claude, L1 `.wslconfig`와 L4 공간 회수는 사용자.
+
+## 결정 102. `fact_store` 공간 조인은 행정동 경계 원천 표에 GiST 인덱스를 둔다 (F-4 처방 B)
+- 상황: `fact_store`가 업소 55만 곳마다 경계 426개 모두와 `ST_Contains`를 불러 140초(F-4, 측정 27). 결정 97은 A(`ref('dim_dong')`과 조인)를 골랐으나 dbt 의존 순환(`fact_store → map_dong_mois → dim_dong`)으로 적용할 수 없었다.
+- 선택지: (F-4 "다시 고를 선택지")
+  - A'. 경계만 담는 새 모델(`dim_dong_geom`, GiST)을 `fact_store`와 `dim_dong`이 함께 읽음: 순환 없음, 인덱스가 dbt 안. 모델이 하나 는다.
+  - B. `stg.sgis_dong.geom`에 GiST 인덱스(DDL 06): 모델을 안 바꾼다. 한 줄. 수집일이 쌓이면 모든 수집일 경계가 인덱스에 든다(지금 1개, 426행).
+  - C. 그대로: wh_load 매번 2분 넘게.
+- 결정과 이유 (2026-11-14 Claude 판단, 결정 97의 F-3~F-7 위임과 handoff_finish.md 4절 3번 "경계 표에 공간 인덱스를 두고"를 따름. **사용자 확인 전**): B. 가장 작은 변경이고 모델·리니지·상품이 그대로다. 수집일이 쌓여도 경계는 1년 1회(426행씩)라 인덱스 크기 문제가 없다.
+- 검증: 측정 40. 같은 조인 137.3초 → 4.55초, 결과 두 방향 `EXCEPT ALL` 0/0(554,092행 모두 행정동 붙음), dbt 전체 빌드 233.1초 → 95.4초, PASS 122. wh_load 1회(Airflow, 2026-11-14 00:12:53~00:15:05, 인덱스 뒤 첫 실제 실행): 성공, `dbt_build` 작업 103초(같은 날 인덱스 전 233.1초, 측정 38 2.3), 상품 데이터 파일 8개 sha256이 v2026.11.13과 모두 같음(v2026.11.14).
+- 결과와 남은 것: DB에는 이미 인덱스가 있고 `warehouse/sql/06_stg_boundary.sql`에 `CREATE INDEX IF NOT EXISTS`를 더했다. 사용자가 A'를 원하면 인덱스를 지우고(`DROP INDEX stg.sgis_dong_geom_gist`) 모델을 더한다. 다음 wh_load부터 `fact_store`가 빨라진다(상품 결과는 같음).
+
+## 결정 103. 생활이동 실행기 병목은 SQL을 고쳐 줄인다: F-9 처방 A + C + D, 그 뒤 DuckDB를 같은 SQL로 다시 잰다(F-19 B)
+- 상황: 생활이동 Spark 실행기 1회가 34.9분(F-9), 결정 101 상한에서 53분(측정 38)이고, 컨테이너 작업 공간을 최대 333.6GB 써서 호스트 C: 여유를 328GB 줄였다(F-20). 실행 계획 다시 확인(2026-11-14, `--explain`): 관문 `batch_status`가 원본을 5번 읽고(BatchScan 5), 글자 min/max로 SortAggregate 4개, 코드표 조인이 모두 SortMergeJoin(BroadcastHashJoin 0). 같은 SQL을 DuckDB로 돌린 측정 39는 결정 101 예산 안에서 끝나지 못했다(F-19).
+- 선택지: (F-9 처방 표)
+  - A. `20_clean`의 충돌 검사를 숫자로(`min/max(avg_minutes)`, `min/max(population)`, 가려짐 수) → HashAggregate. 장점: 정렬이 사라짐, SQL 한 파일. 단점: `*`와 숫자 섞임, 숫자로는 같고 글자로는 다른 값("05"와 "5")을 옛 코드와 똑같이 판정하려면 열을 하나 더 세야 함.
+  - B. 실행기가 `checked`(또는 `clean`)를 캐시·체크포인트. 장점: 원본 읽기 한 번. 단점: 14억 행 캐시가 디스크로 감, 실행기에 뷰별 설정.
+  - C. 관문 SQL을 한 번 읽기로 다시 씀(`checked`에서 한 번에 행 수·격리 수, `clean`은 한 번만). 장점: 계산이 설계 수준에서 줆. 단점: V8 격리 행 수를 `clean`에서 세면 `21_quarantine`과 셈이 둘이 됨.
+  - D. 코드표 `BROADCAST` 힌트(또는 크기 통계가 있게). 장점: 원본 셔플 2번 x 읽기 수가 사라짐. 단점: 단독 효과는 작을 수 있음(측정 `living_boundary_gap` 139.5초).
+  - E. 그대로(월 1회라 견딤). 단점: 셔플·spill이 작업 공간을 수백 GB 씀.
+  - F-19: A(공간 회수 뒤 임시 상한을 키워 재측정), B(F-9 처방 뒤 두 엔진 재측정), C(측정 39를 결론으로).
+- 결정과 이유 (사용자, 2026-11-14): **F-9는 A + C + D 함께, F-19는 B.** 세 원인(정렬 집계, 다섯 번 읽기, 셔플 조인)이 서로 다른 곳에 있어 하나만 고치면 나머지가 남는다. B(캐시)는 14억 행을 디스크로 옮길 뿐이라 F-20(작업 공간)을 키운다. DuckDB는 같은 SQL 구조에서 넘쳤으므로(F-19 H3) SQL을 고친 뒤 두 엔진을 같은 조건으로 다시 재야 결정 94의 질문에 공정하다.
+- 검증: (예정) 변경 하나마다 `--explain` 연산자 수 표(측정 41), A의 판정이 옛 문자열 비교와 같은지 작은 입력 시험(J-9), 관문 격리 합 = `stg.living_quarantine` 행 수(J-10), 전체 실행 1회를 Airflow DAG로 하고 보관본과 두 방향 `EXCEPT ALL` 0(측정 42, J-13), DuckDB 재측정(측정 43, J-15).
+- 결과와 남은 것: 진행 순서는 `docs/handoff_decisions.md` 3~4절. 실행 전에 작업 공간 정리와 공간 회수(결정 107)가 먼저다.
+
+## 결정 104. dbt 배열 열 unit test 우회(F-1 A)를 그대로 둔다
+- 상황: dbt-postgres가 배열 열의 타입을 `information_schema.columns.data_type`(`ARRAY`)에서 읽어, unit test 입력에서 빠진 배열 열을 `cast(null as ARRAY)`로 채워 문법 오류가 난다(F-1). 지금은 입력을 `format: sql`로 모든 열과 함께 쓰는 우회(A)로 매 빌드 통과한다.
+- 선택지: (F-1 "우회를 그대로 둘지" 표) A 우회 그대로 / B `postgres__get_columns_in_relation` 덮어쓰기 / C A + 외부 이슈 dbt-labs/dbt-adapters#664에 재현 덧붙이기 / D A + dbt-postgres 올려 보기.
+- 결정과 이유 (사용자, 2026-11-14): **A.** 증상이 테스트 정의에만 머물고 모델 설계(`failed_checks text[]`)가 그대로다. B는 dbt 내부 매크로를 프로젝트가 떠안아 업그레이드 위험과 시험 범위가 넓다. 외부에 올리는 일(C)은 하지 않는다.
+- 검증: 지금 우회 3곳(`stg_dbt.yml` 2곳, `batch_status_living_shape`)이 매 wh_load 빌드에서 통과(2026-11-14 wh_load PASS).
+- 결과와 남은 것: 배열 열이 있는 모델을 새로 unit test 입력으로 쓰면 `format: sql`로 쓴다(F-1 재발 방지). failure_analysis.md F-1 상태를 "우회 유지(결정 104)"로.
+
+## 결정 105. 옛 Python 생활이동 경로를 지운다 (결정 85 이행, progress_decision99.md 6절 1~5)
+- 상황: 생활이동은 zip → Iceberg → Spark SQL 실행기 경로만 돈다(DAG·Asset에서 옛 정제 호출을 뺐고, 리니지 간선 0, 옛 표를 읽는 DB 뷰·dbt·Metabase 0). 옛 표 `stg.living_migration`(8,972MB, 40,382,008행)과 격리 표, DDL 04, 옛 정제 코드, 그 시험이 남아 있다.
+- 선택지: (progress 6절 표) 1 표 `stg.living_migration`(+ 인덱스) / 2 표 `stg.living_migration_quarantine` / 3 DDL 파일 04 / 4 `transform/living_migration.py` 옛 정제(쓰이는 `HEADER`, `LAKE`, `load_codes`는 `living_iceberg.py`로) / 5 `tests/test_living_migration.py` / 6 `keep.commute_od_before_3_5`(3.6 같음 증명 때 보관한 옛 마트).
+- 결정과 이유 (사용자, 2026-11-14): **1~5는 지우고 6은 보관한다.** 옛 경로는 실행되지 않는데 9GB와 시험·코드 유지 비용이 남는다. 옛 표는 레이크 원본과 옛 커밋 코드로 다시 만들 수 있어 덤프하지 않는다(J-3). 6은 19MB이고 옮김 전 결과의 실물이라 남긴다.
+- 검증 (2026-11-14): 지우기 직전 `pg_depend` 0과 리니지 회차 36 옛 표 간선 0. 지운 뒤 DB 20GB → 11GB, wh_load 1회 성공(`dbt_build` 107초), 상품 데이터 파일 8개 sha256이 v2026.11.13과 같음, 리니지 회차 37 간선 2,667개 중 옛 표 0, CI 시험 반복문 7개 통과, DAG 불러오기 오류 0. 자세한 표는 progress_decision99.md 6.1절.
+- 결과와 남은 것: 표 2개(인덱스 포함)와 `04_stg_living_migration.sql`, `transform/living_migration.py`, `tests/test_living_migration.py`를 지웠다. 쓰이던 `HEADER`, `LAKE`, `load_codes`는 `transform/living_iceberg.py`로 옮겼다. 과거 측정 재현 도구 3개(`measure/change_cost.py` S6b, `measure/lineage_mutation.py` M5, `measure/table_refs.py`)는 남기고 첫 줄에 재현 불가와 커밋 3efb02f를 적었다. `docs/rules.md`와 지난 측정·결정의 옛 경로 언급은 기록이라 그대로 둔다.
+
+## 결정 106. 파이프라인 운영 UI는 레포 안의 읽기 전용 웹 앱으로 만든다
+- 상황: 실행 기록, 판정·격리, 리니지, 자원 사용을 한곳에서 보는 화면이 필요하다. Metabase 운영 카드는 측정값만 늘어놓고, Airflow 화면은 데이터 쪽(판정, 리니지)을 보이지 않는다. CLAUDE.md 단계 9에는 "대시보드나 웹 서비스는 만들지 않는다"가 있다.
+- 선택지: 레포 문서에 남은 비교 표가 없다 [확인 필요: 사용자가 비교한 다른 형태와 장단점]. 고른 형태만 기록한다.
+- 결정과 이유 (사용자, 2026-11-14): **레포 안 읽기 전용 웹 앱.** CLAUDE.md 단계 9의 "대시보드나 웹 서비스는 만들지 않는다"는 **데이터 상품 시연**에 대한 것이다(부동산 플랫폼에 주는 것은 파일과 계약이고, 시연은 SQL이나 노트북 하나). 이 UI는 운영과 개발용 도구라 범위가 다르다. 읽기 전용이라 파이프라인 상태를 바꾸지 않는다.
+- 검증: handoff_ui.md에서.
+- 결과와 남은 것: 구현은 별도 세션이 `docs/handoff_ui.md`대로 worktree(`../new_proj_ui`, 브랜치 `ui`)에서 한다(J-18). 그 세션의 결정은 `docs/ui.md`에 쌓았다가 병합 때 이 파일 다음 번호로 옮긴다.
+
+## 결정 107. 작업 공간은 전용 볼륨 `scratch`로, 공간 회수 직후 Docker 디스크 상한을 건다 (F-20 처방)
+- 상황: 무거운 실행마다 호스트 C: 여유가 그 실행의 임시 파일 최대치만큼 줄고 돌아오지 않는다(649.31GB → 141GB, F-20). 작업 공간(Spark 셔플·spill, DuckDB tmp)이 컨테이너 쓰기 층(`/tmp`)에 상한·수명 없이 있고, 정리는 엔진의 정상 종료에만 맡겨져 있으며, TRIM이 없어 가상 디스크가 줄지 않는다.
+- 선택지: F-20 표(A 쓰는 양 줄이기 = 결정 103 / B Docker 디스크 상한 / C 실행 뒤 fstrim + compact / D sparse VHDX / E 호스트 바인드 마운트)와 resource_guard.md 7.6 S4 표(A 전용 이름 볼륨 `scratch` / B 호스트 폴더 바인드 마운트 / C 지금 그대로 + 시작·끝 비우기).
+- 결정과 이유 (사용자, 2026-11-14): **S4 A(작업 공간을 전용 볼륨 `scratch`로), 공간 회수 직후 S3(Docker 디스크 상한), 그리고 S5 시작·끝 비우기, S6 사전 점검, S7 관측.** 볼륨은 쓰기 층과 분리돼 크기를 따로 보고 비울 수 있고 속도가 그대로다. 바인드 마운트(B)는 WSL 파일 공유를 거쳐 셔플 수백 GB가 느려질 수 있다[미측정]. sparse(D)는 PostgreSQL이 같은 디스크라 쓰지 않는다. 볼륨도 같은 가상 디스크 안이라 호스트 반환은 여전히 회수(S2)가 필요하고, 상한(S3)이 VHDX가 커질 수 있는 끝을 정한다. 근본 처방은 쓰는 양을 줄이는 결정 103이다.
+- 검증: (예정) 짧은 실행에서 셔플 파일이 `/scratch/spark`에 생기는지(J-5), 찌꺼기 파일이 다음 실행 시작에서 사라지고 잠금이 잡혀 있을 때 다른 프로세스가 비우지 않는지(J-6), 회수 전후 VHDX 크기와 C: 여유, 상한 뒤 VM 안 `df`(측정 44).
+- 진행 (2026-11-14):
+  - S0: `/tmp` 내용물 166MB, 지울 셔플·spill 0. "`/tmp` 74.6GB"는 VM 디스크 전체 사용량이었다(F-21). S1은 지울 것이 없어 하지 않음(판단 92).
+  - S4: `docker-compose.yml`에 이름 볼륨 `scratch`(`/scratch`), `Dockerfile`에 마운트 지점(`airflow` 소유), `transform/iceberg.py` `SPARK_LOCAL=/scratch/spark`, `measure/duckdb_sql.py` `TEMP_DIR=/scratch/duckdb`, `common.temp_budget()` 기준 `/scratch`. 컨테이너를 다시 만들기 전에 DB 4개를 `pg_dump`(판단 93). Airflow 컨테이너만 다시 만듦(db·metabase·pgadmin 그대로, 상한 22g·cpus 12 그대로). 확인 `tests/check_scratch.py`: Spark 셔플 파일 24개가 `/scratch/spark/blockmgr-*` 아래, DuckDB 흘림 파일이 `/scratch/duckdb` 아래에 생김, 통과.
+  - S5: `common.heavy_lock()`이 잠금을 잡은 직후 `/scratch` 안을 비우고(`clear_scratch`), 프로세스가 끝날 때(`atexit`, 예외로 끝나도) 다시 비운다. 잠금을 쓰는 곳: Spark SQL 실행기, DuckDB 측정 도구, 그리고 이번에 더한 `transform/living_iceberg.py`(Spark를 쓰는데 잠금이 없었음, 판단 96). 생활이동 zip 압축 해제도 `/scratch/unzip`으로 옮겼다. 확인 `tests/check_scratch.py` 1부: 찌꺼기 3개(셔플, DuckDB 임시, 압축 해제)를 남기고 잠금이 잡혀 있으면 다른 프로세스가 실패하고 지우지 않음, 잠금을 잡은 프로세스가 시작 때 비움, 정상·예외로 끝날 때 자기 파일까지 비움. 통과. 실행기 `--explain` 뒤에도 `/scratch` 0개.
+  - S6: 실행기 시작 문턱 `--min-temp-gb` 200 → **394**(J-7: 측정 38 실측 최대 C: 사용 328.24GB x 1.2. `temp_budget()`이 50GiB를 이미 빼므로 호스트 C: 여유로는 약 447.7GB). 옛 200은 측정 32의 셔플 쓰기 143GB + 디스크 spill 57GB였는데, 측정 38은 C:를 328GB 썼으므로 시작했다가 넘칠 수 있었다. 확인: 지금 C: 여유 280.5GB에서 실행기가 "임시 공간 227GB < 필요 394GB"로 rc 1, 작업 공간 0개. F-9 처방 뒤 다시 잰 최대로 바꾼다.
+  - S2 (사용자, 11:14~11:59): VHDX 563.8 → 78.1GB, C: 여유 280.21 → 979.73GB(측정 44).
+  - S3 상한 값 (사용자, 2026-11-14): 지금 `DiskSizeMiB` 1TiB가 C: 여유보다 크다. 선택지:
+    | 선택지 | 값 | 장점 | 단점 |
+    |---|---|---|---|
+    | A. J-8 그대로 (VM 사용 + 작업 공간 최대 + PG 여유, x 1.1) | 466GiB (500.4GB) | 지시서 공식과 같음 | `temp_budget()`이 VM 여유를 보게 되어 373.7GB < 실행기 문턱 394GB. F-9 처방 전에는 실행기가 시작하지 않음 |
+    | **B. J-7 문턱이 통과하도록 (VM 사용 + 문턱 394 + `RESERVE_BYTES` + PG 여유)** | **535GiB** (72.99 + 394 + 53.69 + 53.69 = 574.4GB) | 실행기가 시작함. 조건 ≤ C: 여유 − 50GiB(925.8GB) 통과 | J-8과 공식이 다름(여유를 J-7의 x 1.2에서 얻음) |
+    | C. 지금은 걸지 않음 | 1TiB 유지 | 디스크를 다시 만들 위험 없음. 사전 점검은 이미 C: 여유를 봄 | VM이 실제보다 큰 용량을 보는 상태가 남음 |
+    - **B를 골랐다.** J-8의 10%와 J-7의 x 1.2는 같은 "실측 최대 위 여유"를 두 번 다르게 잡은 것이라, 실행기가 실제로 쓰는 쪽(J-7)에 맞췄다. 값을 바꾸기 전에 DB 4개를 `C:\Users\dudfo\pg_backup_20261114_pre_cap\`에 덤프(98초, `SHA256SUMS`, seoul `TABLE DATA` 64개). 값을 줄일 때 디스크를 다시 만드는지는 Docker 문서에 없다 [확인 필요]. F-9 처방 뒤 문턱이 바뀌면 상한도 같은 식으로 다시 잡는다.
+    - **적용하지 못함 → C로 바꿈 (사용자, 2026-11-14).** Docker Desktop 4.87.0(WSL2 백엔드) 설정 화면에 디스크 상한 메뉴가 없었다(문서도 이 설정의 대상을 Mac, Linux, Windows Hyper-V로만 적음). `settings-store.json`의 `DiskSizeMiB`를 직접 고치는 길은 동작 보장이 없고, 같은 디스크의 다른 프로젝트 볼륨(iloon, neo4j, ollama)까지 잃을 수 있어 택하지 않았다. 상한 대신 실행기 사전 점검(S6, `temp_budget()`이 호스트 C: 여유를 봄)이 지킨다. 남은 위험: 잠금 밖에서 쓰는 것(PostgreSQL, 다른 프로젝트)은 막지 못한다.
+  - S7: `dags/alerting.py` `disk_line()`이 wh_load 요약 끝에 "호스트 C: 여유, /scratch 크기" 한 줄을 붙인다. C:는 레포 바인드 마운트 여유, `/scratch`는 파일 크기 합(`disk_usage`는 VM 디스크 전체라 쓰지 않음, F-21). 확인: 컨테이너에서 `wh_load_report()` 직접 호출 → `- 디스크: 호스트 C: 여유 927.8GB, /scratch 0.00GB`, DAG 8개 불러오기 오류 0.
+- 결과와 남은 것: 순서는 handoff_decisions.md 2.5절(S0 조사 → S1 정리 → S4 → S5 → S6 → S7 → S2 회수 → S3 상한). 볼륨을 붙이려면 Airflow 컨테이너를 다시 만들어야 하므로 `pg_dump`를 먼저 한다. 시작 문턱은 J-7에 따라 "실측 최대 C: 사용 x 1.2 + 50GiB"(처방 전 약 447GB)로 바꾼다.

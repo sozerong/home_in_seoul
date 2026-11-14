@@ -1,7 +1,8 @@
 -- 생활이동 원본 한 행 = 한 행. 행 단위 규칙(docs/rules.md 4절 C2, C3, V1~V7)의 위반 사유를 reasons에 붙이고 버리지 않는다.
--- 규칙은 transform/living_migration.py clean()과 같다. 다른 점: 범위 C(HW, 평일, 07~09시, 서울) 밖 행도 검증한다(design 3.4).
+-- 규칙은 옛 transform/living_migration.py clean()과 같다(결정 105로 지움, 커밋 3efb02f에 있음). 다른 점: 범위 C(HW, 평일, 07~09시, 서울) 밖 행도 검증한다(design 3.4).
 -- reasons = 규칙 번호를 이름순으로 쉼표로 이은 글자. 빈 글자 = 통과. codes = 생활이동 코드표(실행기가 xlsx에서 만든 임시 뷰, V4).
-SELECT m.target_ym, m.collected_date, m.source_file, m.row_no, m.file_hour, m.n_fields, m.line,
+-- BROADCAST: 코드표(1,152행, 8KB)는 Python에서 만든 뷰라 Spark가 크기를 몰라 원본 14억 행을 셔플해 조인했다(F-9 원인 3, 처방 D).
+SELECT /*+ BROADCAST(o, d) */ m.target_ym, m.collected_date, m.source_file, m.row_no, m.file_hour, m.n_fields, m.line,
        m.target_ym_raw, m.weekday, m.arrive_hour_raw, m.origin_cd, m.dest_cd, m.sex, m.age, m.move_type,
        m.avg_minutes_raw, m.population_raw,
        TRY_CAST(m.avg_minutes_raw AS INT) AS avg_minutes,

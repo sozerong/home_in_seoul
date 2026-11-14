@@ -7,9 +7,9 @@
 | 1 | 커밋 | 완료 (598b807, a042e58, 679e252) |
 | 2 | 생활이동 관문 판정·격리 행을 PostgreSQL에 (판단 64) | **완료.** 실제 실행기 1회, `07_ops.sql`, wh_load, metabase_setup(측정 38, handoff_finish.md 2절) |
 | 3 | "거절되면 직전 승인 배치" (판단 63) | **완료: 결정 100(B, 거절된 달만 빼고 갱신)**. `test_month_approved` → `warn_month_approved`(기록만). 실제 실행 확인은 handoff_finish.md 2.1 |
-| 4 | 8절 옛 경로 은퇴 | 대기 → handoff_finish.md 3.1 |
-| 5 | 3.9 DuckDB 비교 | 대기 → handoff_finish.md 3.3. 선행 조건(공간 회수 측정 36, 자원 상한과 유도 시험 측정 37·F-17)은 끝남 |
-| 6 | 체크포인트 보고 | handoff_finish.md 6절 완성 기준으로 넘김 |
+| 4 | 8절 옛 경로 은퇴 | **완료(결정 105, 2026-11-14).** 표 2개·파일 3개 지움, 상품 sha256 그대로, 리니지 간선 0(6.1절) |
+| 5 | 3.9 DuckDB 비교 | 3회 실행, 결정 101 예산 안에서 끝내지 못함(측정 39, F-19 선택 대기) |
+| 6 | 체크포인트 보고 | 7절(handoff_finish.md 6절 완성 기준 대조) |
 | (추가) | 자원 고갈 방지 (resource_guard.md, 결정 101) | L0·L2·L3·L4·L5와 유도 시험 완료(측정 36·37, F-17, guarantees 2.7). L1 `.wslconfig`는 제안만(사용자 파일) |
 
 ## 1. 단계 2 결과: 무엇이 바뀌었나
@@ -24,7 +24,7 @@
 | `warehouse/sql/07_ops.sql` | `ops.freshness` 생활이동은 승인된 배치 기준, `ops.quality`는 관문과 같은 분모. **DB에는 아직 적용 안 함** |
 | `warehouse/sql/ops/06, 10, 14` | 새 표를 읽게. **Metabase에는 아직 반영 안 함** |
 | `warehouse/export_product.py` | manifest `commute_quarantine_rows`를 `stg.living_quarantine`에서 |
-| `tests/test_runner_swap.py` | 교체 시험(새 파일) |
+| `tests/check_runner_swap.py` | 교체 시험(새 파일) |
 
 ### 왜 테스트가 실패해도 판정을 쓰나
 
@@ -40,7 +40,7 @@
 
 | 확인 | 방법 | 결과 |
 |---|---|---|
-| 교체 중 의존 뷰 유지, 전부 되거나 전부 안 됨 | `tests/test_runner_swap.py` (시험 스키마, 0행 실패 주입 포함) | 통과 |
+| 교체 중 의존 뷰 유지, 전부 되거나 전부 안 됨 | `tests/check_runner_swap.py` (시험 스키마, 0행 실패 주입 포함) | 통과 |
 | 판정 열 모양 | dbt unit test `batch_status_living_shape` | 통과 |
 | 다른 세 출처 판정이 그대로인지 | 임시 스키마 `stg_dbt_chk`에 `+batch_status` 빌드 뒤 지금 `stg_dbt.batch_status`와 두 방향 `EXCEPT ALL` | 0행, 0행 (임시 스키마는 지움) |
 | 운영 뷰와 카드가 생활이동 거절을 보이는지 | 되돌리는 트랜잭션에서 `07_ops.sql` 적용, 시험 행 넣고 `ops.freshness`, `ops.quality`, 카드 06·10·14, 알림 요약 쿼리 실행 | 모두 보임. 되돌린 뒤 실제 DB는 그대로 |
@@ -101,3 +101,87 @@
 - 측정: 36(공간 회수), 37(메모리 예산)
 - 오류: `docs/failure_analysis.md` F-13(처방 A 넣음), F-16(원인 정정: 메모리 → 스왑 소진이 가장 유력), F-17([유도] 자원 상한 시험)
 - 보증: `docs/guarantees.md` 2.3(실행기 교체), 3절(생활이동 거절이 카드·알림에 닿는다, 실제 실행은 증명 전)
+
+## 6. 3.1 옛 경로 은퇴: 지울 목록 (결정 105로 1~5 지움, 6 보관. 결과는 6.1)
+
+이미 한 것(지우지 않는 변경, 커밋 전):
+- `dags/file_sources.py` 생활이동 명령에서 `transform.living_migration` 호출을 뺐다. 이제 zip → Iceberg → Spark SQL 실행기만 돈다. DAG 8개 불러오기 오류 0.
+- Asset `stg.living_migration`을 `dags/assets.py`, DAG outlet, `WH_INPUTS`에서 뺐다. `wh_load` 일정 입력은 7개(`stg.station_master`, `raw.congestion`, `stg.living_commute`, `raw.sbiz_store`, `stg.sgis_dong`, `stg.parcel`, `raw.rent`).
+- 리니지 다시 추출(회차 35, Spark, 간선 2,667개): 옛 표 `stg.living_migration`, `stg.living_migration_quarantine`으로 가는 간선 0. 마지막으로 있던 것은 회차 27(59개), 3.5 전환 뒤인 회차 28부터 0.
+- 옛 표를 읽는 DB 뷰 0개(`pg_depend`, 2.2 `07_ops.sql` 적용 뒤). dbt 모델과 Metabase 카드 SQL에도 없다.
+
+승인받으면 지울 것:
+
+| # | 대상 | 크기 | 지금 쓰는 곳 | 지우면 |
+|---|---|---|---|---|
+| 1 | 표 `stg.living_migration` (+ 인덱스 `living_migration_target_ym_idx`) | 8,972MB, 40,382,008행 | 없음 | `07_ops.sql` 105줄 인덱스 문장도 뺀다 |
+| 2 | 표 `stg.living_migration_quarantine` | 41MB, 93,880행 | 없음 | |
+| 3 | 파일 `warehouse/sql/04_stg_living_migration.sql` | 34줄 | README 2절 DDL 반복문 | README 반복문에서 04를 뺀다 |
+| 4 | `transform/living_migration.py`의 옛 정제(`clean`, `out_of_scope`, `iceberg_rows`, `read_rows`, `main`과 그것만 쓰는 상수) | 198줄 중 대부분 | 시험 #5, 측정 도구 `measure/change_cost.py`(측정 18 S6b 재현) | 새 경로가 쓰는 `HEADER`, `LAKE`, `load_codes`는 `transform/living_iceberg.py`로 옮기고 파일을 지운다. 가져다 쓰는 곳 4개(`spark_sql_runner`, `duckdb_sql`, `living_boundary_gap`, `living_iceberg`)의 import를 고친다 |
+| 5 | 파일 `tests/test_living_migration.py` | 95줄 | CI | 옛 정제 규칙 시험. 같은 규칙의 새 경로 증명은 측정 33(옛 결과와 차이 0)과 `test_population_exact` |
+| 6 | (선택) 표 `keep.commute_od_before_3_5` | 19MB, 141,411행 | 없음 | 3.6 같음 증명 때 보관한 옛 마트. 증명은 측정 33에 남아 있다 |
+
+지우지 않고 남길 것:
+- `lake/`, Iceberg `lh.living.migration_rows`(원본, 고치지 않음).
+- 과거 측정을 재현하는 도구(`measure/change_cost.py` S6b, `measure/lineage_mutation.py` M5, `measure/table_refs.py`): 지우면 측정 18, 19~21의 재현 방법이 사라진다. 첫 줄에 "8절 은퇴 뒤 재현 불가(옛 표 필요)"를 적는다.
+- `docs/rules.md` 생활이동 절의 옛 실측(기록).
+
+지운 뒤 확인: wh_load 1회, 상품 데이터 파일 sha256이 그대로인지, 리니지 간선 0 다시 확인, CI와 같은 시험 반복문.
+
+### 6.1 지운 결과 (2026-11-14 10시대, 결정 105)
+
+- 지우기 직전 다시 확인(J-3): 옛 표를 읽는 DB 규칙(뷰) `pg_depend` 0, 리니지 회차 36 간선 2,667개 중 옛 표 0.
+- 지운 것:
+  | # | 대상 | 방법 |
+  |---|---|---|
+  | 1 | 표 `stg.living_migration`(8,972MB) + `living_migration_pkey`, `living_migration_target_ym_idx` | `DROP TABLE`(한 트랜잭션). `07_ops.sql`의 인덱스 문장과 그 주석도 뺌 |
+  | 2 | 표 `stg.living_migration_quarantine`(41MB) | 위와 같은 트랜잭션 |
+  | 3 | `warehouse/sql/04_stg_living_migration.sql` | `git rm`. README DDL 반복문에서 04를 뺌 |
+  | 4 | `transform/living_migration.py` | `git rm`. 쓰이던 `HEADER`, `LAKE`, `load_codes`(와 `SHEET_NS`)는 `transform/living_iceberg.py`로 옮김. import 고친 곳: `transform/spark_sql_runner.py`, `measure/duckdb_sql.py`, `measure/living_boundary_gap.py`, `transform/living_iceberg.py` 자신 |
+  | 5 | `tests/test_living_migration.py` | `git rm` |
+- 데이터 덤프는 하지 않았다: 옛 표는 레이크 원본과 커밋 3efb02f의 코드로 다시 만들 수 있다(J-3, 판단 90).
+- 남긴 것: `keep.commute_od_before_3_5`, 레이크, Iceberg. 과거 측정 재현 도구 3개(`measure/change_cost.py`, `measure/lineage_mutation.py`, `measure/table_refs.py`) 첫 줄에 "8절 은퇴 뒤 재현 불가 ... 커밋 3efb02f" 주석. 옛 코드를 가리키던 주석 3곳(`spark_sql/iceberg_tables.sql`, `spark_sql/living/10_checked.sql`, `Dockerfile`)도 고침.
+- 지운 뒤 확인:
+  | 확인 | 결과 |
+  |---|---|
+  | DB 크기 | 20GB → 11GB (`pg_database_size`) |
+  | import와 계획 | `living_iceberg.load_codes()` 코드 1,152개, 실행기 `--explain` rc 0, DuckDB 도구 import 성공, DAG 8개 불러오기 오류 0 |
+  | wh_load 1회 (Airflow, 2026-11-14 10:44 KST) | 성공. `dbt_build` 107초 |
+  | 상품 데이터 파일 sha256 | 8개 모두 v2026.11.13과 같음 |
+  | 리니지 다시 추출 (회차 37, wh_load 뒤 자동) | 성공, 간선 2,667개(회차 35·36과 같음), 옛 표 간선 0 |
+  | CI와 같은 시험 반복문 (`tests/test_*.py`, Airflow 컨테이너) | 7개 모두 통과(`test_living_migration` 지움) |
+
+## 7. 마지막 상태 (2026-11-14, handoff_finish.md 6절 완성 기준 대조)
+
+사용자 지시(2026-11-13 밤 "완료해도 커밋은 일단 하지말고")로 3efb02f 뒤 변경은 모두 커밋하지 않았다.
+
+| 기준 | 상태 | 근거 |
+|---|---|---|
+| 출처 DAG 6개와 wh_load, lineage 각각 1회 이상 성공 | **5/8.** 성공: `seoul_api` 6, `molit_rent` 14, `file_sgis_boundary` 1, `wh_load`, `lineage`. 성공 0: `file_sbiz_store`(2026-10-21 센서 10분 대기 끝 실패, 파일은 손으로 등록), `file_parcel_boundary`·`file_living_migration`(일시정지, 실행 0회) | Airflow `dag_run` 2026-11-14 조회. 세 DAG의 명령은 손으로 같은 인자로 돌려 확인함(guarantees 3절) |
+| 미뤄 둔 실행 4개 | 완료 | 측정 38(2.1~2.4) |
+| 옛 Python 생활이동 경로 없음 | **충족.** 표 2개·파일 3개 지움(결정 105), 리니지 회차 37 간선 0 | 6.1절 |
+| 자원 상한과 유도 시험 | 완료. 실제 부하에서도 동작(측정 38 Spark 완주, 측정 39 DuckDB 오류로 끝남, VM 멈춤 없음) | 측정 37~39, F-17, guarantees 2.7 |
+| 처방 대기 오류 0 | **3개 선택 대기**: F-1(dbt 배열 우회 유지 A~D), F-9(생활이동 SQL 처방 A~E), F-19(DuckDB 재측정 A~C). 그 밖 F-3 그대로 둠(근거 있음), 나머지 처방·확인 | failure_analysis.md |
+| guarantees.md 3절 | 갱신(증명 전 6개와 이유) | guarantees.md 3절 |
+| 작업 트리 깨끗 | **아님**(커밋 보류 지시) | `git status` |
+| README만 보고 처음부터 실행 | 사용자 확인 필요 | CLAUDE.md 단계 10 |
+
+이 밤에 더 한 것(2026-11-14):
+- F-4 처방 B: 경계 GiST 인덱스(결정 102, 측정 40). 조인 137.3초 → 4.55초, 결과 차이 0. wh_load(Airflow, 인덱스 뒤 첫 실행) 성공, dbt_build 103초(전 233.1초), 상품 파일 8개 sha256 그대로.
+- F-9 원인 실행 계획으로 다시 확인(`--explain`, 원인 1~3 그대로).
+- 상품 내보내기 0행 검사(`warehouse/export_product.py`, 설계 원칙 4): 그전에는 검사가 없었다. 유도 시험(0행 표를 넘김) rc=1, 상품 폴더 그대로.
+
+사용자가 정할 것·할 것:
+
+| # | 일 | 어디 |
+|---|---|---|
+| 1 | 옛 경로 지우기 승인(표 2개 9GB, 파일 3개, 선택 1개) | 6절 |
+| 2 | F-9 처방 A~E | failure_analysis.md F-9 |
+| 3 | F-1 우회 유지 A~D | F-1 |
+| 4 | F-19 DuckDB 재측정 A~C | F-19 |
+| 5 | 결정 102(F-4 B, Claude 판단) 확인 | decisions.md |
+| 6 | 공간 회수(fstrim + diskpart, 측정 36 방법). 지금 C: 여유는 생활이동 실행기 시작 조건(C: 여유 250GB) 아래 | measurements.md 측정 36 |
+| 7 | 파일 DAG 3개를 Airflow로 1회씩(새 파일을 `lake/_inbox/{출처}/`에 넣고 실행. 생활이동은 6 다음, 다음 정기 실행 2026-11-21 13:00) | 위 표 |
+| 8 | L1 `.wslconfig`, `SLACK_WEBHOOK_URL` | 4절 |
+| 9 | 커밋·푸시(CI는 `tests/test_*.py`만 돈다, F-18) | |
+| 10 | README로 처음부터 실행해 보고 "완성 확인" | handoff_finish.md 6절 |

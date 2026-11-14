@@ -926,3 +926,76 @@
   - 10 출처별 품질: 생활이동 통과 1,373,116,739, 격리 31,935,758(2.273%), 사유 `V6 31935758`. 옛 격리 표도 사유가 `{V6}` 93,880행뿐이었다(범위 C 안). 새 경로의 격리 사유도 V6 하나라 범위가 넓어진 것만 다르다.
   - 14 거절된 배치: 0행(10개 모두 승인).
 
+## 측정 39. DuckDB로 같은 생활이동 SQL (handoff_finish.md 3.3, 결정 94, F-19, 2026-11-13)
+- 방법: `PYTHONPATH=/tmp/duckdb_pkg /opt/airflow/spark-venv/bin/python -u -m measure.duckdb_sql spark_sql/living --show batch_status --compare --memory-limit 16GiB --threads N [--set ...]` (Airflow 컨테이너, DuckDB 2.0.0, `docker exec -d`로 띄움). 입력은 측정 38과 같은 Iceberg 10달 1,405,791,964행. 결정 101 상한(컨테이너 22GiB, 스왑 금지, cpus 12), 측정 37 예산(`memory_limit` 16GiB), L3 임시 폴더 상한 = 시작 때 `common.temp_budget()`(호스트 C: 여유 − 50GiB). 각 1회, `heavy.lock`, vm_watch 5초. 측정 38(Spark) 바로 뒤라 호스트 C: 여유가 실행마다 줄었다.
+- 결과: **세 번 모두 첫 문장(관문 `batch_status` 계산)에서 오류로 끝났다. 경계 표 비교까지 가지 못했다.**
+  | run | threads | 그 밖 | 임시 상한 | 끝난 시각(시작 뒤) | 끝난 이유 | 최대 RSS | 컨테이너 /tmp 최대 증가 | 시작 전 C: 여유 |
+  |---|---|---|---|---|---|---|---|---|
+  | `duckdb-c6986eed09c6` | 12 | | 229.0GiB | 218.3초 | `OutOfMemoryException: could not allocate block of size 256.0 KiB (16.0 GiB/16.0 GiB used)` | 17.01GiB | 128.8GB | 299.7GB |
+  | `duckdb-663c853449d2` | 12 | `preserve_insertion_order=false` | 156.0GiB | 212.7초 | 위와 같은 메모리 오류(15.9/16.0GiB) | 16.51GiB | 133.4GB | 221.7GB |
+  | `duckdb-fcf944256949` | 4 | | 117.0GiB | 299.8초 | `failed to offload data block ... (116.9 GiB/117.0 GiB used). This limit was set by the 'max_temp_directory_size' setting` | 16.65GiB | 124.5GB | 180.2GB |
+- 세 번 모두 vm_watch: 스왑 사용 0, `oom_kill` 0, cgroup `failcnt` 2(상한에서 페이지 캐시를 회수한 횟수), PostgreSQL·Airflow 계속 응답(같은 시간 wh_load 상태 조회와 psql 성공). **F-16과 달리 VM이 멈추지 않고 DuckDB 한 프로세스가 드러나는 오류로 끝났다(유도가 아닌 실제 부하에서 L2·L3 확인).**
+- Spark와 나란히 (관문까지가 아니라 실행 전체 기준인 Spark와 바로 비교할 수 없어 끝난 지점까지만):
+  | 엔진 | 설정 | 관문 계산 | 메모리 | 임시(셔플·흘림) |
+  |---|---|---|---|---|
+  | Spark 3.5.9 (측정 38) | driver 8g, local[*] cpus 12 | 완료(`cache quarantine` + `cache batch_status` 단계 시간 합 5,320초, 전체 실행 3,201초) | RSS 최대 10.37GiB | 컨테이너 /tmp 최대 +259GB(셔플 쓰기 248GB, 디스크 흘림 55GB) |
+  | DuckDB 2.0.0 (이번) | 16GiB, threads 12 | 213~218초에 메모리 오류 | 버퍼 16GiB 다 씀, RSS 17GiB | +129~133GB에서 멈춤 |
+  | DuckDB 2.0.0 (이번) | 16GiB, threads 4 | 300초에 임시 상한 오류 | RSS 16.65GiB | 상한 117GiB 다 씀 |
+  | DuckDB 2.0.0 (F-16 전, `duckdb-a29f84eb52ab`) | 기본(24.7GiB, threads 16), 임시 상한 없음 | 860초에 관문 완료 뒤 방언 오류 | 버퍼 최대 26.66GB, RSS 27.03GB | 임시 폴더 최대 150.09GB |
+- 해석: 결정 94의 질문("같은 SQL을 한 대에서 DuckDB로 돌리면 Spark보다 나은가")에 대해, **결정 101 예산 안(메모리 16GiB, 임시 공간 = 그때 C: 여유 − 50GiB)에서는 DuckDB가 이 SQL을 끝내지 못했다. 개선은 확인되지 않았다.** 상한이 없던 F-16 전 실행은 관문을 860초에 끝냈으므로(Spark는 같은 일에 실행 전체의 대부분), 자원이 충분하면 빠를 가능성은 있다. 그러나 그 실행은 메모리 27GB, 임시 150GB를 써 같은 VM의 다른 서비스 몫을 넘겼다(F-16).
+- 남은 것: 공간 회수(측정 36 방법) 뒤 임시 상한 ≥ 200GiB, threads 4로 한 번 더 돌리면 완주 여부를 볼 수 있다 [미측정]. SQL을 고치는 F-9 처방(원본 다섯 번 읽기, 묶기 두 번)은 두 엔진 모두의 메모리·임시 공간을 줄인다.
+
+## 측정 40. F-4 처방 B: 행정동 경계 GiST 인덱스 전후 (결정 102, failure_analysis F-4, 2026-11-14 00:00~00:07)
+- 방법: `fact_store` 컴파일 SQL과 같은 조인을 `stg_dbt.store`(554,092곳, 수집일 2026-10-21)와 `stg.sgis_dong`(426개, 최신 수집일)으로 임시 뷰에 두고, 한 psql 세션에서 (1) 인덱스 전 `EXPLAIN (ANALYZE, BUFFERS)` (2) 결과를 임시 표에 (3) `ST_Transform`만 따로 (4) `CREATE INDEX sgis_dong_geom_gist ON stg.sgis_dong USING gist (geom)`, `ANALYZE` (5) 인덱스 뒤 같은 것 (6) 두 결과를 두 방향 `EXCEPT ALL`(점은 `ST_AsEWKB`로). 스크립트 `logs/f4_exp.sql`(레포 밖 기록). 그 뒤 dbt 전체 빌드를 빌드용 스키마에만 1회(`flock heavy.lock`, `drop_build_schemas` → `build --target-path target/f4`, 교체·내보내기 없음), 끝나고 빌드 스키마를 지움. PostgreSQL 17.5 + PostGIS(컨테이너 상한 4GiB), dbt 1.12.6. 각 1회.
+- 결과:
+  | 항목 | 인덱스 전 | 인덱스 뒤 |
+  |---|---|---|
+  | 조인 `EXPLAIN ANALYZE` | 137,337ms | **4,549ms** |
+  | 같은 쿼리로 임시 표 만들기 | 133,356ms | 4,725ms |
+  | 계획 | Nested Loop Left Join(작업자 3), `Join Filter: st_contains(...)`, 버린 행 78,496,367 × 3 | Nested Loop Left Join, 업소마다 `Index Scan using sgis_dong_geom_gist`(`Index Cond: geom ~ point`, 554,092회, 회당 약 0.02ms, Filter로 버린 행 1) |
+  | 결과 행 / 행정동이 붙은 행 | 554,092 / 554,092 | 554,092 / 554,092 |
+  | 두 방향 `EXCEPT ALL` | | **0 / 0** |
+  - 인덱스 만들기 4.5ms(경계 426개), `ANALYZE` 12.6ms.
+  - `ST_Transform`(4326 → 5179) 554,092번만 따로: 205ms. F-4 가설 H2(좌표 변환이 비싸다)는 주원인이 아니다(137초 중 0.2초).
+  - dbt 전체 빌드(인덱스 뒤): 95.4초(dbt `elapsed_time`), PASS 122. `fact_store` 노드 5.41초(측정 27: 140.5초). 같은 날 인덱스 전 wh_load의 `dbt_build` 작업은 233.1초(측정 38 2.3). 이제 가장 긴 노드는 `raw_shape` 92.9초다.
+  - wh_load 1회(Airflow, 2026-11-14 00:12:53~00:15:05, 인덱스 뒤 첫 실제 실행): 성공, `dbt_build` 작업 103초(같은 날 인덱스 전 233.1초, 측정 38 2.3), 상품 데이터 파일 8개 sha256이 v2026.11.13과 모두 같음(v2026.11.14).
+
+
+## 정정: vm_watch 디스크 열의 뜻 (2026-11-14, F-21)
+- 측정 38·39와 그 밖의 vm_watch 기록에서 "컨테이너 `/tmp` 사용"은 `/tmp`가 놓인 파일 시스템, 즉 VM 데이터 디스크 전체 사용량이다(이미지·볼륨·빌드 캐시 포함, 회수 직후 유휴 74.8GB). 측정 38 실행 중 늘어난 몫은 333.6 − 74.6 = 259.0GB(Spark 셔플·spill과 같은 시간의 PostgreSQL 쓰기 포함)이고, 실행 뒤 남은 79.1GB는 찌꺼기가 아니라 바탕 사용량 + 새 경계·격리 표다. 2026-11-14 S0에서 잰 `/tmp` 내용물은 166MB였다.
+
+## 측정 44. Docker 가상 디스크 공간 회수 두 번째(S2)와 디스크 상한 계산(S3) (결정 107, F-20, 2026-11-14)
+- 조건: 측정 36과 같은 PC와 방법(Docker Desktop 4.87.0, WSL2 백엔드, 동적 VHDX). 압축 전 `pg_dump` 4개와 globals를 `C:\Users\dudfo\pg_backup_20261114_pre_compact\`에(95초, `SHA256SUMS`, 4개 모두 `pg_restore --list`로 읽힘). 사용자가 fstrim → Docker 종료, `wsl --shutdown` → 관리자 diskpart `compact vdisk` → 컨테이너 `start`(재생성 없음)를 실행하고, Claude가 전후 값을 읽음. fstrim 출력(잘라낸 바이트)은 받지 않았다 [확인 필요].
+- 결과:
+  | 시각 (KST) | VHDX (B) | 호스트 C: 여유 | VM 안 사용(`df /scratch`) |
+  |---|---|---|---|
+  | 11:14 회수 전 | 563,780,517,888 | 280.21GB | 약 73.0GB |
+  | 11:59 회수 뒤 | **78,076,968,960** (−485,703,548,928) | **979.73GB** (979,502,092,288 B, 12:1x 재측정) | 72,991,334,400 B |
+  - C: 여유 증가 699.5GB 중 VHDX 감소는 485.7GB다. 나머지 약 214GB는 같은 시간에 사용자가 지운 Hugging Face 캐시(회수 전 209GB, 회수 뒤 0.0GB) 등이다. 이 PC의 C: 여유를 프로젝트 몫으로만 읽지 않는다.
+  - 확인: PostgreSQL은 정상 종료 기록(`database system was shut down at 2026-11-14 02:50:40 UTC`) 뒤 복구 없이 올라왔다. `stg.living_commute` 13,782,826행, `mart.dong_profile` 426행으로 전과 같다. Airflow `/health` 200, `/scratch` 소유자 airflow, 컨테이너 메모리 상한 유지.
+- 디스크 상한 현재 값: `%APPDATA%\Docker\settings-store.json`의 `"DiskSizeMiB": 1048576`(1TiB). VM 안 `df`의 전체 크기 1,081,101,176,832 B가 이 값(ext4 머리 공간을 뺀 크기)과 맞아, WSL2 백엔드에서도 이 설정이 VM 디스크 크기를 정한다. 지금 상한(1TiB)이 호스트 C: 여유(979.5GB)보다 크다.
+  - Docker 문서 설정 페이지는 "Disk usage limit"의 대상을 Mac, Linux, Windows Hyper-V로만 적고 WSL2는 적지 않는다. 값을 줄일 때 디스크를 다시 만드는지(이미지·볼륨이 지워지는지)도 문서에 없다 [확인 필요].
+- J-8 상한 계산(handoff_judgments.md):
+  | 항목 | 값 | 근거 |
+  |---|---|---|
+  | VM 안 실제 사용 | 72.99GB | 위 `df` |
+  | 작업 공간 실측 최대 | 328.24GB | 측정 38 C: 641.24 → 313.00GB (J-7과 같은 값) |
+  | PostgreSQL 증가 여유 | 53.69GB (50GiB) | 측정 38 전후 DB 크기를 재지 않음 [확인 필요] |
+  | 합 × 1.1 | **500.41GB (466.0GiB)** | |
+  | 조건: ≤ C: 여유 − `RESERVE_BYTES` | 979.50 − 53.69 = 925.82GB | 통과 |
+  - 이 값으로 걸면 VM 안 여유가 500.41 − 72.99 = 427.4GB가 되고, `temp_budget()` = min(VM 여유, C: 여유) − 50GiB = 373.7GB로 실행기 문턱 394GB(J-7)보다 작다. 즉 J-8대로 걸면 생활이동 실행기가 시작하지 않는다. 어느 값을 걸지는 결정 107에 사용자가 고른다.
+
+## 측정 41. F-9 처방 A, C, D의 실행 계획 연산자 수 (결정 103, handoff_judgments.md J-9~J-12, 2026-11-14 12시대)
+- 방법: 한 번에 하나씩 바꾸고, 바꿀 때마다 `python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status quarantine --explain`(계산 없이 `EXPLAIN FORMATTED`)을 떠서 `python measure/explain_ops.py`로 계획 나무의 연산자 줄을 셌다. 처방 전 값은 같은 도구로 `logs/f9_explain.txt`(2026-11-14 00:10)를 다시 세어 F-9 표와 같은 것을 확인했다. 실행 계획은 결정적이라 1회. Spark 3.5.9, Iceberg `lh.living.migration_rows` 같은 스냅샷. 출력 `logs/f9_explain_A.txt`, `_AC.txt`, `_ACD.txt`(레포 밖 기록).
+- 결과 (`batch_status` / `quarantine` / `commute`):
+  | 상태 | BatchScan(원본 읽기) | SortAggregate | HashAggregate | SortMergeJoin | BroadcastHashJoin | Exchange(셔플) |
+  |---|---|---|---|---|---|---|
+  | 처방 전 | 5 / 3 / 6 | 4 / 2 / 6 | 6 / 0 / 10 | 13 / 7 / 16 | 0 / 0 / 0 | 26 / 14 / 32 |
+  | + A (`20_clean` 충돌을 해시 min/max로) | 5 / 3 / 6 | **0 / 0 / 0** | 10 / 2 / 16 | 13 / 7 / 16 | 0 / 0 / 0 | 26 / 14 / 32 |
+  | + C (관문이 원본을 따로 읽지 않음) | **4** / 3 / **5** | 0 / 0 / 0 | 8 / 2 / 14 | 10 / 7 / 13 | 0 / 0 / 0 | 21 / 14 / 27 |
+  | + D (코드표 `BROADCAST` 힌트) | 4 / 3 / 5 | 0 / 0 / 0 | 8 / 2 / 14 | **2 / 1 / 3** | **8 / 6 / 10** | **6 / 2 / 9** |
+- 해석:
+  - A: 정렬 집계가 모두 사라졌다(F-9 원인 2). `tests/check_living_conflict.py`가 경계 사례 11개("05"/"5", 공백, 부호, "3.50"/"3.5", `*` 섞임 등)에서 옛 글자 비교와 같은 판정을 내고 계획에 SortAggregate가 없는 것을 확인한다(통과).
+  - C: `--explain`은 캐시 없이 뷰를 펼치므로 관문 안에 격리 뷰(원본 3번)가 그대로 보여 5 → 4로만 준다. 실제 실행에서는 실행기가 격리 뷰를 관문보다 먼저 캐시하므로 관문이 새로 읽는 원본은 `clean` 1번이다(처방 전: 관문 자체 2번 + 격리 뷰). 실제 효과는 측정 42의 단계 지표로 본다.
+  - D: 코드표(1,152행, 8,036바이트)를 브로드캐스트해 원본을 출발·도착 코드로 셔플하던 SortMergeJoin이 BroadcastHashJoin이 됐다(F-9 원인 3). 남은 SortMergeJoin은 V8 격리(원본 ⋈ `clean`)와 `commute`의 최신 배치 조인이다.
+  - 계획의 연산자 수다. 시간·셔플 바이트·spill은 전체 실행(측정 42)에서 잰다.

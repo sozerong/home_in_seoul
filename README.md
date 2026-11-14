@@ -15,10 +15,12 @@ flowchart LR
     end
     L[(레이크<br>lake/출처/collected_date=YYYY-MM-DD/<br>받은 그대로)] --> S
     L -->|생활이동만, Spark| I[(레이크하우스 Iceberg<br>lh.living.migration_rows<br>24시간대 전체 행, 대상연월 파티션)]
-    I --> S
-    S[(스테이징 stg<br>정제·검증, 격리 테이블)] --> W
+    I -->|Spark SQL 실행기<br>spark_sql/living| S
+    S[(스테이징 stg / stg_dbt<br>정제·검증, 배치 관문, 격리 테이블)] --> W
     W[(웨어하우스 wh<br>행정동 차원 + 공간 조인<br>EPSG:5179)] --> M
     M[(마트 mart)] --> P[데이터 상품<br>product/vYYYY.MM.DD/<br>Parquet, CSV, manifest]
+    S -.-> O[운영 대시보드<br>Metabase, ops 뷰]
+    P -.-> LN[컬럼 리니지<br>lineage 스키마, MCP]
     AF{{Airflow 3<br>출처별 DAG, 센서, Asset}} -.-> 수집
     AF -.-> S
     AF -.-> W
@@ -30,7 +32,7 @@ flowchart LR
 |---|---|---|
 | 레이크 | 받은 그대로의 원본. 출처별·수집일별 폴더. 수정하지 않는다 | `lake/` (git 제외) |
 | 레이크하우스 | 가장 큰 출처(생활이동, 한 달 1억 4천만 행)만 Iceberg 표로. 과거 스냅샷 조회, 대상연월 파티션 덮어쓰기. 카탈로그는 PostgreSQL `iceberg` DB, 파일은 `lakehouse/` (git 제외) | `transform/living_iceberg.py`, `transform/iceberg.py` (결정 35) |
-| 스테이징 | 출처마다 정제·검증. 어긋난 행은 사유와 함께 격리 | `transform/`, `stg` 스키마, 규칙은 [docs/rules.md](docs/rules.md) |
+| 스테이징 | 출처마다 정제·검증. 어긋난 행은 사유와 함께 격리하고, 배치(처리 단위)마다 관문이 승인·거절을 판정한다(결정 75, 100). 전월세·혼잡도·상가정보는 dbt(`stg_dbt`), 생활이동은 Spark SQL 실행기가 Iceberg 전체에서 경계 표 `stg.living_commute`, 판정 `stg.living_batch_status`, 격리 `stg.living_quarantine`을 한 트랜잭션으로 바꾼다(결정 88~90, 96) | `transform/`, `spark_sql/living/`, `stg`·`stg_dbt` 스키마, 규칙은 [docs/rules.md](docs/rules.md) |
 | 웨어하우스 | 2025 SGIS 행정동 차원을 중심으로, 필지·역·업소를 공간 조인으로 행정동에 붙임 | dbt `warehouse/dbt/models/wh/`, 손 대응표 `warehouse/dbt/seeds/`, [docs/erd.md](docs/erd.md) |
 | 마트 | 동네 요약, 출발 × 직장 출퇴근 표(생활이동 최근 6개 대상연월, 결정 36), 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
@@ -74,10 +76,10 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 ```
-DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06, 운영 07, 리니지 08, 혼잡도 원본 09는 순서대로 실행기로. 혼잡도 정제(stg_dbt)와 wh·mart는 `wh_load`가 dbt로 만든다):
+DB 구조 만들기 (00은 Airflow용 `airflow`, Iceberg 카탈로그용 `iceberg`, 대시보드용 `metabase` DB를 만든다. psql 전용 명령이 있어 컨테이너 안 psql로, 스테이징 01~06, 운영 07, 리니지 08, 원본 09~11, 생활이동 경계·판정·격리 12는 순서대로 실행기로. 혼잡도 정제(stg_dbt)와 wh·mart는 `wh_load`가 dbt로 만든다):
 ```
 docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 < warehouse\sql\00_airflow_db.sql
-for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 04_stg_living_migration 05_stg_sbiz_store 06_stg_boundary 07_ops 08_lineage 09_raw_congestion 10_raw_rent 11_raw_sbiz_store) do python -m warehouse.run_sql warehouse/sql/%f.sql
+for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 05_stg_sbiz_store 06_stg_boundary 07_ops 08_lineage 09_raw_congestion 10_raw_rent 11_raw_sbiz_store 12_stg_living_commute) do python -m warehouse.run_sql warehouse/sql/%f.sql
 ```
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
@@ -106,7 +108,7 @@ DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, �
 | 1 | `sbiz_store` | `소상공인시장진흥공단_상가(상권)정보_*.zip` | `file_sbiz_store` |
 | 2 | `sgis_boundary` | `bnd_dong_*.zip` | `file_sgis_boundary` |
 | 3 | `parcel_boundary` | `LSMD_CONT_LDREG_*.zip` (서울) | `file_parcel_boundary` |
-| 4 | `living_migration` | `생활이동_행정동_*.zip` | `file_living_migration` (한 달에 약 6~7분: zip → Iceberg 약 4분, Iceberg → stg 약 2.5분) |
+| 4 | `living_migration` | `생활이동_행정동_*.zip` | `file_living_migration` (zip → Iceberg 한 달 약 4분, 그 뒤 Spark SQL 실행기가 10달 전체를 다시 계산해 약 53분([측정 38](docs/measurements.md)). 셔플·흘림 파일을 작업 공간 볼륨 /scratch에 최대 약 260GB 쓰고 호스트 C:를 328GB 줄였으므로(측정 38), C: 여유에서 남길 몫 50GiB를 뺀 값이 394GB(그 x 1.2)보다 작으면 실행기가 시작하지 않는다. 호스트 C: 여유로 약 448GB다. 모자라면 공간 회수(측정 36)부터 한다) |
 | 5 | (API) | | `seoul_api`, `molit_rent` 일시정지 풀기. 켜는 순간 가장 최근 예정분이 한 번 돈다 |
 
 과거 기간이 필요하면 백필한다(예: 전월세 4주):
@@ -134,24 +136,26 @@ python -m warehouse.metabase_setup
 
 ### 7. 확인
 ```
-for %t in (test_rent test_station_master test_congestion test_living_migration test_sbiz_store test_boundary) do python -m tests.%t
+for %f in (tests\test_*.py) do python -m tests.%~nf
+docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap
+docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_scratch
 docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 ```
-`demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
+`tests\test_*.py`는 DB 없이 돌아 CI(`.github/workflows/ci.yml`)도 같은 것을 돌린다. DB가 필요한 확인은 `tests\check_*.py`다(CI 밖). `demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
 
 ## 결과 예시
-`demo.sql` 기본값: 직장 역삼1동(강남구), 월세, 보증금 3,000만 원·월세 80만 원 이하, 전용 40㎡ 이하, 출퇴근 50분 이하 **또는** 직선거리 3km 이내, 예산 안 신규 계약(202606~202609) 3건 이상. 2026-10-22 02시 마트 기준, 직선거리 순 앞 8개 (매주 수집되면 숫자가 조금씩 바뀐다):
+`demo.sql` 기본값: 직장 역삼1동(강남구), 월세, 보증금 3,000만 원·월세 80만 원 이하, 전용 40㎡ 이하, 출퇴근 50분 이하 **또는** 직선거리 3km 이내, 예산 안 신규 계약 3건 이상. 2026-11-14 00시 마트 기준(상품 v2026.11.14: 계약월 202606~202610, 생활이동 202602~202607), 직선거리 순 앞 8개 (매주 수집되면 숫자가 조금씩 바뀐다):
 
 | 동네 | 이동 시간(분) | 직선거리(km) | 예산 안 계약 | 월세 중앙값(만 원) | 가까운 역 | 아침 최대 혼잡도(%) |
 |---|---|---|---|---|---|---|
-| 역삼1동 | 148.7 | 0.00 | 42 | 70 | 역삼 400m | 76.5 |
-| 역삼2동 | 100.1 | 1.15 | 21 | 66 | 선릉 706m | 88.3 |
-| 서초2동 | 88.7 | 1.25 | 9 | 72 | 양재(서초구청) 742m | 50.8 |
-| 도곡1동 | 68.3 | 1.38 | 7 | 66 | 매봉 613m | 58.4 |
-| 반포1동 | 79.2 | 1.45 | 21 | 63 | 사평 204m | 93.2 |
-| 논현1동 | 105.3 | 1.45 | 29 | 70 | 논현 444m | 80.7 |
-| 논현2동 | 76.0 | 1.74 | 12 | 65 | 학동 411m | 71.0 |
-| 서초1동 | 63.1 | 1.81 | 21 | 64 | 남부터미널(예술의전당) 386m | 63.2 |
+| 역삼1동 | 156.9 | 0.00 | 56 | 70 | 역삼 400m | 76.5 |
+| 역삼2동 | 99.9 | 1.15 | 30 | 64 | 선릉 706m | 88.3 |
+| 서초2동 | 85.2 | 1.25 | 10 | 72 | 양재(서초구청) 742m | 50.8 |
+| 도곡1동 | 67.0 | 1.38 | 8 | 65.5 | 매봉 613m | 58.4 |
+| 반포1동 | 82.6 | 1.45 | 26 | 63 | 사평 204m | 93.2 |
+| 논현1동 | 103.8 | 1.45 | 43 | 70 | 논현 444m | 80.7 |
+| 논현2동 | 78.9 | 1.74 | 15 | 69 | 학동 411m | 71.0 |
+| 서초1동 | 61.7 | 1.81 | 64 | 65 | 남부터미널(예술의전당) 386m | 63.2 |
 
 이동 시간은 생활이동의 평균 이동 시간이라 가까운 동네일수록 길게 나온다(근거리 직행 제외, 경유 포함). 그래서 직선거리를 함께 쓴다([결정 23](docs/decisions.md), [데이터 계약 6절](docs/data_contract.md)).
 
@@ -160,13 +164,16 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 |---|---|---|
 | PostGIS | 씀 | 필지·역·업소 좌표를 행정동에 붙이고 가장 가까운 역을 찾는다 |
 | Airflow | 씀 | 출처마다 갱신 주기가 다르고(매주, 매월 21일, 분기, 수시), 늦게 오는 파일을 기다리고(센서), 과거 기간을 다시 돌려야 한다(백필) |
-| Spark | 생활이동 Iceberg 적재에만 씀 (학습 목적, 결정 35) | 필요해서 넣은 것은 아니다. 한 달치(6.3GB)에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)), 10달(58GiB, 14억 행)에서도 DuckDB(CSV) 약 33초, Spark(CSV) 약 168초로 한 대에서는 DuckDB가 빨랐다. 같은 Spark가 Iceberg 표를 읽으면 약 29초([측정 10](docs/measurements.md), [결정 37](docs/decisions.md)) |
+| Spark | 생활이동에만 씀: Iceberg 적재와, Iceberg 14억 행에서 관문·격리·경계 표를 만드는 Spark SQL 실행기(결정 35, 88~90, 96) | 처음엔 학습 목적이었다. 한 달치(6.3GB)에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)), 10달(58GiB, 14억 행)에서도 DuckDB(CSV) 약 33초, Spark(CSV) 약 168초로 한 대에서는 DuckDB가 빨랐다. 같은 Spark가 Iceberg 표를 읽으면 약 29초([측정 10](docs/measurements.md), [결정 37](docs/decisions.md)) |
 | Iceberg | 씀 (생활이동) | 레이크에 표 개념이 없어 과거 시점 조회와 스키마 변경 추적이 안 됐다. 원본 58GiB → 11GB, 대상연월 파티션 덮어쓰기, 스냅샷([결정 35](docs/decisions.md), [측정 9](docs/measurements.md)) |
 | Kafka | 안 씀 | 스트리밍 출처가 없다 |
 
 ## 실패했을 때
 - 작업이 실패하면 `logs\alerts.log`에 DAG, 작업, 처리 단위, 원인이 한 줄씩 남는다.
-- 처리 단위 하나(예: `offi_11680_202609`)만 Airflow 화면에서 Clear하면 그 칸만 다시 돈다. 모든 적재는 처리 단위마다 지우고 다시 넣으므로 몇 번을 다시 돌려도 결과가 같다.
+- 처리 단위 하나(예: `offi_11680_202609`)만 Airflow 화면에서 Clear하면 그 칸만 다시 돈다. 모든 적재는 처리 단위마다 지우고 다시 넣으므로 몇 번을 다시 돌려도 결과가 같다. 거절된 배치는 운영 대시보드 "거절된 배치" 카드에 보인다.
+- 무거운 실행(생활이동 실행기, dbt 전체 빌드, 리니지 추출, DuckDB 측정)은 `/tmp/heavy.lock`으로 한 번에 하나만 돈다. 컨테이너 메모리 상한(Airflow 22g, db 4g 등)은 `docker-compose.yml`에 있다. 넘치면 그 작업만 오류로 끝나고 다른 서비스는 계속 돈다([docs/resource_guard.md](docs/resource_guard.md), 결정 101, guarantees 2.7).
+- Docker 가상 디스크(`docker_data.vhdx`)는 컨테이너 안에서 파일을 지워도 줄지 않는다. 호스트 C: 여유가 줄면 `wsl -d docker-desktop -e /sbin/fstrim -v /mnt/docker-desktop-disk` 뒤 Docker를 끄고 `wsl --shutdown`, 관리자 diskpart `compact vdisk`(측정 36).
+- PostgreSQL이 비정상 종료에서 복구되면 누적 통계가 지워져 autovacuum이 대상을 모른다. 복구 뒤 `ANALYZE`를 한 번 돌린다(F-3).
 
 ## 문서
 | 문서 | 내용 |
@@ -179,3 +186,6 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | [docs/measurements.md](docs/measurements.md) | 측정 기록 (신고 지연, Spark 필요성 등) |
 | [docs/data_flow.md](docs/data_flow.md) | 데이터 흐름 한 장: 출처별 실제 원본 샘플, 조인 SQL과 결과, 서빙 파일 모양, 케이스 3개, 층별 스키마 |
 | [docs/data_contract.md](docs/data_contract.md) | 데이터 상품의 계약 (스키마, 갱신, 품질, 출처·이용조건, 한계) |
+| [docs/guarantees.md](docs/guarantees.md) | 멱등·동등·원자성 같은 성질의 증명 방법과 강도, 아직 증명하지 않은 것 |
+| [docs/failure_analysis.md](docs/failure_analysis.md) | 만난 오류의 원인 분석과 처방 (F-1~) |
+| [docs/resource_guard.md](docs/resource_guard.md) | 메모리·디스크 고갈 방지 장치(L0~L5)와 예산 |

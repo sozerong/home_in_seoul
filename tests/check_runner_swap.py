@@ -1,6 +1,6 @@
 """transform/spark_sql_runner.swap 시험 (F-13 처방 A). 실제 표를 건드리지 않고 임시 스키마 swap_test에서 돈다.
 1) 표를 읽는 뷰가 있어도 교체되고, 뷰가 새 행을 본다. 2) 첫 표가 0행이면 실패하고 아무것도 바뀌지 않는다(두 번째 표 포함).
-실행(Airflow 컨테이너): /opt/airflow/spark-venv/bin/python -m tests.test_runner_swap
+DB가 있어야 한다(CI 밖, F-18). 실행(Airflow 컨테이너): /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap
 """
 import psycopg
 
@@ -35,4 +35,4 @@ try:
 finally:
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute("DROP SCHEMA IF EXISTS swap_test CASCADE")
-print("tests.test_runner_swap: 모든 시험 통과")
+print("tests.check_runner_swap: 모든 시험 통과")
