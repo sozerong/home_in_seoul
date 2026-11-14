@@ -35,6 +35,7 @@ flowchart LR
 | 마트 | 동네 요약, 출발 × 직장 출퇴근 표(생활이동 최근 6개 대상연월, 결정 36), 최근 6개월 신규 계약 | dbt `warehouse/dbt/models/mart/`. 검사는 dbt 테스트(`*.yml`, `warehouse/dbt/tests/`) |
 | 데이터 상품 | 버전 폴더에 파일로 내보냄 | `warehouse/export_product.py`, [docs/data_contract.md](docs/data_contract.md) |
 | 운영 대시보드 | 지금 정상인지, 어느 출처와 DAG를 고칠지 색으로 판정. 읽기 전용 계정으로 봄 | Metabase, 카드 `warehouse/sql/ops/`, 생성 `warehouse/metabase_setup.py` (결정 38, 39) |
+| 파이프라인 UI | 파이프라인 구조, 실행·관문·품질, 컬럼 리니지 지도, 변경 시나리오를 DB와 Airflow API에서 읽어 보여 주는 읽기 전용 화면 | `ui/`, [docs/ui.md](docs/ui.md) (결정 106) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
 
 ## 데이터 소스
@@ -65,6 +66,8 @@ SEOUL_OPEN_API_KEY=서울_열린데이터광장_키
 # 운영 대시보드용. 아무 긴 값이나 넣는다
 METABASE_DB_PASSWORD=영문과숫자만
 METABASE_ADMIN_PASSWORD=영문과숫자만
+# 파이프라인 UI의 읽기 전용 DB 계정(ui_reader)
+UI_READER_PASSWORD=영문과숫자만
 ```
 
 ### 2. DB와 Python 환경
@@ -132,6 +135,13 @@ python -m warehouse.metabase_setup
 ```
 출력된 주소(http://localhost:3000/dashboard/번호)를 연다. 로그인은 `dev@example.com`과 `.env`의 `METABASE_ADMIN_PASSWORD`. 내 PC에서만 열린다. 카드를 고치려면 `warehouse/sql/ops/`의 SQL을 고치고 위 스크립트를 다시 실행한다(화면에서 손으로 고친 내용은 덮인다).
 
+파이프라인 UI(읽기 전용, [docs/ui.md](docs/ui.md)):
+```
+docker compose exec -T db psql -U seoul -d seoul -v ON_ERROR_STOP=1 -v ui_pw=<.env의 UI_READER_PASSWORD> < warehouse\sql\13_ui_reader.sql
+docker compose up -d ui
+```
+http://127.0.0.1:8090 을 연다. 내 PC에서만 열린다.
+
 ### 7. 확인
 ```
 for %t in (test_rent test_station_master test_congestion test_living_migration test_sbiz_store test_boundary) do python -m tests.%t
@@ -178,4 +188,5 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | [docs/decisions.md](docs/decisions.md) | 설계 결정 (상황, 선택지, 이유, 검증) |
 | [docs/measurements.md](docs/measurements.md) | 측정 기록 (신고 지연, Spark 필요성 등) |
 | [docs/data_flow.md](docs/data_flow.md) | 데이터 흐름 한 장: 출처별 실제 원본 샘플, 조인 SQL과 결과, 서빙 파일 모양, 케이스 3개, 층별 스키마 |
+| [docs/ui.md](docs/ui.md) | 파이프라인 UI 구조, 화면별 데이터 출처, 실행 방법, UI 결정 |
 | [docs/data_contract.md](docs/data_contract.md) | 데이터 상품의 계약 (스키마, 갱신, 품질, 출처·이용조건, 한계) |

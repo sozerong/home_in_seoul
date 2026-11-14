@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>파이프라인</title>
+<!-- 화면 설계: Claude outputs/ui_reference/{Pipelines,Main,Scenarios}.dc.html(색, 배치, 지도 그리기와 walk). 숫자는 모두 /api에서 읽는다(docs/handoff_ui.md 7절, 하드코딩 0). -->
+<style>
+:root{--bg:#F6F7F9;--card:#FFFFFF;--line:#E1E4EA;--line2:#F0F2F5;--ink:#15181D;--ink2:#3D4350;--mute:#5B6270;--blue:#2F5BEA;--warn:#B04A08;--ok:#2E7D4F;--bad:#C2410C;--mono:'JetBrains Mono',ui-monospace,Consolas,monospace}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans KR',system-ui,sans-serif}
+a{color:var(--blue)}button{font:inherit}
+.wrap{max-width:1440px;margin:0 auto;padding:20px 24px}
+header{background:var(--card);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.eyebrow{font-size:13px;color:var(--mute);font-weight:500}
+h1{margin:4px 0;font-size:24px}h2{margin:0;font-size:24px}h3{margin:0;font-size:16px}
+nav{display:flex;gap:8px}
+nav a,.btn{padding:10px 16px;border-radius:8px;border:1px solid #C9CED8;color:var(--ink);font-size:14px;font-weight:500;text-decoration:none;background:var(--card)}
+nav a.on,.btn.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+main.wrap{display:flex;flex-direction:column;gap:20px;padding-bottom:48px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.card,.box{background:var(--card);border:1px solid var(--line);border-radius:12px}
+.card{padding:18px 20px;display:flex;flex-direction:column;gap:6px}
+.card .k{font-size:13px;color:var(--mute);font-weight:500}.card .v{font-size:32px;font-weight:700}.card .v small{font-size:18px;color:var(--mute);font-weight:500}
+.card .s{font-size:13px;color:var(--ink2);line-height:1.5}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.cols{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.list{flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:8px}
+.group{font-size:12px;font-weight:700;color:var(--mute);padding:8px 4px 0}
+.item{width:100%;box-sizing:border-box;text-align:left;display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:12px;background:var(--card);border:1px solid var(--line);color:var(--ink);text-decoration:none}
+.item.on{border:2px solid var(--ink)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.mono{font-family:var(--mono)}.id{font-family:var(--mono);font-size:13px;font-weight:600}
+.t{font-size:15px;font-weight:700}.sub{font-size:12px;color:var(--mute)}
+.chip{padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;white-space:nowrap;border:1px solid}
+.chip.매주{background:#EEF2FF;color:#1C2B66;border-color:#C6D2FB}
+.chip.파일{background:#FFF2E8;color:#6E2D02;border-color:#F2C7A5}
+.chip.Asset{background:#F4ECFC;color:#45216B;border-color:#D8C3EF}
+.chip.eng{background:#F1F3F6;color:var(--ink2);border-color:#DDE1E8;font-weight:500}
+.chip.alert{background:#FFF2E8;color:#6E2D02;border-color:#F2C7A5}
+.detail{flex:999 1 720px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.box{padding:20px;display:flex;flex-direction:column;gap:12px}
+.box .head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:8px}
+.p{font-size:14px;color:var(--ink2);line-height:1.6;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;color:var(--ink2)}
+.meta b{font-family:var(--mono);font-weight:600;color:var(--ink)}
+.lanes{overflow-x:auto}.lanes>div{display:flex;min-width:980px}
+.lanewrap{display:flex;flex:1 1 0;min-width:0}
+.arrow{width:28px;flex:0 0 28px;display:flex;align-items:center;justify-content:center}
+.lane{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;background:var(--bg);border:1px solid var(--line)}
+.lane.gate{background:#FFF7F1;border-color:#F2C7A5}
+.lane .n{font-size:12px;font-weight:700}.lane .e{font-size:11px;color:var(--mute)}
+.lane .it{background:var(--card);border:1px solid #DDE1E8;border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.lane .it b{font-family:var(--mono);font-size:12px;word-break:break-all}.lane .it span{font-size:11px;color:var(--mute);line-height:1.5}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line2);vertical-align:top;white-space:nowrap}
+td.long{white-space:normal;min-width:280px}
+th{color:var(--mute);font-weight:500;font-family:var(--mono);font-size:12px}
+td.num{text-align:right;font-family:var(--mono)}
+.scroll{overflow-x:auto}
+.split{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.split>.box{flex:3 1 460px;min-width:0}.split>.side{flex:2 1 340px;min-width:0;display:flex;flex-direction:column;gap:16px}
+.tabs{display:flex;gap:4px;background:#F1F3F6;border-radius:8px;padding:3px}
+.tabs button{padding:6px 14px;border-radius:6px;font-size:13px;border:none;cursor:pointer;background:transparent;color:var(--mute)}
+.tabs button.on{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.sec{border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.sec>div:first-child{padding:10px 14px;background:var(--bg);font-size:13px;font-weight:700;border-bottom:1px solid var(--line)}
+.kv{display:grid;grid-template-columns:minmax(110px,30%) minmax(0,1fr);gap:12px;padding:8px 14px;border-bottom:1px solid var(--line2);font-size:13px;font-family:var(--mono)}
+.kv span:first-child{color:var(--mute)}
+pre{margin:0;background:var(--ink);color:#E6E8EC;border-radius:10px;padding:16px;font-family:var(--mono);font-size:12px;line-height:1.6;overflow-x:auto}
+.entry{display:flex;flex-direction:column;gap:3px;padding:10px 0;border-top:1px solid var(--line2);font-size:13px;line-height:1.6}
+.fid{flex:0 0 auto;padding:2px 8px;border-radius:6px;font-family:var(--mono);font-size:12px;font-weight:600;background:#EEF0F3;color:var(--ink2);border:1px solid #DDE1E8}
+.fid.open{background:#FFF2E8;color:#6E2D02;border-color:#F2C7A5}
+.fail{background:#FFF2E8;border:1px solid #F2C7A5;color:#6E2D02;border-radius:8px;padding:8px 12px;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:12px 16px;font-size:13px;color:var(--ink2);align-items:center}
+.legend i{display:inline-block;width:28px;height:0;border-top:3px solid}
+.mapbox{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow-x:auto}
+.map{position:relative;height:640px}
+.map .lh{position:absolute;top:16px;font-size:12px;font-weight:700;color:var(--mute)}
+.map svg{position:absolute;left:0;top:0;overflow:visible}
+.node{position:absolute;width:168px;height:44px;box-sizing:border-box;padding:4px 10px;display:flex;flex-direction:column;justify-content:center;gap:1px;border-radius:8px;text-decoration:none}
+.node b,.node span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.node b{font-family:var(--mono);font-size:12px}.node span{font-size:11px;opacity:.85}
+.pills{display:flex;flex-wrap:wrap;gap:8px}
+.pill{padding:8px 12px;border-radius:8px;font-size:13px;font-family:var(--mono);text-decoration:none;border:1px solid #C9CED8;color:var(--ink);background:#fff}
+.pill.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.tag{display:inline-block;padding:4px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);border:1px solid}
+.note{background:#EEF2FF;border:1px solid #C6D2FB;border-radius:10px;padding:12px 14px;font-size:14px;color:#1C2B66;display:flex;flex-direction:column;gap:4px}
+.sgrid{display:grid;gap:8px}
+.scell{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:10px;box-sizing:border-box;min-height:96px}
+.scell.off{background:var(--bg);border:1px solid var(--line);opacity:.55}
+.badge{align-self:flex-start;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:8px;font-size:14px;line-height:1.6}
+footer table td,footer table th{font-size:12px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div><div class="eyebrow">서울 동네 찾기 파이프라인</div><h1 id="title"></h1><div class="p" id="lead"></div></div>
+  <nav><a href="#/p" data-r="p">파이프라인</a><a href="#/map" data-r="map">데이터 지도</a><a href="#/scenarios" data-r="scenarios">변경 시나리오</a></nav>
+</div></header>
+<main class="wrap" id="app"></main>
+<footer class="wrap"><div class="box"><h3>이 숫자는 어디서 왔나</h3><div class="scroll" id="sources"></div></div></footer>
+<script>
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = v => v == null ? '' : Number(v).toLocaleString('ko-KR');
+const when = s => s ? new Date(s).toLocaleString('ko-KR', {timeZone: 'Asia/Seoul', hour12: false}) : '';
+const isTs = s => typeof s === 'string' && /^\d{4}-\d\d-\d\dT/.test(s);
+const secs = v => v == null ? '' : num(Math.round(v)) + '초';
+
+// ---- 출처 표: 화면 부분마다 마지막으로 읽은 결과. 지금 화면의 부분만 보인다.
+const SRC = {};
+const PARTS = {p: ['개요', '목록', '상세'], map: ['지도', '영향'], scenarios: ['시나리오']};
+let SCREEN = 'p';
+const failed = (srcs, name) => (srcs || []).find(s => s.name === name && !s.ok);
+const unread = (srcs, name) => { const f = failed(srcs, name); return f ? `<div class="fail">읽지 못함: ${esc(f.name)} · ${esc(f.error)}</div>` : ''; };
+async function get(part, url) {
+  try {
+    const r = await fetch(url);
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.status);
+    SRC[part] = d.sources || [];
+    return d;
+  } catch (e) {  // API 서버 자체가 실패하면 그 사실을 출처 표에 남긴다
+    SRC[part] = [{name: url, ok: false, error: String(e.message || e), read_at: new Date().toISOString()}];
+    return null;
+  }
+}
+function renderSources() {
+  const rows = PARTS[SCREEN].flatMap(part => (SRC[part] || []).map(s =>
+    `<tr><td>${esc(part)}</td><td class="mono">${esc(s.name)}</td><td>${when(s.read_at)}</td><td class="${s.ok ? '' : 'bad'}">${s.ok ? '성공' : '실패: ' + esc(s.error)}</td></tr>`));
+  document.getElementById('sources').innerHTML =
+    `<table><tr><th>화면 부분</th><th>출처(쿼리 이름은 ui/queries.sql)</th><th>읽은 시각</th><th>결과</th></tr>${rows.join('')}</table>`;
+}
+
+// ================= 파이프라인 =================
+const card = (k, v, s, cls = '') => `<div class="card"><span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="s">${s}</span></div>`;
+const missingCard = (k, srcs, name) => card(k, '?', unread(srcs, name) || '값 없음');
+function renderCards(o, list) {
+  if (!o) return `<section class="cards">${card('개요', '?', '<span class="bad">/api/overview를 읽지 못함</span>')}</section>`;
+  const s = o.sources, a = o.airflow, f = o.failures, l = o.lineage, b = o.batches, out = [];
+  const pipes = list && list.pipelines;
+  if (a) {
+    const kinds = pipes ? `파이프라인 ${pipes.length}개 (출처 ${pipes.filter(p => p.kind === 'source').length} · 빌드 ${pipes.filter(p => p.kind === 'build').length})` : '';
+    out.push(card('Airflow DAG', num(a.dags), `일시정지 ${num(a.paused)} · ${kinds}`));
+    const lr = a.last_run;
+    out.push(card('마지막 실행', lr ? esc(lr.state) : '없음', lr ? `<span class="mono">${esc(lr.dag_id)}</span> · ${when(lr.run_after)}<br>실행 중·대기 ${num(a.running.length)} · 최근 ${num(a.runs_total)}회 기록` : ''));
+    out.push(card('마지막 실행이 실패한 DAG', num(a.failed.length), a.failed.map(r => `<span class="mono">${esc(r.dag_id)}</span> (${when(r.run_after)})`).join('<br>') || '없음', a.failed.length ? 'bad' : ''));
+  } else out.push(missingCard('Airflow DAG', s, 'airflow:/api/v2/dags'), missingCard('마지막 실행', s, 'airflow:/api/v2/dags/~/dagRuns'));
+  out.push(f ? card('처방 대기 오류', `${num(f.waiting.length)} <small>/ ${num(f.total)}</small>`,
+      `대기 ${esc(f.waiting.join(' · ') || '없음')}<br>진행 중 ${esc(f.in_progress.join(' · ') || '없음')}<br>상태 기록 없음 ${num(f.no_status.length)}개`, f.waiting.length ? 'warn' : '')
+    : missingCard('처방 대기 오류', s, 'docs/failure_analysis.md'));
+  out.push(l ? card('컬럼 리니지 간선', num(l.edges), `회차 ${num(l.run_id)} (${when(l.finished_at)}) · 빌드 ${num(l.build_id)}<br>${l.stale == null ? 'stale 판단 불가' : l.stale ? '<span class="warn">stale: 지도와 지금 표가 어긋날 수 있음</span>' : '최신'}`)
+    : missingCard('컬럼 리니지 간선', s, 'lineage_status'));
+  out.push(b ? card('거절된 배치', num(b.rejected), `관문 출처 ${num(b.by_source.length)}개 · 판정 ${num(b.by_source.reduce((t, x) => t + x.batches, 0))}건`, b.rejected ? 'bad' : '')
+    : missingCard('거절된 배치', s, 'batch_rejected'));
+  return `<section class="cards">${out.join('')}</section>`;
+}
+
+const trigClass = t => t === '매주' ? '매주' : t.includes('파일') ? '파일' : 'Asset';
+function dagFlags(d) {
+  if (d.in_airflow === undefined) return '';  // Airflow를 못 읽음: 출처 표에 사유
+  if (!d.in_airflow) return ' <span class="chip alert">Airflow에 없음</span>';
+  return (d.is_paused ? ' <span class="chip alert">일시정지</span>' : '') + (d.schedule_matches ? '' : ' <span class="chip alert">일정 어긋남</span>');
+}
+function renderList(list, sel) {
+  if (!list) return `<section class="list"><div class="fail">/api/pipelines를 읽지 못함</div></section>`;
+  if (!list.pipelines.length) return `<section class="list">${unread(list.sources, 'ui/pipelines.toml')}</section>`;
+  const item = p => `<a class="item ${p.id === sel ? 'on' : ''}" href="#/p/${esc(p.id)}">
+    <span class="row"><span class="id">${esc(p.id)}</span><span class="chip ${trigClass(p.trigger)}">${esc(p.trigger)}</span></span>
+    <span class="t">${esc(p.title)}</span><span class="sub">${esc(p.chain)}</span>
+    <span class="sub">${p.dags.map(d => `<span class="mono">${esc(d.dag_id)}</span>${dagFlags(d)}`).join('<br>')}</span></a>`;
+  return `<section class="list">${unread(list.sources, 'airflow:/api/v2/dags')}
+    <div class="group">출처</div>${list.pipelines.filter(p => p.kind === 'source').map(item).join('')}
+    <div class="group">빌드</div>${list.pipelines.filter(p => p.kind === 'build').map(item).join('')}</section>`;
+}
+
+const COLOR = {success: 'var(--ok)', failed: 'var(--bad)', running: 'var(--blue)', queued: 'var(--blue)'};
+function runBars(runs) {
+  const rs = runs.recent.slice().reverse();  // 왼쪽이 오래된 것
+  if (!rs.length) return '<span class="sub">실행 기록 없음</span>';
+  const max = Math.max(...rs.map(r => r.duration || 0), 1), H = 60, W = 16;
+  const bars = rs.map((r, i) => {
+    const h = r.duration ? Math.max(3, r.duration / max * H) : 3;
+    return `<rect x="${i * W}" y="${H - h}" width="${W - 4}" height="${h}" rx="2" fill="${COLOR[r.state] || '#9AA3B2'}"><title>${esc(r.state)} · ${when(r.run_after)} · ${secs(r.duration)} · ${esc(r.run_type)}</title></rect>`;
+  }).join('');
+  const count = rs.reduce((c, r) => (c[r.state] = (c[r.state] || 0) + 1, c), {});
+  const last = runs.recent[0];
+  return `<svg width="${rs.length * W}" height="${H}" role="img" aria-label="최근 실행 막대, 높이는 걸린 시간">${bars}</svg>
+    <div class="sub">최근 ${num(rs.length)}회 / 전체 ${num(runs.total)}회 · ${Object.entries(count).map(([k, v]) => `${esc(k)} ${num(v)}`).join(' · ')}${rs.some(r => r.duration) ? ` · 막대 높이 = 걸린 시간(최대 ${secs(max)})` : ''}</div>
+    <div class="p">마지막: <b class="${last.state === 'failed' ? 'bad' : ''}">${esc(last.state)}</b> · ${when(last.run_after)} · ${secs(last.duration)} · ${esc(last.run_type)}</div>`;
+}
+
+const BAD = {ok: false, clean: false, approved: false, is_late: true};  // 이 값이면 빨갛게
+function table(rows, cols) {
+  if (!rows || !rows.length) return '<span class="sub">행 없음</span>';
+  cols = cols || Object.keys(rows[0]);
+  const cell = (k, v) => {
+    if (v == null) return '<td></td>';
+    if (k.endsWith('_bytes')) return `<td class="num">${(v / 2 ** 30).toFixed(2)} GiB</td>`;
+    if (k.endsWith('_ms')) return `<td class="num">${secs(v / 1000)}</td>`;
+    if (typeof v === 'boolean') return `<td class="${BAD[k] === v ? 'bad' : ''}">${v ? '예' : '아니오'}</td>`;
+    if (typeof v === 'number') return `<td class="num">${num(v)}</td>`;
+    return `<td class="${String(v).length > 40 ? 'long' : ''}">${isTs(v) ? when(v) : esc(v)}</td>`;
+  };
+  return `<div class="scroll"><table><tr>${cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr>${rows.map(r => `<tr>${cols.map(c => cell(c, r[c])).join('')}</tr>`).join('')}</table></div>`;
+}
+
+const RECORDS = {build_runs: '빌드 기록 (ops.build_run · ops.build_diff)', engine_runs: '엔진 실행 (ops.engine_run, 실행마다 한 줄)', lineage_runs: '리니지 회차 (lineage.run)'};
+let VIEW = 'form';
+function renderDetail(d) {
+  if (!d) return `<div class="detail"><div class="fail">이 파이프라인을 읽지 못함. 아래 출처 표를 보세요.</div></div>`;
+  if (!d.pipeline) return `<div class="detail">${unread(d.sources, 'ui/pipelines.toml')}</div>`;
+  const p = d.pipeline, s = d.sources, out = [];
+  const live = p.dags.flatMap(g => g.in_airflow ? [[`${g.dag_id} 일정`, g.schedule_text || g.schedule || '없음'], [`${g.dag_id} 다음 실행`, g.next_run ? when(g.next_run) : '없음'], [`${g.dag_id} 상태`, g.is_paused ? '일시정지' : '켜짐']] : []);
+  out.push(`<section class="box"><div class="row" style="justify-content:flex-start"><span class="id">${esc(p.id)}</span><span class="chip ${trigClass(p.trigger)}">${esc(p.trigger)}</span>${p.engines.map(e => `<span class="chip eng">${esc(e)}</span>`).join('')}</div>
+    <h2>${esc(p.title)}</h2><p class="p">${esc(p.summary)}</p>
+    <div class="meta">${[...live, ...p.meta].map(([k, v]) => `<span>${esc(k)} <b>${esc(v)}</b></span>`).join('')}</div>${unread(s, 'airflow:/api/v2/dags')}</section>`);
+  out.push(`<section class="box"><div class="head"><h3>최근 실행</h3><span class="sub">Airflow REST API dagRuns, 최근 30개</span></div>
+    ${Object.entries(d.runs).map(([dag, r]) => `<div><div class="id">${esc(dag)}</div>${r ? runBars(r) : unread(s, `airflow:/api/v2/dags/${dag}/dagRuns`)}</div>`).join('')}
+    ${p.note ? `<p class="p sub">${esc(p.note)}</p>` : ''}</section>`);
+  out.push(`<section class="box"><div class="head"><h3>흐름</h3><span class="sub">${esc(p.flow_note)}</span></div><div class="lanes"><div>${(p.lane || []).map((l, i) =>
+    `<div class="lanewrap">${i ? '<div class="arrow" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#9AA3B2" stroke-width="2" stroke-linecap="round"><path d="M6 3 L11 8 L6 13"/></svg></div>' : ''}
+     <div class="lane ${l.name === '관문' ? 'gate' : ''}"><div><div class="n" style="color:${l.name === '관문' ? 'var(--warn)' : l.name === '정제' ? 'var(--blue)' : 'var(--ink)'}">${esc(l.name)}</div><div class="e">${esc(l.engine)}</div></div>
+     ${l.items.map(([t, x]) => `<div class="it"><b>${esc(t)}</b><span>${esc(x)}</span></div>`).join('')}</div></div>`).join('')}</div></div></section>`);
+  if ('batches' in d) {
+    const b = d.batches;
+    out.push(`<section class="box"><div class="head"><h3>관문 판정</h3><span class="sub">stg_dbt.batch_status, 수집일마다 묶음</span></div>
+      ${b ? `<div class="p">판정 ${num(b.reduce((t, x) => t + x.batches, 0))}건 · 거절 <b class="${b.some(x => x.rejected) ? 'bad' : ''}">${num(b.reduce((t, x) => t + x.rejected, 0))}</b>건</div>`
+        + table(b, ['collected_date', 'source', 'batches', 'rejected', 'first_period', 'last_period', 'reasons', 'checked_at']) : unread(s, 'batch_detail')}</section>`);
+  }
+  if ('quality' in d) {
+    const fr = Object.fromEntries((d.freshness || []).map(r => [r.source, r]));
+    const rows = (d.quality || []).map(q => ({...q, ...(fr[q.source] || {})}));
+    out.push(`<section class="box"><div class="head"><h3>품질과 신선도</h3><span class="sub">ops.quality · ops.freshness</span></div>
+      ${unread(s, 'quality')}${unread(s, 'freshness')}${table(rows, ['source', 'good', 'quarantined', 'quarantined_pct', 'last_collected', 'last_period', 'age_days', 'expected_days', 'is_late', 'rule'])}
+      <span class="sub">is_late는 '늦음' 여부라 '아니오'가 정상입니다.</span></section>`);
+  }
+  if (d.records) out.push(`<section class="box"><div class="head"><h3>${esc(RECORDS[d.records.name] || d.records.name)}</h3><span class="sub">최근 20개</span></div>
+      ${d.records.rows ? table(d.records.rows) : unread(s, d.records.name)}</section>`);
+  // trigger_label: 정의 폼에 trigger 절이 있는 파이프라인(wh_load, lineage)에서 덮어쓰지 않게 이름을 나눈다(캔버스 toJson의 버그)
+  const json = JSON.stringify({pipeline: p.id, trigger_label: p.trigger, engines: p.engines, dags: Object.fromEntries(p.dags.map(g => [g.dag_id, g.declared_schedule])), ...p.form}, null, 2);
+  const form = Object.entries(p.form || {}).map(([name, rows]) => `<div class="sec"><div>${esc(name)}</div>${Object.entries(rows).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('')}</div>`).join('');
+  const fails = d.failures ? (d.failures.length ? d.failures.map(f => {
+      const open = f.status && /대기|진행 중/.test(f.status);
+      return `<div class="entry" style="flex-direction:row;gap:10px"><span class="fid ${open ? 'open' : ''}">${esc(f.id)}</span><span>${f.missing ? '<span class="warn">docs/failure_analysis.md에 없음 (이 작업 트리 판)</span>' : esc(f.title) + `<span class="sub"> · ${f.status ? esc(f.status) : '상태 기록 없음'}</span>`}</span></div>`;
+    }).join('') : '<span class="sub">이 파이프라인에 걸린 오류 기록 없음</span>') : unread(s, 'docs/failure_analysis.md');
+  const sid = (p.scenario.match(/S\d+[ab]?/) || [''])[0];
+  out.push(`<div class="split"><section class="box"><div class="head"><h3>정의</h3><div class="tabs"><button class="${VIEW === 'form' ? 'on' : ''}" data-view="form">폼</button><button class="${VIEW === 'json' ? 'on' : ''}" data-view="json">JSON</button></div></div>
+      ${VIEW === 'form' ? form : `<pre>${esc(json)}</pre><span class="sub">ui/pipelines.toml에 모은 설정입니다. 이 정의로 DAG를 만들지는 않습니다.</span>`}</section>
+    <div class="side">
+      <section class="box"><h3>증명과 측정</h3>${p.proofs.length ? p.proofs.map(([k, v, src]) => `<div class="entry"><b>${esc(k)}</b><span>${esc(v)}</span><span class="sub">근거: ${esc(src)}</span></div>`).join('') : '<span class="sub">이 파이프라인을 대상으로 한 증명 기록이 아직 없다.</span>'}</section>
+      <section class="box"><h3>기록된 오류</h3>${fails}</section>
+      <section class="box"><h3>관련 변경 시나리오</h3><p class="p">${esc(p.scenario)}</p>${sid ? `<a href="#/scenarios/${sid}">변경 시나리오에서 보기</a>` : ''}</section>
+    </div></div>`);
+  return `<div class="detail">${out.join('')}</div>`;
+}
+
+let OVERVIEW, LIST, DETAIL;
+async function pipelineScreen(id) {
+  // 고른 파이프라인이 주소에 있으면 상세도 개요·목록과 동시에 읽는다
+  const detail = sid => sid ? get('상세', `/api/pipelines/${encodeURIComponent(sid)}`) : null;
+  if (!LIST) [OVERVIEW, LIST, DETAIL] = await Promise.all([get('개요', '/api/overview'), get('목록', '/api/pipelines'), detail(id)]);
+  else DETAIL = await detail(id);
+  const sel = id || (LIST && LIST.pipelines[0] && LIST.pipelines[0].id);
+  if (!id) DETAIL = await detail(sel);
+  return renderCards(OVERVIEW, LIST) + `<div class="cols">${renderList(LIST, sel)}${renderDetail(DETAIL)}</div>`;
+}
+
+// ================= 데이터 지도 (Main.dc.html의 층 배치, 곡선, walk를 옮김) =================
+const ML = {W: 168, H: 44, X0: 24, DX: 200, TOP: 52, AREA: 570};
+const RANK = {D: 0, I: 1, R: 2};
+const KIND = [
+  {name: '값', color: '#2F5BEA', dash: 'none', bg: '#EEF2FF', fg: '#1C2B66', bd: '#C6D2FB'},
+  {name: '행', color: '#B04A08', dash: '6 5', bg: '#FFF2E8', fg: '#6E2D02', bd: '#F2C7A5'},
+  {name: '행 집합', color: '#7A3FB8', dash: '2 4', bg: '#F4ECFC', fg: '#45216B', bd: '#D8C3EF'}];
+const short = t => t.split('.').pop();
+function buildGraph(d) {
+  const tableOf = d.nodes.map(n => n[0]), colOf = d.nodes.map(n => n[1]);
+  const byTable = {}, out = d.nodes.map(() => []), inn = d.nodes.map(() => []), pairs = {};
+  tableOf.forEach((t, i) => (byTable[t] = byTable[t] || []).push(i));
+  for (const [a, b, k] of d.edges) {
+    const r = RANK[k];
+    out[a].push([b, r]); inn[b].push([a, r]);
+    const key = tableOf[a] + '>' + tableOf[b];
+    if (tableOf[a] !== tableOf[b] && (!(key in pairs) || pairs[key] > r)) pairs[key] = r;
+  }
+  const meta = {...d.map.tables}, layers = [...d.map.layers];
+  if (d.unmapped.length) {  // toml에 없는 새 표는 맨 오른쪽 열에 드러낸다
+    layers.push('분류 안 됨');
+    for (const t of d.unmapped) meta[t] = [layers.length - 1, 'pipelines.toml [map.tables]에 없음', ''];
+  }
+  const pos = {};
+  layers.forEach((_, c) => {
+    const list = Object.keys(meta).filter(t => meta[t][0] === c), pitch = ML.AREA / list.length;
+    list.forEach((t, j) => pos[t] = {x: ML.X0 + c * ML.DX, y: Math.round(ML.TOP + (j + 0.5) * pitch - ML.H / 2)});
+  });
+  return {tableOf, colOf, byTable, out, inn, pairs, pos, meta, layers, width: ML.X0 * 2 + (layers.length - 1) * ML.DX + ML.W};
+}
+// 너비 우선 탐색. 노드마다 가장 좁은 경로 종류(값 < 행 < 행 집합)를 남기고, 지난 표 쌍(used)을 모은다.
+// 경로 종류는 간선 종류만으로 정한다. 캔버스는 '*'에 닿거나 '*'에서 출발하면 행 집합으로 올렸는데, 그러면
+// lineage.downstream/upstream(리니지 MCP)과 경로 종류가 달랐다. 간선 종류만 따르면 모두 같다(UI 결정 2, 판단 U-17).
+function walk(g, starts, up) {
+  const best = {}, flags = {}, used = {}, queue = [];
+  starts.forEach(s => { best[s] = 0; flags[s] = 1; queue.push([s, 0]); });
+  while (queue.length) {
+    const [u, r] = queue.shift();
+    for (const [v, er] of (up ? g.inn[u] : g.out[u])) {
+      const nr = Math.max(r, er);
+      const a = g.tableOf[u], b = g.tableOf[v];
+      if (a !== b) { const k = up ? b + '>' + a : a + '>' + b; if (!(k in used) || used[k] > nr) used[k] = nr; }
+      const f = flags[v] || 0;
+      if (f & (1 << nr)) continue;
+      flags[v] = f | (1 << nr);
+      if (!(v in best) || best[v] > nr) best[v] = nr;
+      queue.push([v, nr]);
+    }
+  }
+  return {best, used};
+}
+const mapHref = (t, c, dir) => '#/map?' + new URLSearchParams({t, c: c ?? '', d: dir});
+const viewRank = r => r.value_path ? 0 : r.row_path ? 1 : 2;
+let MAPD;
+async function mapScreen(q) {
+  if (!MAPD || !MAPD.g) {
+    const d = await get('지도', '/api/lineage/graph');
+    MAPD = {d, g: d && d.map && d.nodes.length ? buildGraph(d) : null};
+  }
+  const {d, g} = MAPD;
+  if (!g) return `<div class="fail">지도를 그릴 수 없습니다. 아래 출처 표에서 실패한 출처를 보세요.</div>`;
+  const t = q.get('t') || 'raw.congestion', c = q.has('c') ? (q.get('c') || null) : 'raw.DOW_SE', up = q.get('d') === 'up', dir = up ? 'up' : 'down';
+  const imp = await get('영향', '/api/lineage/impact?' + new URLSearchParams({table: t, direction: dir, ...(c ? {column: c} : {})}));
+  const rows = imp && imp.rows;
+
+  // 그림: 화면의 walk
+  const tableNodes = g.byTable[t] || [];
+  const res = walk(g, c === null ? tableNodes : tableNodes.filter(i => g.colOf[i] === c), up);
+  const reached = {};
+  for (const k in res.best) { const tt = g.tableOf[k]; if (tt !== t && (!(tt in reached) || reached[tt] > res.best[k])) reached[tt] = res.best[k]; }
+  const {W, H, X0, DX} = ML, faint = [], active = [];
+  for (const k in g.pairs) {
+    const [a, b] = k.split('>'), p1 = g.pos[a], p2 = g.pos[b];
+    if (!p1 || !p2) continue;
+    const x1 = p1.x + W, y1 = p1.y + H / 2, x2 = p2.x, y2 = p2.y + H / 2, m = (x2 - x1) / 2;
+    const path = x2 > x1 ? `M ${x1} ${y1} C ${x1 + m} ${y1}, ${x2 - m} ${y2}, ${x2} ${y2}` : `M ${x1} ${y1} C ${x1 + 44} ${y1}, ${x1 + 44} ${y2}, ${p2.x + W} ${y2}`;
+    if (k in res.used) { const kd = KIND[res.used[k]]; active.push(`<path d="${path}" fill="none" stroke="${kd.color}" stroke-width="2.5" stroke-dasharray="${kd.dash}" stroke-linecap="round"/>`); }
+    else faint.push(`<path d="${path}" fill="none" stroke="#DDE1E8" stroke-width="1"/>`);
+  }
+  const nodes = Object.keys(g.meta).map(name => {
+    const p = g.pos[name], kd = KIND[reached[name]];
+    const style = name === t ? 'background:#15181D;color:#fff;border:2px solid #15181D' : kd ? `background:${kd.bg};color:${kd.fg};border:2px solid ${kd.color}` : 'background:#fff;color:#8A909C;border:1px solid #E1E4EA';
+    return `<a class="node" href="${mapHref(name, null, dir)}" title="${esc(name)}" style="left:${p.x}px;top:${p.y}px;${style}"><b>${esc(short(name))}</b><span>${esc(g.meta[name][1])}</span></a>`;
+  });
+
+  // 영향 목록: DB 뷰(리니지 MCP와 같은 lineage.downstream / upstream)
+  let impact;
+  if (!rows) impact = unread(imp && imp.sources, `impact_${dir}`) || '<div class="fail">영향 범위를 읽지 못함</div>';
+  else {
+    const target = up ? 0 : g.layers.indexOf('상품'), groups = {}, counts = [0, 0, 0];
+    for (const r of rows) {
+      const m = g.meta[r.tbl];
+      if (!m || m[0] !== target || r.tbl === t) continue;
+      if (r.col === '*') { if (!up) (groups[r.tbl] = groups[r.tbl] || []).push({col: '행 집합(*)', r: 2}); continue; }
+      counts[viewRank(r)] += 1;
+      (groups[r.tbl] = groups[r.tbl] || []).push({col: r.col, r: viewRank(r)});
+    }
+    const total = counts[0] + counts[1] + counts[2], nTables = new Set(rows.map(r => r.tbl).filter(x => x !== t)).size;
+    // 그림(walk)과 목록(DB 뷰)이 같은 답인지 화면이 매번 스스로 대조한다
+    const fromWalk = new Map(Object.keys(res.best).filter(k => g.tableOf[k] !== t).map(k => [g.tableOf[k] + '.' + g.colOf[k], res.best[k]]));
+    const fromView = new Map(rows.filter(r => r.tbl !== t).map(r => [r.tbl + '.' + r.col, viewRank(r)]));
+    const diff = [...new Set([...fromWalk.keys(), ...fromView.keys()])].filter(k => fromWalk.get(k) !== fromView.get(k));
+    const mut = !up && c ? (d.map.mutations || {})[`${t}|${c}`] : null;
+    impact = `<div class="p">${up ? `원본·기준 층의 컬럼 ${num(total)}개에서 옵니다` : `상품 컬럼 ${num(total)}개에 닿습니다`} (값 ${num(counts[0])} · 행 ${num(counts[1])} · 행 집합 ${num(counts[2])}). 지나는 표 ${num(nTables)}개.</div>
+      <div class="${diff.length ? 'fail' : 'sub'}">${diff.length ? `그림(walk)과 DB 뷰가 ${num(diff.length)}개 컬럼에서 다름: ${esc(diff.slice(0, 5).map(k => `${k} walk=${fromWalk.get(k) ?? '없음'} 뷰=${fromView.get(k) ?? '없음'}`).join(', '))}`
+        : `그림(walk)과 DB 뷰(lineage.${up ? 'upstream' : 'downstream'}, 리니지 MCP와 같은 뷰)가 닿는 컬럼 ${num(fromView.size)}개와 경로 종류에서 같음`}</div>
+      ${mut ? `<div class="note"><b>실행으로 확인한 실제 영향 (${esc(mut[0])})</b><span>${esc(mut[1])}</span></div>` : ''}
+      ${Object.keys(groups).length ? Object.keys(groups).sort().map(tb => {
+        const items = groups[tb].sort((a, b) => a.r - b.r || (a.col < b.col ? -1 : 1));
+        return `<div style="border-top:1px solid #EEF0F3;padding-top:12px;display:flex;flex-direction:column;gap:8px"><div><span class="id">${esc(tb)}</span> <span class="sub">컬럼 ${num(items.filter(x => x.col !== '행 집합(*)').length)}개</span></div>
+          <div class="pills">${items.map(x => { const kd = KIND[x.r]; return `<span class="tag" style="background:${kd.bg};color:${kd.fg};border-color:${kd.bd}">${esc(x.col)} · ${kd.name}</span>`; }).join('')}</div></div>`;
+      }).join('') : `<div class="p">${up ? '원본·기준 층까지 거슬러 올라가는 선이 없습니다. 이 표가 원본이거나, 고른 컬럼이 다른 표에서 오지 않습니다.' : '상품까지 닿는 선이 없습니다. 운영용 표이거나 상품이 읽지 않는 컬럼입니다.'}</div>`}`;
+  }
+  const run = d.run, m = g.meta[t] || ['', '', ''];
+  const cols = [...new Set(tableNodes.map(i => g.colOf[i]))].sort();
+  return `<div class="row"><div class="pills"><a class="btn ${up ? '' : 'on'}" href="${mapHref(t, c, 'down')}">하류: 무엇에 영향을 주나</a><a class="btn ${up ? 'on' : ''}" href="${mapHref(t, c, 'up')}">상류: 어디서 왔나</a></div>
+    <div class="legend">${KIND.map(k => `<span><i style="border-top-color:${k.color};border-top-style:${k.dash === 'none' ? 'solid' : k.dash === '6 5' ? 'dashed' : 'dotted'}"></i> ${k.name} 경로</span>`).join('')}</div></div>
+    ${d.unmapped.length ? `<div class="fail">pipelines.toml [map.tables]에 없는 표 ${num(d.unmapped.length)}개를 '분류 안 됨' 열에 두었습니다: ${esc(d.unmapped.join(', '))}</div>` : ''}
+    <section class="mapbox"><div class="map" style="width:${g.width}px">${g.layers.map((n, i) => `<div class="lh" style="left:${X0 + i * DX}px;width:${W}px">${esc(n)}</div>`).join('')}
+      <svg width="${g.width}" height="640" aria-hidden="true">${faint.join('')}${active.join('')}</svg>${nodes.join('')}</div></section>
+    <div class="split"><section class="box" style="flex:1 1 380px"><span class="sub">고른 표</span><div><div class="id" style="font-size:15px;word-break:break-all">${esc(t)}</div><div class="p">${esc(m[1])} · ${esc(m[2])}</div></div>
+      <span class="sub">컬럼을 고르면 그 컬럼만 따라갑니다</span>
+      <div class="pills"><a class="pill ${c === null ? 'on' : ''}" style="font-family:inherit" href="${mapHref(t, null, dir)}">표 전체</a>${cols.map(x => `<a class="pill ${c === x ? 'on' : ''}" href="${mapHref(t, x, dir)}">${esc(x === '*' ? '행 집합 (*)' : x === 'raw' ? 'raw (jsonb 전체)' : x)}</a>`).join('')}</div></section>
+    <section class="box" style="flex:999 1 560px"><span class="sub">${up ? '이 값은 어디서 오나' : '이 값을 바꾸면'}</span><div style="font-size:20px;font-weight:700">${esc(c === null ? t + ' (표 전체)' : t + ' . ' + c)}</div>${impact}
+      <div class="sub" style="border-top:1px solid #EEF0F3;padding-top:12px;line-height:1.6">${run ? `리니지 회차 ${num(run.run_id)} (${when(run.finished_at)}, 커밋 ${esc((run.git_commit || '').slice(0, 7))}${run.stale ? ', <span class="warn">stale: 커밋되지 않은 코드로 만들었거나 마지막 빌드와 SQL이 다름</span>' : ''}) · ` : ''}간선 ${num(run && run.edges)}개(같은 간선 묶어 ${num(d.edges.length)}개) · 표 ${num(Object.keys(g.byTable).length)}개 · 컬럼 노드 ${num(d.nodes.length)}개.
+        값 = 값이 그대로 또는 계산되어 흐름, 행 = 필터·조인·묶기·정렬로 어떤 행이 남는지 좌우, 행 집합 = 행 수 자체가 값이 됨(count 등). 지도는 놓침 0을 목표로 넓게 잡으므로 실제 영향보다 클 수 있다(정밀도는 측정 35).</div></section></div>`;
+}
+
+// ================= 변경 시나리오 (Scenarios.dc.html, 정적: pipelines.toml [scenarios]) =================
+let SCEN;
+async function scenarioScreen(id, mode) {
+  if (!SCEN || !SCEN.scenarios) SCEN = await get('시나리오', '/api/scenarios');
+  const S = SCEN && SCEN.scenarios;
+  if (!S) return unread(SCEN && SCEN.sources, 'ui/pipelines.toml') || '<div class="fail">/api/scenarios를 읽지 못함</div>';
+  const sc = S.item.find(x => x.id === id) || S.item[0], before = mode === 'before';
+  const href = (sid, md) => `#/scenarios/${sid}/${md}`;
+  const groups = [...new Set(S.item.map(x => x.group))].map(gr => `<div style="display:flex;flex-direction:column;gap:8px"><span class="group" style="padding:0">${esc(gr)}</span>
+    <div class="pills">${S.item.filter(x => x.group === gr).map(x => `<a class="btn ${x.id === sc.id ? 'on' : ''}" href="${href(x.id, mode || 'after')}">${esc(x.id)} ${esc(x.title)}</a>`).join('')}</div></div>`).join('');
+  const layers = before ? S.layers_before : S.layers_after, effects = before ? sc.before : sc.after;
+  const tagStyle = t => `background:${t[1]};color:${t[2]};border:1px solid ${t[3]}`;
+  const cells = S.rows.map(([r, rname]) => `<div style="display:flex;align-items:center;padding:12px 4px;min-height:96px;font-size:15px;font-weight:700">${esc(rname)}</div>` + layers.map(([l]) => {
+    const key = r + '.' + l, info = (before && S.cells['b.' + key]) || S.cells[key] || ['', ''], eff = effects[key];
+    if (!eff) return `<div class="scell off"><b class="mono" style="font-size:12px;word-break:break-all">${esc(info[0])}</b><span class="sub">${esc(info[1])}</span></div>`;
+    const t = S.tags[eff[0]];
+    return `<div class="scell" style="background:#fff;border:2px solid ${t[3]}"><b class="mono" style="font-size:12px;word-break:break-all">${esc(info[0])}</b><span class="sub">${esc(info[1])}</span>
+      <span class="badge" style="${tagStyle(t)}">${esc(t[0])}</span><span style="font-size:12px;line-height:1.5">${esc(eff[1])}</span></div>`;
+  }).join('')).join('');
+  return `<div style="display:flex;flex-wrap:wrap;gap:16px">${groups}</div>
+    <section class="box"><div class="row" style="align-items:flex-end"><div><span class="sub">${esc(sc.group)} · ${esc(sc.id)}</span><h2 style="font-size:22px">${esc(sc.title)}</h2><div class="p">${esc(sc.sub)}</div></div>
+      <div class="pills"><a class="btn ${before ? 'on' : ''}" href="${href(sc.id, 'before')}">옮기기 전 (Python 정제)</a><a class="btn ${before ? '' : 'on'}" href="${href(sc.id, 'after')}">지금 (파싱 + SQL)</a></div></div>
+      <div class="legend" style="font-size:12px">${Object.values(S.tags).map(t => `<span><span class="badge" style="${tagStyle(t)}">${esc(t[0])}</span> ${esc(t[4])}</span>`).join('')}</div>
+      <div class="scroll"><div class="sgrid" style="grid-template-columns:96px repeat(${layers.length}, minmax(150px, 1fr));min-width:${96 + layers.length * 158}px">
+        <div></div>${layers.map(l => `<div class="sub" style="font-weight:700">${esc(l[1])}</div>`).join('')}${cells}</div></div>
+      ${sc.map ? `<a href="${mapHref(sc.map[0], sc.map[1], 'down')}">데이터 지도에서 ${esc(sc.map.join('.'))}의 영향 범위 보기 (지금 리니지 회차)</a>` : ''}</section>
+    <div class="split"><section class="box" style="flex:1 1 420px"><h3>${before ? '옮기기 전 구조에서 일어나는 일' : '지금 구조에서 일어나는 일'}</h3><ol>${(before ? sc.steps_before : sc.steps_after).map(x => `<li>${esc(x)}</li>`).join('')}</ol></section>
+      <section class="box" style="flex:999 1 560px"><h3>같은 변경, 전과 지금</h3><div class="scroll"><table style="font-size:14px;min-width:520px"><tr><th>항목</th><th class="${before ? 'warn' : ''}">옮기기 전</th><th style="${before ? '' : 'color:#1C2B66'}">지금</th></tr>
+        ${sc.compare.map(([k, b, a]) => `<tr><th style="font-family:inherit;white-space:normal">${esc(k)}</th><td style="white-space:normal;${before ? 'background:#FFF7F1;font-weight:500' : 'color:var(--mute)'}">${esc(b)}</td><td style="white-space:normal;${before ? 'color:var(--mute)' : 'background:#EEF2FF;font-weight:500'}">${esc(a)}</td></tr>`).join('')}</table></div>
+        <span class="sub">근거: ${esc(sc.evidence)}</span></section></div>
+    <section class="box" style="border:1px dashed #9AA3B2;flex-direction:row;flex-wrap:wrap;gap:16px">
+      <div style="flex:1 1 260px"><span class="group" style="padding:0">에이전트 연결 지점 (구상, 아직 없음)</span><p class="p">에이전트는 꺼내는 SQL만 고치고, 고친 뒤 같음 증명과 리니지 영향을 붙여 사람에게 넘긴다.</p></div>
+      <div style="flex:1 1 260px"><span class="group" style="padding:0">신호</span><p class="p">${esc(sc.signal)}</p></div>
+      <div style="flex:2 1 360px"><span class="group" style="padding:0">할 일</span><p class="p">${esc(sc.action)}</p></div></section>`;
+}
+
+// ================= 라우팅: #/p/<id>, #/map?t=&c=&d=, #/scenarios/<id>/<before|after> =================
+const HEAD = {
+  p: ['파이프라인', '파이프라인마다 무엇을 받아 어디에 담고, 어떤 관문을 지나 무엇을 만드는지 봅니다. 숫자는 DB와 Airflow에서 지금 읽은 값입니다.'],
+  map: ['데이터 지도', '표나 컬럼 하나를 고르면, 그 값이 어디까지 흘러가는지(또는 어디서 왔는지) 선으로 보여 줍니다. 간선은 최신 리니지 회차에서 읽습니다.'],
+  scenarios: ['변경 시나리오', '원천이 바뀔 때는 받는 부분(파싱)만, 요구가 바뀔 때는 꺼내는 부분(SQL)만 고친다. 옮기기 전과 지금을 같은 변경으로 비교합니다(측정 기록, 정적).']};
+async function route() {
+  const [path, qs = ''] = location.hash.slice(1).split('?');
+  const [, r = 'p', a, b] = path.split('/');
+  SCREEN = PARTS[r] ? r : 'p';
+  document.querySelectorAll('nav a').forEach(x => x.classList.toggle('on', x.dataset.r === SCREEN));
+  [document.getElementById('title').textContent, document.getElementById('lead').textContent] = HEAD[SCREEN];
+  document.title = HEAD[SCREEN][0];
+  // 읽는 동안 빈 화면으로 두지 않는다. 실패한 출처는 다 읽은 뒤 아래 표와 각 자리에 나온다.
+  document.getElementById('app').insertAdjacentHTML('afterbegin', `<div class="sub" id="loading">읽는 중: ${esc(PARTS[SCREEN].join(', '))} (DB, Airflow API, 문서)</div>`);
+  const html = SCREEN === 'map' ? await mapScreen(new URLSearchParams(qs)) : SCREEN === 'scenarios' ? await scenarioScreen(a, b) : await pipelineScreen(a);
+  document.getElementById('app').innerHTML = html;
+  renderSources();
+}
+document.addEventListener('click', e => {
+  const v = e.target.dataset && e.target.dataset.view;
+  if (v) { VIEW = v; route(); }
+});
+addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
