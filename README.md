@@ -139,6 +139,7 @@ python -m warehouse.metabase_setup
 for %f in (tests\test_*.py) do python -m tests.%~nf
 docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap
 docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_scratch
+docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_living_conflict
 docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 ```
 `tests\test_*.py`는 DB 없이 돌아 CI(`.github/workflows/ci.yml`)도 같은 것을 돌린다. DB가 필요한 확인은 `tests\check_*.py`다(CI 밖). `demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
@@ -158,6 +159,19 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | 서초1동 | 61.7 | 1.81 | 64 | 65 | 남부터미널(예술의전당) 386m | 63.2 |
 
 이동 시간은 생활이동의 평균 이동 시간이라 가까운 동네일수록 길게 나온다(근거리 직행 제외, 경유 포함). 그래서 직선거리를 함께 쓴다([결정 23](docs/decisions.md), [데이터 계약 6절](docs/data_contract.md)).
+
+## 주장과 증거
+이 파이프라인이 지킨다고 말하는 다섯 가지와, 그것을 실제로 돌려 확인한 방법이다. 강도와 한계는 [docs/guarantees.md](docs/guarantees.md), 수치의 조건은 [docs/measurements.md](docs/measurements.md)에 있다. 명령은 레포 루트에서 실행한다.
+
+| 주장 | 증명 방법 | 수치 | 다시 돌리는 명령 |
+|---|---|---|---|
+| 원천이 바뀌어도 SQL만 고친다 | 같은 가정(쓰는 필드 이름 변경 S1, 요구 추가 S6b)을 정제를 SQL로 옮기기 전과 후에 시험 | S1: 옮기기 전에는 코드·시험·문서 5개 파일을 고쳐야 했고 고친 뒤에는 옛 수집일을 다시 못 돌렸다(측정 13). 옮긴 뒤에는 2줄(매크로 별칭, `coalesce`)로 10-21·11-03 두 수집일 모두 65,169행(측정 23). S6b: 정제 Python 4곳 이상과 DDL(측정 18) → 마트 파일 1개, 기존 상품 4표 차이 0(측정 34) | `docker compose exec -w /opt/project airflow python -m measure.s1_sql`<br>`docker compose exec -w /opt/project airflow python -m measure.s6b_sql` |
+| 옮겨도 결과가 같다 | 옛 결과를 보관하고 새 경로로 다시 만든 뒤 두 방향 `EXCEPT ALL`(+ 열 타입, 상품 sha256) | 혼잡도 325,845행, 전월세 450,957행 + 격리 11행, 생활이동 Python → Spark SQL 차이 0(측정 23, 24, 33). 생활이동 실행기 처방(F-9) 전후 경계 13,782,826행·격리 31,935,758행·판정 10행 차이 0(측정 42) | `docker compose exec -T db psql -U seoul -d seoul < measure\living_keep_compare.sql` (보관본이 있을 때, guarantees 2.2) |
+| 다시 돌려도 같다 | 같은 입력을 다시 처리하고 결과 비교 | 같은 생활이동 zip을 Airflow DAG로 다시 넣어 세 표 차이 0, 상품 파일 8개 sha256 같음(측정 42). Iceberg 같은 파티션 두 번 덮어쓰기 차이 0(측정 9). 전월세 처리 단위 백필 6회(측정 6) | 레이크의 zip을 `lake\_inbox\living_migration\`에 다시 넣고 Airflow에서 `file_living_migration` 실행 뒤 위 비교. 처리 단위 하나는 Airflow 화면에서 Clear |
+| 전부 되거나 전부 안 된다 | 교체 도중 실패를 일부러 넣는다 | 스키마 교체: 둘째 스키마 실패 → 첫째도 취소(결정 32), 실제 wh_load에서도 1회(결정 61). 실행기 교체: 첫 표를 0행으로 두면 둘째 표도 이전 그대로(F-13). 실제 실행에서 세 표 교체가 한 트랜잭션 448.6초(측정 42) | `docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap` |
+| 실패는 드러난다 | 나쁜 입력과 자원 고갈을 일부러 만든다 | 쓰는 키 이름 변경 → 관문 거절(측정 23, 30). 한 배치의 9.95%를 깨뜨림 → 그 배치만 거절, 다른 출처는 갱신(측정 25). 메모리 초과 → 그 컨테이너만 종료 코드 137, PostgreSQL 탐침 모두 성공(F-17). 임시 공간 상한 → DuckDB가 오류로 끝나고 VM은 멈추지 않음(측정 39) | `.venv\Scripts\python -u -m measure.induce_guard mem`<br>`.venv\Scripts\python -u -m measure.induce_guard disk` |
+
+한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42).
 
 ## 도구를 고른 이유
 | 도구 | 쓰나 | 이유 |

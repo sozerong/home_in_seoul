@@ -203,3 +203,4 @@
 - 따른 기준: handoff_finish.md 0절(지우는 일만 확인을 먼저 받음), J-13(전후 비교용 보관).
 - 근거: 세 표 합 9.8GB(`stg.living_commute` 2,672MB, `stg.living_quarantine` 6,684MB, `stg.living_batch_status` 32kB)로 호스트 C: 여유(약 928GB)의 1%다. 복사는 지우는 일이 아니고 되돌리기 쉽다.
 - 결과: `keep.living_commute_pre_f9`(13,782,826행), `keep.living_batch_status_pre_f9`(10행), `keep.living_quarantine_pre_f9`(31,935,758행), 한 트랜잭션 25.6초. 지우는 것은 측정 42 뒤 사용자 승인으로.
+- 덧붙임 (2026-11-14 14:18): 측정 42 비교(세 표 두 방향 0) 뒤 사용자 승인("keep 지워도 돼")으로 `keep.living_*_pre_f9` 세 표를 한 트랜잭션에서 지웠다. `keep.commute_od_before_3_5`(이전 작업 보관본)는 이번 승인 대상이 아니라 남겼다.

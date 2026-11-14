@@ -37,6 +37,8 @@ DIALECT = [  # (정규식, 바꿀 글자, 이유). 실행하며 실제로 난 �
     (r"([\w.]+) RLIKE ('[^']*')", r"regexp_matches(\1, \2)",
      "DuckDB 파서에 RLIKE가 없다(Parser Error). regexp_matches는 Spark RLIKE처럼 부분 일치이고 패턴이 ^...$라 같은 뜻"),
     (r"\bcollect_list\(", "list(", "DuckDB에 collect_list가 없다(Catalog Error). 같은 일을 하는 집계는 list다. 순서는 둘 다 보장하지 않는다"),
+    (r"\bxxhash64\(", "hash(", "DuckDB에 xxhash64가 없다(Catalog Error). hash도 여러 인자를 받는 64비트 해시다. 값은 달라도 "
+     "20_clean은 한 키 안에서 해시가 모두 같은지만 보므로 판정은 같다(F-9 처방 A)"),
 ]
 
 

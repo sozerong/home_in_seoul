@@ -151,37 +151,36 @@
   | 리니지 다시 추출 (회차 37, wh_load 뒤 자동) | 성공, 간선 2,667개(회차 35·36과 같음), 옛 표 간선 0 |
   | CI와 같은 시험 반복문 (`tests/test_*.py`, Airflow 컨테이너) | 7개 모두 통과(`test_living_migration` 지움) |
 
-## 7. 마지막 상태 (2026-11-14, handoff_finish.md 6절 완성 기준 대조)
+## 7. 마지막 상태 (2026-11-14 15시, handoff_finish.md 6절 완성 기준 대조, handoff_decisions.md 진행 뒤)
 
-사용자 지시(2026-11-13 밤 "완료해도 커밋은 일단 하지말고")로 3efb02f 뒤 변경은 모두 커밋하지 않았다.
+커밋은 사용자가 직접 한다(2026-11-14 지시). 3efb02f 뒤 변경은 아직 커밋되지 않았다.
 
 | 기준 | 상태 | 근거 |
 |---|---|---|
-| 출처 DAG 6개와 wh_load, lineage 각각 1회 이상 성공 | **5/8.** 성공: `seoul_api` 6, `molit_rent` 14, `file_sgis_boundary` 1, `wh_load`, `lineage`. 성공 0: `file_sbiz_store`(2026-10-21 센서 10분 대기 끝 실패, 파일은 손으로 등록), `file_parcel_boundary`·`file_living_migration`(일시정지, 실행 0회) | Airflow `dag_run` 2026-11-14 조회. 세 DAG의 명령은 손으로 같은 인자로 돌려 확인함(guarantees 3절) |
-| 미뤄 둔 실행 4개 | 완료 | 측정 38(2.1~2.4) |
-| 옛 Python 생활이동 경로 없음 | **충족.** 표 2개·파일 3개 지움(결정 105), 리니지 회차 37 간선 0 | 6.1절 |
-| 자원 상한과 유도 시험 | 완료. 실제 부하에서도 동작(측정 38 Spark 완주, 측정 39 DuckDB 오류로 끝남, VM 멈춤 없음) | 측정 37~39, F-17, guarantees 2.7 |
-| 처방 대기 오류 0 | **3개 선택 대기**: F-1(dbt 배열 우회 유지 A~D), F-9(생활이동 SQL 처방 A~E), F-19(DuckDB 재측정 A~C). 그 밖 F-3 그대로 둠(근거 있음), 나머지 처방·확인 | failure_analysis.md |
-| guarantees.md 3절 | 갱신(증명 전 6개와 이유) | guarantees.md 3절 |
-| 작업 트리 깨끗 | **아님**(커밋 보류 지시) | `git status` |
-| README만 보고 처음부터 실행 | 사용자 확인 필요 | CLAUDE.md 단계 10 |
-
-이 밤에 더 한 것(2026-11-14):
-- F-4 처방 B: 경계 GiST 인덱스(결정 102, 측정 40). 조인 137.3초 → 4.55초, 결과 차이 0. wh_load(Airflow, 인덱스 뒤 첫 실행) 성공, dbt_build 103초(전 233.1초), 상품 파일 8개 sha256 그대로.
-- F-9 원인 실행 계획으로 다시 확인(`--explain`, 원인 1~3 그대로).
-- 상품 내보내기 0행 검사(`warehouse/export_product.py`, 설계 원칙 4): 그전에는 검사가 없었다. 유도 시험(0행 표를 넘김) rc=1, 상품 폴더 그대로.
+| 출처 DAG 6개와 wh_load, lineage 각각 1회 이상 성공 | **충족 8/8.** `seoul_api` 6, `molit_rent` 14, `file_sgis_boundary` 1(2026-10-21), `file_living_migration` 1(측정 42), `file_sbiz_store` 1, `file_parcel_boundary` 1(2026-11-14), `wh_load` 46, `lineage` 15 | Airflow `dag_run`, guarantees 3절 |
+| 미뤄 둔 실행 4개 | 완료 | 측정 38 |
+| 옛 Python 생활이동 경로 없음 | 충족. 표 2개·파일 3개 지움(결정 105), 리니지 간선 0 | 6.1절 |
+| 자원 상한과 유도 시험 | 완료. 실제 부하에서도 동작(측정 38, 39, 42, 43: Spark 완주, DuckDB는 오류로 끝남, VM 멈춤 없음). 작업 공간 전용 볼륨과 비우기(결정 107) | 측정 37~43, guarantees 2.4·2.7 |
+| 처방 대기 오류 0 | **충족.** F-1 우회 유지(결정 104), F-9 처방함(시간 개선은 확인 안 됨, 남김 이유 기록), F-19 결론(예산 안 완주 못 함), F-20 처방함(S3만 메뉴 없어 사전 점검으로 대신). F-3 그대로 둠(근거 있음). F-4는 처방·확인됨, 결정 102 사용자 확인만 남음 | failure_analysis.md |
+| guarantees.md 3절 | 갱신(증명 전 3개: 원본 쓰기 막기 미결정, 슬랙 도착, 실데이터 거절 배치) | guarantees.md 3절 |
+| 작업 트리 깨끗 | **아님**: 커밋은 사용자가 한다 | `git status` |
+| README만 보고 처음부터 실행 | 사용자 확인 필요. README에 "주장과 증거" 표 추가 | CLAUDE.md 단계 10 |
 
 사용자가 정할 것·할 것:
 
 | # | 일 | 어디 |
 |---|---|---|
-| 1 | 옛 경로 지우기 승인(표 2개 9GB, 파일 3개, 선택 1개) | 6절 |
-| 2 | F-9 처방 A~E | failure_analysis.md F-9 |
-| 3 | F-1 우회 유지 A~D | F-1 |
-| 4 | F-19 DuckDB 재측정 A~C | F-19 |
-| 5 | 결정 102(F-4 B, Claude 판단) 확인 | decisions.md |
-| 6 | 공간 회수(fstrim + diskpart, 측정 36 방법). 지금 C: 여유는 생활이동 실행기 시작 조건(C: 여유 250GB) 아래 | measurements.md 측정 36 |
-| 7 | 파일 DAG 3개를 Airflow로 1회씩(새 파일을 `lake/_inbox/{출처}/`에 넣고 실행. 생활이동은 6 다음, 다음 정기 실행 2026-11-21 13:00) | 위 표 |
-| 8 | L1 `.wslconfig`, `SLACK_WEBHOOK_URL` | 4절 |
-| 9 | 커밋·푸시(CI는 `tests/test_*.py`만 돈다, F-18) | |
-| 10 | README로 처음부터 실행해 보고 "완성 확인" | handoff_finish.md 6절 |
+| 1 | 커밋(명령은 요청하면 받음). 푸시는 그 뒤 | |
+| 2 | 공간 회수 한 번 더(측정 42·43 뒤 VHDX 354GB 이상, 측정 36 방법) | README "실패했을 때" |
+| 3 | `file_living_migration` 수동 실행 하나(`manual__2026-11-14T04:00:47`)가 빈 inbox를 센서로 기다림: Airflow 화면에서 실패로 표시하거나 둔다 | Airflow |
+| 4 | 결정 102(F-4 B, Claude 판단) 확인 | decisions.md |
+| 5 | L1 `.wslconfig`, `SLACK_WEBHOOK_URL` | resource_guard.md 4절 |
+| 6 | README로 처음부터 실행해 보고 "완성 확인" | handoff_finish.md 6절 |
+| 7 | 레이크 맨 위(`lake/`)에 출처 폴더 밖 파일 8개(생활이동 zip 7개, 자치구 생활인구 xls)가 있다. 레이크 규칙(`lake/{출처}/collected_date=…`) 밖이라 정리 여부를 정한다 | |
+
+2026-11-14 밤에 더 한 것(이전 판 7절에서 옮김):
+- F-4 처방 B: 경계 GiST 인덱스(결정 102, 측정 40). 조인 137.3초 → 4.55초, 결과 차이 0. wh_load(Airflow, 인덱스 뒤 첫 실행) 성공, dbt_build 103초(전 233.1초), 상품 파일 8개 sha256 그대로.
+- F-9 원인 실행 계획으로 다시 확인(`--explain`, 원인 1~3 그대로).
+- 상품 내보내기 0행 검사(`warehouse/export_product.py`, 설계 원칙 4): 그전에는 검사가 없었다. 유도 시험(0행 표를 넘김) rc=1, 상품 폴더 그대로.
+
+2026-11-14 낮에 한 것(handoff_decisions.md): `.gitattributes`(LF), 옛 생활이동 경로 삭제(결정 105), 작업 공간 전용 볼륨·비우기·사전 점검·알림 줄(결정 107, S4~S7), 공간 회수(측정 44), F-9 처방 A·C·D(측정 41, 42), DuckDB 재측정(측정 43), 파일 DAG 3개 Airflow 실행, README 증거 표.
