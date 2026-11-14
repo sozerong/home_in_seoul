@@ -21,7 +21,7 @@ from psycopg.rows import dict_row
 from ui import failures
 
 DB_URL = os.environ["UI_DATABASE_URL"]
-AIRFLOW = os.environ.get("AIRFLOW_API", "http://airflow:8080")
+AIRFLOW = os.environ.get("AIRFLOW_API", "http://airflow-apiserver:8080")
 QUERIES = dict(re.findall(r"^-- name: (\w+)\n(.*?)(?=^-- name: |\Z)",
                           (Path(__file__).parent / "queries.sql").read_text(encoding="utf-8"), re.M | re.S))
 PIPELINES = Path(__file__).parent / "pipelines.toml"

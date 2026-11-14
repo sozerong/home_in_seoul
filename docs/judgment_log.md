@@ -204,3 +204,17 @@
 - 근거: 세 표 합 9.8GB(`stg.living_commute` 2,672MB, `stg.living_quarantine` 6,684MB, `stg.living_batch_status` 32kB)로 호스트 C: 여유(약 928GB)의 1%다. 복사는 지우는 일이 아니고 되돌리기 쉽다.
 - 결과: `keep.living_commute_pre_f9`(13,782,826행), `keep.living_batch_status_pre_f9`(10행), `keep.living_quarantine_pre_f9`(31,935,758행), 한 트랜잭션 25.6초. 지우는 것은 측정 42 뒤 사용자 승인으로.
 - 덧붙임 (2026-11-14 14:18): 측정 42 비교(세 표 두 방향 0) 뒤 사용자 승인("keep 지워도 돼")으로 `keep.living_*_pre_f9` 세 표를 한 트랜잭션에서 지웠다. `keep.commute_od_before_3_5`(이전 작업 보관본)는 이번 승인 대상이 아니라 남겼다.
+
+## 결정 109·110 지시서(handoff_airflow_split.md) 진행 중 판단 (2026-11-14, 규칙 3 한 줄)
+- 판단 103. Dockerfile은 파일 하나에 target 네 개(job-base, spark-job, duckdb-job, airflow)로 나눴다. requirements.txt와 jar 버전을 한곳에서 본다.
+- 판단 104. 잠금 래퍼를 `python -m common lock -- <명령>`으로 `common.py`의 `__main__`에 뒀다. bash 태스크와 계산 컨테이너가 같은 잠금을 부를 문이 필요하고, 새 파일을 만들 만큼 길지 않다.
+- 판단 105. standalone이 만든 fernet 키를 `.env`로 옮겼다(암호화된 Variable `rent_recent_months`를 그대로 읽기 위해). JWT 비밀은 새로 만들었다.
+- 판단 106. 생활이동 DAG의 계산을 `register`(Airflow, inbox 등록) → `compute`(DockerOperator, 적재 + 실행기) → `cleanup_inbox`(Airflow, `outlets`)로 나눴다. 코드가 읽기 전용인 계산 컨테이너가 inbox를 지우지 않게 하고, Asset 갱신은 Airflow 태스크가 낸다.
+- 판단 107. DockerOperator의 `cpus`가 `cpu_shares`만 넣어서 `JobOperator`가 `nano_cpus`와 `memswap_limit`을 더하게 했다(지시서 4절 "cpus 12, 스왑 금지"를 실제로 걸기 위해).
+- 판단 108. 실패한 계산 컨테이너는 남기고 성공한 것만 지운다(`auto_remove="never"` + 직접 삭제, F-28).
+- 판단 109. 계산 컨테이너 메모리는 호스트에서 `measure/job_stats.py`(docker stats 5초)로 잰다. 계산 컨테이너는 코드가 읽기 전용이라 vm_watch를 그 안에서 돌릴 수 없다.
+- 판단 110. 기록 문서 성격의 설계 문서(`docs/design_change_resilience.md`, `change_resilience_plan.md`)의 spark-venv 언급은 당시 설계 서술이라 그대로 뒀다(지시서 1절 2번 "기록 문서의 과거 서술은 그대로").
+- 판단 111. F-29는 프록시 설정을 덮어쓰는 대신 계산 명령에 1분 heartbeat를 넣었다(한 줄, 태스크 로그에서 살아 있음이 보임). 한계는 dags/jobs.py 주석.
+- 판단 112. dag-processor 상한은 H1 값(309MiB → 512m)이 아니라 H4 재측정까지 본 최대(442MiB → 768m)로 정했다. 같은 규칙(x 1.5, 256MiB 올림)에 더 긴 관측을 넣은 것이다.
+- 판단 113. D2 넘침 규칙("그 배치 안에서만 B")을 `--batch-checked`(전체 B)로 처음부터 다시 돌리는 대신, `clean`이 메모리 오류를 내면 그 배치만 B로 다시 계산하게 했다. 누적 표에 넣기 전이라 중복이 없다. `--batch-checked`는 "처음부터 모두 B"로 남겼다.
+- 판단 114. 재부팅 뒤 metabase·pgadmin은 `up --dry-run`이 Recreate로 보여(바뀐 것 없음) `docker start`로만 켰다. 다시 만들어도 데이터는 볼륨·DB에 있지만, 필요 없는 재생성을 피했다(F-25와 같은 현상).

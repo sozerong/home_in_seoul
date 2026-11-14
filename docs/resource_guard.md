@@ -20,10 +20,10 @@ F-16 본문 정정이 필요한 곳: (1) "19:35 WSL VM은 새로 떴다"는 틀�
 |---|---|---|---|
 | L0 관측 | 무거운 실행 동안 VM 메모리·스왑·디스크를 레포 밖이 아닌 바인드 마운트 파일에 5초마다 기록(`/proc/meminfo`, `vmstat`, `df`). 측정 도구는 `python -u` | 다음에 같은 일이 나면 원인을 판정할 수 있다(이번에는 커널 로그와 출력이 VM과 함께 사라짐) | **2026-11-13 완료**: `measure/vm_watch.py` → `logs/vm_watch/*.tsv`. 손으로 띄운다(DAG 연결은 아직) |
 | L1 VM | `%USERPROFILE%\.wslconfig`에 `memory`, `swap`, `processors` 명시 | VM이 호스트를 얼마나 쓰는지 정해 둔다. 스왑을 작게(제안값 2GB) 두어 끝없는 스왑 대신 빨리 OOM으로 드러나게 | 파일 없음(기본값: 메모리 호스트의 절반 30.9GiB, 스왑 8GB). 제안만 함(사용자 파일) |
-| L2 컨테이너 | `docker-compose.yml` 서비스마다 `mem_limit`와 `memswap_limit`(같은 값 = 컨테이너 스왑 금지), `cpus` | 넘친 컨테이너만 cgroup OOM으로 죽고 `OOMKilled=true`로 드러난다. PostgreSQL과 다른 서비스는 산다 | **2026-11-13 완료**: db 4g, airflow 22g(cpus 12), metabase 2g, pgadmin 512m, 스왑 금지(측정 37). `docker update`로 적용 |
+| L2 컨테이너 | `docker-compose.yml` 서비스마다 `mem_limit`와 `memswap_limit`(같은 값 = 컨테이너 스왑 금지), `cpus` | 넘친 컨테이너만 cgroup OOM으로 죽고 `OOMKilled=true`로 드러난다. PostgreSQL과 다른 서비스는 산다 | **2026-11-13 완료**: db 4g, airflow 22g(cpus 12), metabase 2g, pgadmin 512m, 스왑 금지(측정 37). `docker update`로 적용. **2026-11-14 바꿈(결정 109)**: Airflow를 구성 요소로 나누고 계산을 작업 컨테이너로 뺐다. apiserver 512m, scheduler 1792m(cpus 12), dag-processor 768m, triggerer 768m, socket-proxy 128m, 계산 spark-job·duckdb-job 18g(cpus 12, 작업마다 컨테이너, pool heavy로 한 번에 하나). 모두 스왑 금지(측정 47). 계산 컨테이너가 넘쳐도 스케줄러는 산다(측정 48) |
 | L3 엔진 | DuckDB `memory_limit`, `threads`, `max_temp_directory_size`, `temp_directory` 명시. Spark `spark.driver.memory`, `SPARK_LOCAL_DIRS`(전용 폴더), 실행 뒤 `blockmgr-*` 정리 | 엔진이 자기 몫 안에서 spill하거나 오류로 끝난다 | **2026-11-13 완료**: `common.temp_budget()`(호스트 C: 여유 − 50GiB). DuckDB 도구는 이것을 `max_temp_directory_size`로, Spark 실행기는 200GB 미만이면 시작하지 않음, Spark `spark.local.dir` = `/tmp/spark-local`. 상한 뒤 DuckDB 기본 `memory_limit`는 cgroup의 80% |
 | L4 디스크 | 가상 디스크 공간 회수(diskpart compact), 무거운 실행 전 여유 확인(사전 점검), 가능하면 Docker 가상 디스크 상한을 호스트 여유보다 작게 [확인 필요: 지금 크기보다 작게 줄일 수 있는지] | VM이 실제 용량을 알게 해 디스크 부족이 VM 안의 `ENOSPC` 오류로 드러나게 | **2026-11-13 회수**: fstrim 뒤 압축으로 VHDX 718.3GB → 80.2GB, C: 여유 649GB(측정 36). 가상 디스크 상한 축소는 [확인 필요] |
-| L5 실행 규율 | 무거운 작업(Spark 실행기, DuckDB, dbt 전체 빌드)은 Airflow pool `heavy`(크기 1)로 한 번에 하나. 손으로 돌리는 측정도 같은 잠금 파일을 잡는다 | 무거운 작업 둘이 겹쳐 함께 넘치는 일 | **2026-11-13 완료**: pool `heavy`(1), `/tmp/heavy.lock`(실행기, DuckDB 도구, dbt 빌드, 리니지 추출) |
+| L5 실행 규율 | 무거운 작업(Spark 실행기, DuckDB, dbt 전체 빌드)은 Airflow pool `heavy`(크기 1)로 한 번에 하나. 손으로 돌리는 측정도 같은 잠금을 잡는다 | 무거운 작업 둘이 겹쳐 함께 넘치는 일 | **2026-11-13 완료**: pool `heavy`(1), `/tmp/heavy.lock`(실행기, DuckDB 도구, dbt 빌드, 리니지 추출). **2026-11-14 바꿈(결정 109 H3)**: 계산이 여러 컨테이너로 나뉘어 컨테이너 안 파일 잠금이 서로 보이지 않으므로 PostgreSQL advisory lock(키 20261114, `common.heavy_lock()`, 셸 `python -m common lock -- <명령>`). 잡은 프로세스가 죽으면 연결이 끊겨 풀린다. 시험 `tests/check_heavy_lock.py` |
 | L6 복구 | 런북: 증거 먼저(컨테이너 재생성 금지, `start`만), `taskkill /f /im wslservice.exe`로 WSL 강제 종료, Docker "Reset/Purge" 금지, 복구 뒤 `pg_dump` | 복구하다 증거나 데이터를 잃는 일 | 이번에 손으로 한 것을 문서로 |
 
 ## 2. 메모리 예산 정하는 법 (값은 0단계 측정 뒤)
@@ -82,7 +82,7 @@ F-16 본문 정정이 필요한 곳: (1) "19:35 WSL VM은 새로 떴다"는 틀�
 |---|---|---|---|---|
 | 영구 데이터 | PostgreSQL, Iceberg, 레이크, 상품 파일 | 계속 | 사람(결정) | 백업되는 전용 저장소 |
 | 작업 공간(임시) | Spark 셔플·spill, DuckDB tmp | 작업 한 번 | 엔진, 작업이 끝날 때 | 작업과 함께 생기고 사라지는 곳 |
-| 캐시 | jar, `/tmp/duckdb_pkg`, 컨테이너 이미지 | 지워도 다시 만들 수 있음 | 정리 정책(오래된 것부터) | 상한이 있는 곳 |
+| 캐시 | jar, DuckDB 확장(계산 이미지 안), 컨테이너 이미지 | 지워도 다시 만들 수 있음 | 정리 정책(오래된 것부터) | 상한이 있는 곳 |
 | 로그·기록 | Spark 이벤트 로그, vm_watch, Airflow 로그 | 정해진 기간 | 순환 정책 | 상한이 있는 곳, 또는 밖으로 보냄 |
 
 넷은 저장 위치, 크기 상한, 지우는 주체가 달라야 한다. 이번에 디스크가 찬 것은 작업 공간(1회 최대 333.6GB, 측정 38)을 영구 데이터처럼 같은 디스크에, 상한 없이 두고, 지우는 일을 엔진의 정상 종료에만 맡겼기 때문이다.
@@ -91,9 +91,9 @@ F-16 본문 정정이 필요한 곳: (1) "19:35 WSL VM은 새로 떴다"는 틀�
 
 | 위치 | 수명 | 이 프로젝트에서 |
 |---|---|---|
-| 컨테이너 쓰기 층 | 컨테이너를 지울 때까지(재시작해도 남음) | Spark 셔플(`/tmp/spark-local`), DuckDB tmp. **작업 공간이 여기 있는 것이 문제.** ("`/tmp`에 남은 약 79GB"는 틀린 해석이었다. 2026-11-14 S0 실측 `/tmp` 166MB, 쓰기 층 전체 340MB, F-21) |
-| 이름 붙은 볼륨 | 컨테이너를 지워도 남음 | `pgdata` |
-| 바인드 마운트(호스트 폴더) | 호스트 파일 그대로 | 레포, 레이크 |
+| 컨테이너 쓰기 층 | 컨테이너를 지울 때까지(재시작해도 남음) | (2026-11-14 결정 107 S4 뒤로는 작업 공간이 `scratch` 볼륨이라 여기 없음. 계산 컨테이너는 성공하면 지워지고 실패하면 남는다. 아래는 S4 전 상태) Spark 셔플(`/tmp/spark-local`), DuckDB tmp. **작업 공간이 여기 있는 것이 문제.** ("`/tmp`에 남은 약 79GB"는 틀린 해석이었다. 2026-11-14 S0 실측 `/tmp` 166MB, 쓰기 층 전체 340MB, F-21) |
+| 이름 붙은 볼륨 | 컨테이너를 지워도 남음 | `pgdata`, `scratch`(작업 공간, 2026-11-14부터 Airflow 구성 요소와 계산 컨테이너 spark-job·duckdb-job이 함께 붙임. heavy 잠금을 잡은 쪽만 쓰고 비움), `airflow_logs`(작업 로그, 스케줄러가 쓰고 apiserver가 읽음) |
+| 바인드 마운트(호스트 폴더) | 호스트 파일 그대로 | 레포, 레이크. 계산 컨테이너는 레포를 읽기 전용으로, `lakehouse/`만 쓰기로 붙인다(결정 109). DockerOperator는 호스트 경로(`HOST_PROJECT_DIR`)로 붙인다 |
 | tmpfs(메모리) | 컨테이너가 멈출 때까지 | 안 씀. 메모리를 써서 수백 GB 셔플에 맞지 않음 |
 
 ### 7.3 이번에 찬 이유 (F-20)

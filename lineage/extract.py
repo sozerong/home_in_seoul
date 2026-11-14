@@ -7,7 +7,7 @@
 4 저장:     lineage.run 한 행 + lineage.edge_raw (python은 psycopg COPY, spark는 JDBC)
 입력은 warehouse/dbt/target(manifest, compiled). dbt build/compile이 먼저 돌아 있어야 한다(compile은 DB가 필요하다).
 사용법: python -m lineage.extract --engine python|spark --trigger manual|asset
-        spark는 Airflow 컨테이너 spark-venv에서: /opt/airflow/spark-venv/bin/python -m lineage.extract --engine spark ...
+        spark는 계산 컨테이너에서(결정 109): docker compose run --rm spark-job python -m common lock -- python -m lineage.extract --engine spark ...
 """
 import argparse
 import itertools

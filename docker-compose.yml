@@ -1,3 +1,36 @@
+x-airflow-common: &airflow-common
+  image: seoul-airflow:3.3.2
+  environment:
+    # 컨테이너 기본 시간대는 UTC라 한국 새벽 4시가 전날 19시가 된다. 수집일 폴더가 하루 어긋나지 않게 한다.
+    TZ: Asia/Seoul
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://seoul:${POSTGRES_PASSWORD}@db:5432/airflow
+    # 구성 요소가 나뉘면 같은 값을 모두 알아야 한다. standalone은 airflow.cfg에 스스로 만들어 썼다.
+    # fernet 키: Variable 암호화(standalone이 만든 키를 옮김). JWT 비밀: API 서버와 태스크 실행(Execution API) 사이 토큰.
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:?set AIRFLOW_FERNET_KEY in .env}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET:?set AIRFLOW_JWT_SECRET in .env}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # 내 PC에서만 여는 개발용이라 로그인 없이 모두 관리자로 둔다. 포트를 127.0.0.1에만 열어 다른 기기에서는 접속할 수 없다.
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    # 컨테이너 안에서 스크립트가 쓸 데이터 DB 주소. .env의 localhost:5433을 덮어쓴다 (common.read_env).
+    DATABASE_URL: postgresql://seoul:${POSTGRES_PASSWORD}@db:5432/seoul
+    # dbt 접속 설정(warehouse/dbt/profiles.yml)이 읽는다. dbt-postgres는 주소 한 줄(URL)을 받지 않는다.
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    # DockerOperator가 계산 컨테이너에 붙일 레포의 호스트 경로(결정 109 H4). 바인드 마운트는 호스트 Docker 기준이라 /opt/project가 아니다.
+    HOST_PROJECT_DIR: ${HOST_PROJECT_DIR:?set HOST_PROJECT_DIR in .env}
+  volumes:
+    - ./:/opt/project
+    - ./dags:/opt/airflow/dags
+    # 작업 로그: 태스크는 스케줄러 컨테이너에서 쓰고 화면(API 서버)이 읽으므로 같은 볼륨을 붙인다.
+    - airflow_logs:/opt/airflow/logs
+    # 작업 공간(Spark 셔플·spill, DuckDB 임시) 전용 볼륨(결정 107 S4, resource_guard.md 7.6). 컨테이너 쓰기 층과 분리해
+    # 크기를 따로 보고 비운다. 같은 Docker 가상 디스크 안이라 호스트 C:로 돌려받으려면 여전히 회수(S2)가 필요하다.
+    - scratch:/scratch
+  depends_on:
+    db:
+      condition: service_healthy
+
 services:
   db:
     image: postgis/postgis:17-3.5
@@ -21,39 +54,81 @@ services:
       timeout: 5s
       retries: 5
 
-  airflow:
-    build: .
-    image: seoul-airflow:3.3.2
-    # 자원 상한(결정 101, resource_guard.md L2, 측정 37): VM 30.91GiB - 이웃 상한(db 4 + metabase 2 + pgadmin 0.5) - OS·페이지 캐시 2 = 22.41 -> 22g. 그중 평시 몫(최대 1.34 x 1.2 = 1.61)을 뺀 약 20.4GiB가 무거운 작업 몫. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
-    # 넘치면 이 컨테이너만 cgroup OOM으로 죽고 OOMKilled=true로 드러난다. 다시 만들지 않고 바꿀 때: docker update --memory 22g --memory-swap 22g --cpus 12 <컨테이너>
-    mem_limit: 22g
-    memswap_limit: 22g
-    cpus: 12
-    # 개발용 한 컨테이너 실행: 스케줄러, 화면(API 서버), DAG 처리기, 트리거러를 함께 띄운다 (결정 19).
-    command: standalone
-    depends_on:
-      db:
-        condition: service_healthy
-    environment:
-      # 컨테이너 기본 시간대는 UTC라 한국 새벽 4시가 전날 19시가 된다. 수집일 폴더가 하루 어긋나지 않게 한다.
-      TZ: Asia/Seoul
-      AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://seoul:${POSTGRES_PASSWORD}@db:5432/airflow
-      # 내 PC에서만 여는 개발용이라 로그인 없이 모두 관리자로 둔다. 포트를 127.0.0.1에만 열어 다른 기기에서는 접속할 수 없다.
-      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
-      # 컨테이너 안에서 스크립트가 쓸 데이터 DB 주소. .env의 localhost:5433을 덮어쓴다 (common.read_env).
-      DATABASE_URL: postgresql://seoul:${POSTGRES_PASSWORD}@db:5432/seoul
-      # dbt 접속 설정(warehouse/dbt/profiles.yml)이 읽는다. dbt-postgres는 주소 한 줄(URL)을 받지 않는다.
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    volumes:
-      - ./:/opt/project
-      - ./dags:/opt/airflow/dags
-      # 작업 공간(Spark 셔플·spill, DuckDB 임시) 전용 볼륨(결정 107 S4, resource_guard.md 7.6). 컨테이너 쓰기 층과 분리해
-      # 크기를 따로 보고 비운다. 같은 Docker 가상 디스크 안이라 호스트 C:로 돌려받으려면 여전히 회수(S2)가 필요하다.
-      - scratch:/scratch
+  # Airflow는 구성 요소마다 컨테이너 하나(결정 109). 이름과 맞춰야 하는 설정(EXECUTION_API_SERVER_URL, JWT 비밀, fernet 키)은
+  # Airflow 3.3.2 공식 docker-compose.yaml에서 확인했다. LocalExecutor라 태스크는 airflow-scheduler 컨테이너 안에서 돈다.
+  airflow-init:
+    <<: *airflow-common
+    build:  # 이미지는 여기서 한 번만 빌드하고 나머지 구성 요소와 ui가 같은 태그를 쓴다
+      context: .
+      target: airflow
+    # 메타데이터 DB 스키마를 맞추고 끝난다. 나머지 구성 요소는 이것이 성공해야 뜬다.
+    command: db migrate
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    # 자원 상한(결정 109 H1, 지시서 4절): H1 최대 RSS 273MiB x 1.5 = 410, 256MiB 단위 올림, 최소 512MiB → 512m. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    mem_limit: 512m
+    memswap_limit: 512m
+    command: api-server
     ports:
       - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on: &airflow-after-init
+      db:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    # 자원 상한(결정 109 H5, 지시서 4절): 계산이 작업 컨테이너로 나간 뒤 wh_load 중 최대 cgroup RSS 1,040MiB(LocalExecutor 워커가 돌리는
+    # dbt·내보내기 포함, 측정 46) x 1.5 = 1,560, 256MiB 단위 올림 → 1792m. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    mem_limit: 1792m
+    memswap_limit: 1792m
+    cpus: 12
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on: *airflow-after-init
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    # 자원 상한(결정 109 H1·H5, 지시서 4절): H1 최대 RSS 309MiB였으나 H4 재측정 중 442MiB까지 올라 큰 값으로: x 1.5 = 662, 256MiB 단위 올림 → 768m.
+    # 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    mem_limit: 768m
+    memswap_limit: 768m
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on: *airflow-after-init
+
+  airflow-triggerer:
+    <<: *airflow-common
+    # 자원 상한(결정 109 H1, 지시서 4절): H1 최대 RSS 368MiB x 1.5 = 552, 256MiB 단위 올림 → 768m. 같은 값의 memswap_limit = 컨테이너 스왑 금지.
+    mem_limit: 768m
+    memswap_limit: 768m
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    depends_on: *airflow-after-init
 
   pgadmin:
     # 브라우저에서 DB에 SQL을 던져 보는 개발용 화면. 파이프라인은 쓰지 않는다.
@@ -117,13 +192,64 @@ services:
       TZ: Asia/Seoul
       PYTHONDONTWRITEBYTECODE: "1"  # 레포를 읽기 전용으로 붙였다
       UI_DATABASE_URL: postgresql://ui_reader:${UI_READER_PASSWORD}@db:5432/seoul
-      AIRFLOW_API: http://airflow:8080
+      AIRFLOW_API: http://airflow-apiserver:8080
     volumes:
       - ./:/opt/project:ro
     ports:
       - "127.0.0.1:8090:8000"
 
+  socket-proxy:
+    # DockerOperator가 계산 컨테이너를 만들 때만 거치는 Docker API 문(결정 109 H4). 호스트 소켓은 여기에만 읽기 전용으로 붙인다.
+    # Airflow 구성 요소는 tcp://socket-proxy:2375로만 접근하고, 포트는 호스트에 열지 않는다. 여는 API 묶음은 H4에서 시험하며 찾은 최소한이다.
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    mem_limit: 128m
+    memswap_limit: 128m
+    environment:
+      CONTAINERS: 1  # 만들기, 시작, 붙어서 로그 읽기, 끝나기 기다리기, 검사, 지우기, 멈추기(on_kill)
+      POST: 1        # GET 말고 다른 메서드(POST, DELETE)를 연다. 위 묶음 안에서만 통한다
+      IMAGES: 1      # 실행 전 이미지가 있는지 본다(GET /images/json). 없으면 403으로 태스크가 실패했다(H4 첫 시도)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+  # 계산 컨테이너(결정 109). 평소에는 뜨지 않고(profiles), Airflow는 DockerOperator로, 사람은 docker compose run --rm 으로 쓴다.
+  # 상한(결정 109 H5, 지시서 4절): VM 30.91GiB - db 4 - metabase 2 - pgadmin 0.5 - OS 2 - ui 0.5 = 21.91
+  #   - Airflow 구성 요소(apiserver 0.5 + scheduler 1.75 + dag-processor 0.75 + triggerer 0.75 = 3.75) - socket-proxy 0.125 = 18.04 → 1GiB 내림 18g.
+  #   스왑 금지. pool heavy가 한 번에 하나라 둘이 같은 값을 쓴다. dags/jobs.py MEM과 함께 바꾼다.
+  # 코드는 읽기 전용. 쓰는 곳은 lakehouse/(Iceberg 파일)와 scratch뿐이다. Iceberg 메타데이터에 절대 경로가 들어 있어 /opt/project/lakehouse 그대로 붙인다.
+  spark-job: &job
+    build:
+      context: .
+      target: spark-job
+    image: seoul-spark-job:3.5.9
+    profiles: [jobs]
+    mem_limit: 18g
+    memswap_limit: 18g
+    cpus: 12
+    environment: &job-env
+      TZ: Asia/Seoul
+      PYTHONDONTWRITEBYTECODE: "1"
+      DATABASE_URL: postgresql://seoul:${POSTGRES_PASSWORD}@db:5432/seoul
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./:/opt/project:ro
+      - ./lakehouse:/opt/project/lakehouse
+      - scratch:/scratch
+
+  duckdb-job:
+    <<: *job
+    build:
+      context: .
+      target: duckdb-job
+    image: seoul-duckdb-job:2.0.0
+    volumes:
+      - ./:/opt/project:ro
+      - ./lakehouse:/opt/project/lakehouse
+      - scratch:/scratch
+      # 측정 기록(--memwatch CSV, D1)만 쓴다. 레포의 logs/는 git 제외
+      - ./logs:/opt/project/logs
+
 volumes:
   pgdata:
   pgadmin_data:
   scratch:
+  airflow_logs:

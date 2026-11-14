@@ -1067,3 +1067,100 @@
 - G 결과(다시 판정): G1 실패 노드 0·거절 배치 0, G2 다른 표 차이 0, G3 상품 변화 0(기준선은 거절 배치 대신 직전 승인 배치를 써서 상품이 같음), G4 계약 같음, G5 이미 승인된 4개 수집일의 정제 행 차이 0.
 - 운영 변화: 실행 전후 raw, stg, stg_dbt, wh, mart 표 50개 행 수 같음, `product/v2026.11.14/manifest.json` sha256 같음, 끝난 뒤 `*_sbx_*` 스키마 0, 에이전트 worktree 0(UI worktree 그대로).
 - 한계: 에이전트를 성공적으로 돌린 것은 1회다. 정답표의 사례당 3회 일치율은 아직 없다. 판정 코드는 이번 실행 중에 고쳤으므로(③) 3회 판정은 고치기 전 코드의 결과다. M1, M7, S3, 대조군은 아직 돌리지 않았다.
+
+## 측정 46. Airflow 지휘·계산 분리 뒤 생활이동 전체 실행 1회 (결정 109 H4, DockerOperator, 2026-11-14 22:10~23:22)
+- 방법: `file_living_migration` 수동 실행 `manual__2026-11-14T12:08:43`의 compute 시도 3. 입력은 측정 42와 같은 202607 zip(J-14 재투입), Iceberg 10달 1,405,791,964행. 계산은 `seoul-spark-job:3.5.9` 컨테이너(DockerOperator, socket-proxy 경유), 상한 20GiB·스왑 금지·NanoCpus 12. 엔진 설정은 측정 42와 같음(Spark 3.5.9 local[*], driver 8g, 셔플 파티션 200, AQE 켬). Airflow는 구성 요소별 컨테이너(슬림 이미지). 1회. 관측: 호스트 `measure.job_stats h4r_living`(docker stats 5초), Airflow 구성 요소 안 `measure.vm_watch h4r_*`.
+  - 이 실행 전에 두 번 끊겼다: 재부팅(21:27, 실행기 13분째), socket-proxy 유휴 10분 제한(F-29, 시도 2가 실행기 무출력 20분째). 두 번 다 교체 트랜잭션 전이라 `stg` 표는 그대로였다. 처음 11분 동안 heartbeat 시험 컨테이너(`sleep 660`)가 함께 돌았다(CPU 거의 0).
+- 결과: **성공.** compute 4,002초(Iceberg 적재 286.1초 + 실행기 3,705.4초 + 컨테이너 시작·종료), 이어 `cleanup_inbox`, wh_load(asset, `dbt_build` 240초, 전체 4분 39초), lineage(spark-job 컨테이너, 13초) 성공. 관문 10개 승인, `test_population_exact`·`warn_month_approved` 통과.
+- 측정 42(같은 SQL·입력, Airflow 컨테이너 안에서 실행)와 나란히 (`ops.engine_run` 합):
+  | run | 실행 위치 | Iceberg 적재 | 실행기 | 단계 | 셔플 쓰기 | 메모리 흘림 | 디스크 흘림 | JVM 힙 최대 | 단계 시간 합 |
+  |---|---|---|---|---|---|---|---|---|---|
+  | 측정 42 `local-1794629126637` | Airflow 컨테이너(22GiB) | 272.8초 | 3,328.9초 | 23 | 122.7GB | 1,583.7GB | 178.4GB | 8.33GB | 3,251초 |
+  | 이번 `local-1794662103545` | spark-job 컨테이너(20GiB) | 286.1초 (+4.9%) | **3,705.4초 (+11.3%)** | 23 | 122.6GB | 1,589.1GB | 178.9GB | 8.02GB | 3,695초 (+13.7%) |
+  | 교체 | `stg.living_commute` 쓰기 | `stg.living_quarantine` 쓰기 | 교체 트랜잭션(커밋 포함) |
+  |---|---|---|---|
+  | 측정 42 | 337초 | 116초 | 448.6초 |
+  | 이번 | 193.1초 | 230.3초 | 427.6초 |
+  - **실행 시간 개선 없음, 오히려 11.3% 느림(1회).** 셔플·흘림 양은 0.4% 안에서 같아 계산한 일은 같다. 느려진 원인은 나눠 재지 않았다 [확인 필요]. 후보: (1) 재부팅 직후라 호스트와 VM의 파일 캐시가 비어 있었다(Iceberg 파일은 Windows 바인드 마운트로 읽는다). (2) 실행 위치(컨테이너 cgroup·NanoCpus 하드 상한). 측정 42도 `cpus: 12`(같은 NanoCpus 상한)라 (2)의 차이는 작을 것으로 본다. 같은 조건으로 2회 이상 돌려야 가를 수 있다.
+  - 단계 안 작업별 경과(측정 42의 `cache quarantine` 등)는 없다. Spark 이벤트 로그가 계산 컨테이너의 `/tmp/spark-events`에 쓰이고 성공한 컨테이너는 지워지므로 함께 사라졌다. `ops.engine_run`(단계 지표)은 DB에 남는다. 이벤트 로그를 남기려면 계산 컨테이너에 기록 폴더를 붙여야 한다(남은 것).
+- 같음: 행 수 `stg.living_commute` 13,782,826, `stg.living_quarantine` 31,935,758, 관문 표 10행으로 측정 42와 같다. wh_load 뒤 상품 데이터 파일 8개 sha256이 H0 기준선(`logs/h0/product_v2026.11.14.sha256`)과 모두 같다(`logs/h0/after_h4_product.sha256`, manifest.json 제외).
+- 메모리: 계산 컨테이너(docker stats) 최대 10.25GiB / 상한 20GiB(23:02:28), CPU 최대 1,244%(12코어 상한 근처). OOM 없음. Airflow 구성 요소 cgroup RSS 최대(같은 시간): scheduler 845MB, apiserver 290MB, dag-processor 463MB, triggerer 406MB, `oom_kill` 0, VM 스왑 사용 최대 1,036kB, VM 사용 가능 메모리 최소 17.13GiB.
+- 디스크: VM 데이터 디스크 사용 92.03GB → 최대 225.95GB(+133.9GB, 측정 42 +143.9GB) → 끝난 뒤 92.15GB(`/scratch` 비워짐). 호스트 C: 여유 582G → 567G, VHDX 407.85GB → 407.85GB(그대로). 앞선 실행들이 늘려 둔 VHDX 안의 빈 블록을 다시 썼다(F-20 가설과 맞는 관측).
+- 남은 것: 같은 조건 반복(속도 차이 원인), 계산 컨테이너 이벤트 로그 보존.
+
+## 측정 47. Airflow 구성 요소 메모리와 상한, 이미지 크기·빌드 시간 (결정 109 H1·H5, 2026-11-14)
+- 방법: 각 구성 요소 컨테이너 안 `measure.vm_watch`(5초, cgroup v1 `memory.stat` rss)로 최대값. 구간: H1(20:35~20:50, standalone 해체 직후 seoul_api·wh_load·lineage), H1b(상한 뒤 20:44~20:50), H4 대기(20:51~21:11), H4 재측정(21:42~23:22, 생활이동·wh_load·lineage), H5(23:24~, 1792m 상한에서 wh_load 2회·seoul_api·lineage 2회). 이미지는 `docker compose build --no-cache airflow-init` 시간과 `docker image inspect` 크기.
+- 구성 요소별 cgroup RSS 최대와 상한(지시서 4절: 최대 x 1.5, 256MiB 단위 올림, 최소 512MiB):
+  | 구성 요소 | H1 | H4 재측정 | 쓴 값 | 상한 |
+  |---|---|---|---|---|
+  | apiserver | 287MB | 290MB | 277MiB → 415 | 512m |
+  | dag-processor | 324MB | 463MB | 442MiB → 662 | 768m (H1 값으로 정했던 512m에서 올림) |
+  | triggerer | 386MB | 406MB(H4 대기 411MB) | 392MiB → 588 | 768m |
+  | scheduler | 1,315MB(wh_load, 무거운 이미지) | 845MB(생활이동 중), wh_load 중 1,040MiB(슬림 이미지) | 1,040MiB → 1,560 | **1792m** (22g에서) |
+  | socket-proxy | | 33MiB(docker stats) | | 128m |
+  - 스케줄러 wh_load 구간(23:16:52~23:21:58)의 가장 큰 프로세스: `dbt_build` 동안 airflow worker 약 200MiB(dbt 프로세스는 그보다 작아 한 번도 가장 큰 프로세스가 되지 않음), `export_product` 동안 python 430MiB.
+  - 1792m 상한에서 다시 확인(H5): wh_load 2회·seoul_api·lineage 2회 성공, 스케줄러 RSS 최대 982MiB, `failcnt` 0, `oom_kill` 0, 상품 sha256 그대로.
+- 계산 컨테이너 상한: (30.91 − db 4 − metabase 2 − pgadmin 0.5 − OS 2 − ui 0.5) − (0.5 + 1.75 + 0.75 + 0.75) − 0.125 = 18.04 → **18g**(스왑 금지). 생활이동 최대 10.25GiB(측정 46), DuckDB `memory_limit` 16GiB가 그 안에 든다. 측정 43의 DuckDB 프로세스 최대 RSS는 17.27GiB였다(버퍼 상한 밖 할당 포함, 18GiB까지 여유 0.73GiB).
+- 이미지(`seoul-airflow:3.3.2`, `--no-cache` 빌드):
+  | 시점 | 크기 | 내용(압축) | 빌드 |
+  |---|---|---|---|
+  | H0 standalone(Spark 포함) | 5.47GB | 1.41GB | [미측정] |
+  | H4 provider-docker 추가(Spark 포함) | 6.01GB | 1.58GB | 161초 |
+  | H5 슬림(JDK·spark-venv·jar 뺌, dbt·에이전트 SDK 남김) | **4.49GB** | **1.01GB** | **68초** |
+  | 계산 이미지 `seoul-spark-job:3.5.9` / `seoul-duckdb-job:2.0.0` | 1.8GB / 768MB | | 두 개 109초(H2) |
+  - 같은 조건(H4 → H5) 비교: 크기 −25.3%, 내용 −36.1%, 빌드 −57.8%(1회씩). 이미지 세 개 합(7.06GB)은 H0의 하나(5.47GB)보다 크다. 대신 Airflow를 다시 빌드할 때 Spark를 받지 않는다.
+
+## 측정 48. 계산 컨테이너 OOM 유도와 지휘 영향 (결정 109 H6, 2026-11-14 23:34~23:37)
+- 방법: `python -X utf8 -u -m measure.induce_guard mem 3`(호스트). 회마다 seoul_api 수동 실행 → `seoul-duckdb-job:2.0.0`로 `--memory 2g --memory-swap 2g --cpus 4 --network none` 컨테이너, DuckDB `memory_limit` 12GB, threads 4, 6억 행 `list()` 묶기(F-17 질의). 1초마다 `job` 표 스케줄러 하트비트(`docker exec psql`), 컨테이너가 끝난 뒤 15초 더. 이어 `induce_guard disk` 1회. 스케줄러 안 vm_watch `h5_scheduler`. Airflow는 H5 상한(스케줄러 1792m 등).
+- 결과: 
+  | 회 | 컨테이너 | OOM까지 | OOMKilled / 종료 코드 | 하트비트(개, 간격 최대 / 평균) | 탐침 실패, 최대 | seoul_api |
+  |---|---|---|---|---|---|---|
+  | 1 | h6-oom-1-233405 | 24초 | true / 137 | 8, 5.8초 / 5.4초 | 0, 318ms | success |
+  | 2 | h6-oom-2-233450 | 24초 | true / 137 | 8, 6.0초 / 5.5초 | 0, 322ms | success |
+  | 3 | h6-oom-3-233534 | 22초 | true / 137 | 7, 6.4초 / 5.7초 | 0, 1,274ms | success |
+  - 멈춘 compose 서비스 없음(세 회 모두). 같은 시간 seoul_api가 asset으로 부른 wh_load 1회(23:34:12~23:38:45)가 스케줄러 컨테이너에서 dbt를 돌렸고 성공. 스케줄러 vm_watch(23:33:50~23:36:30): cgroup RSS 최대 1,172MiB / 상한 1,792MiB, `failcnt` 0, `oom_kill` 0, VM 스왑 사용 1,036kB(변화 없음), VM 사용 가능 메모리 최소 23.92GiB.
+  - 디스크: duckdb-job에서 `max_temp_directory_size` 1GiB 정렬 → 8.7초에 `failed to offload data block ... (1023.8 MiB/1.0 GiB used)`, 남은 임시 파일 0B.
+- 해석: 결정 101 A에서는 계산이 스케줄러와 같은 cgroup이라 넘치면 스케줄러가 함께 죽는 구조였다(F-17은 그래서 쌍둥이 컨테이너로 시험). 이제 계산 컨테이너가 넘쳐도 하트비트 간격은 평소(약 5초)와 같고 같이 돈 DAG와 dbt가 성공했다. OOM까지 시간이 F-17(192~234초)보다 짧은 것은 이미지가 다르고(Airflow 이미지 + `/tmp/duckdb_pkg` → 계산 이미지) DuckDB 메모리 할당 속도가 달라서로 보이나 나눠 재지 않았다 [확인 필요]. 결론(OOMKilled=true, 137, 다른 것 그대로)은 같다.
+- 남긴 시험 컨테이너: `h6-oom-1-233405`, `h6-oom-2-233450`, `h6-oom-3-233534`(지시서 3절, 지울지는 사용자).
+
+## 측정 49. DuckDB 메모리 진단: 무엇이 16GiB를 잡는가 (결정 110 D1, 2026-11-14 23:44~23:55)
+- 방법: 측정 43과 같은 명령·예산을 계산 컨테이너에서. `docker compose run --rm duckdb-job python -u -m measure.duckdb_sql spark_sql/living --show batch_status --memory-limit 16GiB --threads 12 --memwatch 5`. DuckDB 2.0.0, 컨테이너 상한 18GiB·스왑 금지(H5), 임시 상한 `temp_budget()` 516GiB, 입력 Iceberg 10달 1,405,791,964행. `--memwatch 5`: 같은 DB의 두 번째 커서에서 5초마다 `duckdb_memory()` 태그별 `memory_usage_bytes`, `temporary_storage_bytes`를 `logs/duckdb_memwatch/duckdb-4746422baa25.csv`에(129회, 읽기 실패 0). 1회. heavy 잠금. 호스트 `job_stats d1_d2`.
+- 결과: **첫 문장(관문 `batch_status`)에서 656.0초에 메모리 오류**(`could not allocate block of size 256.0 KiB (15.9 GiB/16.0 GiB used)`). 측정 43 같은 조건 652.2초와 거의 같다(재현). 프로세스 최대 RSS 17.25GiB, 컨테이너 최대 17.70GiB / 18GiB(컨테이너 OOM 전에 DuckDB 자체 오류로 끝남).
+- 태그별 흐름 (1분 간격 발췌, GiB):
+  | 시각 | 메모리 합 | 임시 | HASH_TABLE | ALLOCATOR | EXTERNAL_FILE_CACHE |
+  |---|---|---|---|---|---|
+  | 23:44:10 | 1.20 | 0 | 0.08 | 0.06 | 1.06 |
+  | 23:45:10 | 5.91 | 0 | 4.61 | 0.26 | 1.03 |
+  | 23:46:11 | 16.00 | 28.2 | 12.04 | 2.60 | 1.36 |
+  | 23:47:11 | 16.00 | 65.8 | 9.41 | 5.33 | 1.27 |
+  | 23:48:12 | 16.00 | 98.2 | 7.51 | 7.68 | 0.80 |
+  | 23:49:13 | 14.30 | 80.2 | 5.22 | 9.09 | 0 |
+  | 23:50:13 | 12.18 | 22.2 | 2.84 | 9.34 | 0 |
+  | 23:51:13 | 16.00 | 16.2 | 12.29 | 2.06 | 1.66 |
+  | 23:52:14 | 16.00 | 53.7 | 9.55 | 4.75 | 1.70 |
+  | 23:53:14 | 16.00 | 85.9 | 7.20 | 7.15 | 1.65 |
+  | 23:54:15 | 16.00 | 116.7 | 5.52 | 9.50 | 0.98 |
+  | 23:54:40 (오류 직전) | 13.11 | 123.3 | 2.37 | **10.36** | 0.38 |
+  - 태그별 최대: `HASH_TABLE` 메모리 14.01GiB, 임시 125.0GiB(임시 사용은 모두 이 태그), `ALLOCATOR` 10.36GiB(임시 0), `EXTERNAL_FILE_CACHE`(Iceberg·Parquet 읽기 캐시) 1.75GiB.
+- 해석:
+  - 같은 모양의 물결이 두 번 있다(23:45~23:50, 23:51~23:54). 물결마다 `HASH_TABLE`이 먼저 상한까지 차고, 임시로 흘리며 줄어드는 동안 `ALLOCATOR`가 같은 몫만큼 늘어 상한 16GiB를 채운다. `ALLOCATOR`는 임시 사용이 0이라 흘리지 않는 할당이다. 두 번째 물결 끝에서 `ALLOCATOR` 10.36GiB가 남은 상태로 `HASH_TABLE`이 더 필요해지자 할당에 실패했다.
+  - 관문 문장 안에서 `clean`(키 9개 묶기)은 `p`(배치별 집계)와 `quarantine`의 V8 조인(`JOIN clean k`) 두 곳에서 쓰이고, 뷰라 두 번 계산된다. 물결 두 번이 이 두 번의 키 9개 해시 집계와 맞는다(F-19 H3: 한 문장 안 큰 연산자 여럿). 어느 물결이 어느 쪽인지는 실패한 문장에 프로파일이 없어 확정하지 못했다 [확인 필요].
+  - `ALLOCATOR`에 무엇이 쌓이는지(해시 집계의 글자·리스트 상태, 흘린 파티션을 다시 읽는 버퍼 등)는 `duckdb_memory()`만으로는 가를 수 없다 [확인 필요]. 측정 43과 F-19의 "어느 연산자"는 "키 9개 해시 집계(HASH_TABLE) + 흘리지 않는 할당(ALLOCATOR)이 함께 상한을 채움"까지 좁혀졌다.
+
+## 측정 50. DuckDB 배치 단위 처리 (결정 110 D2, 2026-11-14 23:55 ~ 2026-11-15 00:05)
+- 방법: `docker compose run --rm duckdb-job python -u -m measure.duckdb_sql spark_sql/living --show batch_status --memory-limit 16GiB --threads 12 --memwatch 5 --per-batch --compare`. 측정 49와 같은 예산(DuckDB 16GiB, threads 12, 임시 상한 516GiB, 컨테이너 18GiB·스왑 금지). SQL 파일은 그대로, 원천 뷰 `lh.living.migration_rows`를 배치(`target_ym, collected_date`)로 걸러 `checked → clean, quarantine`을 배치마다 계산해 누적 표(`clean_all`, `quarantine_all`)에 더한다. 배치 10개(Iceberg 메타데이터의 DISTINCT). 시도 2회.
+- 파티션 걸러내기 확인(실행 전, `EXPLAIN ANALYZE`): 배치 필터가 Iceberg Scan의 Filters로 내려가고, 202607 배치 count는 파일 118개 중 `target_ym=202607`의 11개만 읽었다(141,178,148행, 0.3초). 걸러낸 뷰도 파티션만 읽는다.
+- 결과: **완주 못 함.**
+  | 시도 | 배치 1~3 (202510·202511·202512) | 배치 4 (202601) | 끝 |
+  |---|---|---|---|
+  | 1 `duckdb-0f56dc4b814f` | 67.4 / 68.8 / 69.4초 성공 | `clean`에서 DuckDB 메모리 오류(16.0/16.0GiB) | 224.8초, rc 1 |
+  | 2 `duckdb-3c7897eaf001` (넘친 배치만 B) | 69.6 / 70.9 / 69.4초 성공 | `clean` 메모리 오류 → 그 배치만 선택지 B(`checked`를 임시 표로 먼저)로 다시 → 계산 컨테이너가 cgroup 상한에 닿아 종료 코드 137 | 287초 |
+  - 배치마다(성공한 3개, 두 시도 같음): `duckdb_memory()` 합 최대 16.00GiB, `HASH_TABLE` 최대 11.1~15.1GiB, `ALLOCATOR` 1.07~1.16GiB, 임시 최대 9.1 → 18.5 → 27.2GiB로 배치마다 약 9GB씩 늘었다(누적 표가 임시로 흘려짐).
+  - 시도 2의 끝(00:04:22~00:05:03, memwatch): B로 `checked`(배치 1억 3,345만 행, 모든 열)를 임시 표로 만들며 `IN_MEMORY_TABLE`이 15.8GiB까지, 이어 `clean` 해시 집계에서 `HASH_TABLE` 8~10GiB와 `IN_MEMORY_TABLE`이 상한 16GiB를 나눠 썼다. 임시 41.4GiB. 호스트 docker stats로 컨테이너 메모리는 16.89 → 17.52 → 17.87GiB(00:05:06, 상한 18GiB) 뒤 137. DuckDB가 세는 16GiB 밖의 할당(버퍼 관리 밖 메모리, Python, 확장)이 약 1.9GiB였다. 프로세스가 SIGKILL로 끝나 `ops.engine_run`에 시도 2 기록은 없다(시도 1은 문장 8개 기록).
+  - 같은 시간 다른 서비스는 그대로였다: Airflow 네 구성 요소 healthy, 스케줄러 RSS 1.10GiB·`oom_kill` 0, heavy 잠금 풀림(H6과 같은 결과를 실제 측정에서 한 번 더 봄).
+- Spark 결과와의 `EXCEPT ALL`: 계산이 끝나지 않아 비교하지 못했다. 지시서 3절의 "차이가 0이 아님"에는 해당하지 않는다(비교 자체가 없음).
+- 해석:
+  - 배치 하나는 16GiB 안에서 약 69초에 끝난다. 이것만 보면 배치 처리 자체는 맞는 방향이다(10배치 단순 합 약 11.5분 + 배치를 넘는 계산).
+  - 넘친 것은 배치의 크기가 아니라 **쌓이는 누적 표**다. `clean_all`은 배치마다 약 1억 4천만 행(키 9개 + 값)이 더해지는 임시 표이고, DuckDB는 임시 표도 같은 버퍼 풀(16GiB)에서 관리한다. 배치가 지날수록 `IN_MEMORY_TABLE`이 해시 집계와 메모리를 다퉈, 4번째 배치에서 해시 집계가 넘쳤다(측정 49의 `ALLOCATOR`와 다른 원인).
+  - 선택지 B는 이 상황에서 도리어 `IN_MEMORY_TABLE`을 더 키웠고(`checked` 임시 표), DuckDB 계산 밖 할당을 더하자 컨테이너 상한(18GiB = 16GiB + 2GiB 여유)을 먼저 넘었다. 컨테이너 상한은 H5 규칙(18.04 → 18g)으로 정했고 J-15로 예산을 늘리지 않았다.
+  - 고칠 길(재지 않음): 누적을 DuckDB 임시 표가 아니라 배치마다 파일(Parquet)로 내보내 버퍼 풀에서 빼기, `clean`을 배치 안에서 끝까지 줄여 누적량 줄이기(30_commute가 쓰는 열·행만), `preserve_insertion_order=false`. 모두 결정 110 범위 밖의 새 선택이라 하지 않았다.

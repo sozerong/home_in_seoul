@@ -6,11 +6,11 @@ wh_load와 떨어져 있어 여기서 실패해도 상품은 영향이 없다. �
 코드를 고친 뒤 지도를 새로 만들 때는 Airflow 화면에서 손으로 돌린다. 그때는 trigger가 manual로 남는다.
 """
 import pendulum
-from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG
 
 from alerting import notify_failure
 from assets import WH_BUILT
+from jobs import spark_job
 
 with DAG(
     dag_id="lineage",
@@ -21,11 +21,8 @@ with DAG(
     default_args={"retries": 0, "on_failure_callback": notify_failure},
     tags=["lineage"],
 ):
-    # Asset이 깨운 실행은 run_type이 asset_triggered, 손으로 돌린 실행은 manual이다
-    BashOperator(
-        task_id="extract_lineage",
-        pool="heavy",  # Spark 세션(L5). 잠금 파일은 common.heavy_lock과 같다
-        bash_command="set -euo pipefail; cd /opt/project; "
-                     "flock -n /tmp/heavy.lock /opt/airflow/spark-venv/bin/python -m lineage.extract --engine spark "
-                     "--trigger {{ 'asset' if dag_run.run_type == 'asset_triggered' else 'manual' }}",
-    )
+    # Asset이 깨운 실행은 run_type이 asset_triggered, 손으로 돌린 실행은 manual이다.
+    # Spark 세션은 계산 컨테이너(seoul-spark-job)에서 돈다(결정 109). heavy 잠금(PostgreSQL advisory lock)은 래퍼로 잡는다(L5)
+    spark_job("extract_lineage",
+              "python -m common lock -- python -m lineage.extract --engine spark "
+              "--trigger {{ 'asset' if dag_run.run_type == 'asset_triggered' else 'manual' }}")

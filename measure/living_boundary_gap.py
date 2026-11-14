@@ -1,7 +1,7 @@
 """3.4 체크포인트 차이 분석: 경계 표 행 수(정제 뒤)와 측정 29 후보 f 그룹 수(정제 전)의 차이가 어디서 오는지 센다.
 
 실행기와 같은 뷰(spark_sql/living)를 만들고, f grain 그룹마다 통과 행이 하나라도 있는지와 격리 사유 묶음을 센다. 쓰지 않는다.
-실행(Airflow 컨테이너): /opt/airflow/spark-venv/bin/python -m measure.living_boundary_gap
+실행(계산 컨테이너): docker compose run --rm spark-job python -m measure.living_boundary_gap
 """
 import time
 

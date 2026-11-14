@@ -258,7 +258,7 @@ file = "생활이동_행정동_YYYYMM.zip"
 sensor = "최대 7일, reschedule"
 pool = "heavy"
 [pipeline.form.parse]
-module = "transform.living_iceberg (spark-venv)"
+module = "transform.living_iceberg (spark-job)"
 table = "lh.living.migration_rows, 파티션 target_ym"
 [pipeline.form.gate]
 batch_key = "(collected_date, target_ym)"
@@ -327,7 +327,7 @@ trigger = "Asset"
 chain = "원본·stg 갱신 → dbt build → 교체 → 내보내기"
 engines = ["dbt", "PostgreSQL", "PostGIS"]
 summary = "어느 출처든 원본이나 stg가 갱신되면 돈다. 빌드용 스키마에 전부 다시 만들고, 테스트를 모두 통과하면 stg_dbt·wh·mart를 한 트랜잭션에서 바꾼 뒤 계약을 검사하고 상품을 내보낸다."
-meta = [["트리거", "raw.congestion · raw.rent · raw.sbiz_store · stg.* 중 하나"], ["pool", "heavy + 잠금 파일"], ["재시도", "0"], ["끝나면", "wh.built Asset → lineage"]]
+meta = [["트리거", "raw.congestion · raw.rent · raw.sbiz_store · stg.* 중 하나"], ["pool", "heavy + advisory lock"], ["재시도", "0"], ["끝나면", "wh.built Asset → lineage"]]
 flow_note = "전부 되거나 전부 안 된다"
 failures = ["F-4", "F-6"]
 scenario = "모든 시나리오의 마지막 단계"
@@ -363,7 +363,7 @@ engine = "Asset"
 items = [["wh.built", "lineage 깨움"]]
 [pipeline.form.trigger]
 assets = "AssetAny(raw.congestion, raw.rent, raw.sbiz_store, stg.*)"
-pool = "heavy, flock /tmp/heavy.lock"
+pool = "heavy, advisory lock(python -m common lock)"
 [pipeline.form.build]
 command = "dbt run-operation drop_build_schemas && dbt build"
 target = "stg_dbt_build, wh_build, mart_build"

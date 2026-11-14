@@ -1,5 +1,5 @@
 """생활이동 V8 충돌 판정: 해시 min/max(F-9 처방 A)가 옛 글자 min/max와 같은 답을 내는지 작은 입력으로 본다 (handoff_judgments.md J-9).
-Spark가 필요해 CI 밖이다. 실행(Airflow 컨테이너): /opt/airflow/spark-venv/bin/python -m tests.check_living_conflict
+Spark가 필요해 CI 밖이다. 실행(계산 컨테이너): docker compose run --rm spark-job python -m tests.check_living_conflict
 """
 from decimal import Decimal
 

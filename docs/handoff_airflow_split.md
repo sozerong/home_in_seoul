@@ -137,3 +137,41 @@
 
 ## 진행 기록
 (Claude Code가 단계마다 시각, 한 일, 결과, 판단 한 줄을 여기에 덧붙인다.)
+
+- 2026-11-14 H0 시작 전 점검: A1 커밋됨(51211d6, 지시서 50924ed). `git status`는 `cd`(ps 출력이 잘못 저장된 파일)만 남음. **ui 브랜치 미병합**(`git merge-base --is-ancestor ui main` 거짓, 3392122 한 커밋, `git merge-tree`로 충돌 없음 확인). 실행 중인 ui 컨테이너(`new_proj-ui-1`)는 `new_proj_ui` worktree를 `/opt/project`로 붙이고 있다. 2절 조건 미충족이라 3절에 따라 멈춤.
+- 2026-11-14 20:29~20:35 H0. 사용자가 ui 병합(ecac268), worktree 제거, ui를 main 폴더 기준으로 다시 띄움.
+  - 상태: `git status`는 `cd`만(logs/h0/git_status.txt). compose: airflow(standalone, Up 9h), db, metabase, pgadmin, ui. `seoul-airflow:3.3.2` 5.47GB(내용 1.41GB).
+  - 상품 기준선: v2026.11.14 데이터 파일 8개 sha256 → `logs/h0/product_v2026.11.14.sha256`(manifest.json은 created_at이 있어 비교에서 뺀다, 측정 42와 같음).
+  - 덤프: `pg_dump -Fc` seoul 886,151,938B, airflow 598,970B, 133초. `pg_restore --list` TABLE DATA seoul 64, airflow 71. 위치 `C:\Users\dudfo\pg_backup_20261114_h0\`(SHA256SUMS). 처음에 이미 있던 `pg_backup_20261114\`에 써서 10:55 덤프 두 개를 덮어썼다(F-24).
+  - J-7: `temp_budget()` 578.1GB ≥ 실행기 문턱 394GB(호스트 C: 여유 589G). 통과.
+  - 판단: ui worktree의 `.env`가 worktree와 함께 지워져 `UI_READER_PASSWORD`가 없었다(ui가 빈 비밀번호로 뜸). 새 값을 만들어 `.env`에 넣고 `13_ui_reader.sql`을 다시 실행, ui 재생성. `/api/overview`가 DB와 Airflow 값을 돌려줌.
+  - 판단: standalone이 만든 fernet 키를 `.env` `AIRFLOW_FERNET_KEY`로 옮겼다(Variable `rent_recent_months`가 암호화돼 있음). JWT 비밀은 새로 만들어 `AIRFLOW_JWT_SECRET`. standalone 컨테이너 안 작업 로그(2.7MB)는 `logs/h0/airflow_task_logs.tgz`로 보관.
+  - 실행 중 DAG: `file_living_migration` manual 실행 하나가 `wait_for_file`에서 reschedule 대기 중(inbox 비어 있음). H4에서 이 실행이나 새 실행에 파일을 넣는다.
+- 2026-11-14 20:35~20:50 H1. standalone을 `airflow-init`(db migrate), `airflow-apiserver`, `airflow-scheduler`, `airflow-dag-processor`, `airflow-triggerer`로 나눔(`x-airflow-common` 앵커). 공식 3.3.2 compose에서 이름을 확인한 설정: `AIRFLOW__CORE__EXECUTION_API_SERVER_URL`(http://airflow-apiserver:8080/execution/), `AIRFLOW__API_AUTH__JWT_SECRET`, `AIRFLOW__CORE__FERNET_KEY`(비밀은 `.env`).
+  - 확인: 화면 200, `/api/v2/monitor/health` 네 구성 요소 healthy, `seoul_api` 수동 1회 성공, wh_load와 lineage 성공 뒤 상품 sha256 H0과 같음(`logs/h0/after_h1_product.sha256`). ui `/api/overview` 정상.
+  - vm_watch 최대 cg_rss(H1 + 상한 뒤 H1b + H4 대기 중 중 최대): apiserver 287MB, dag-processor 337MB, triggerer 411MB, scheduler 1,315MB(wh_load 중). 4절 규칙(×1.5, 256MiB 올림, 최소 512MiB) → apiserver 512m, dag-processor 512m, triggerer 768m. 스케줄러는 22g 유지(H5에서). 상한 뒤 같은 확인 한 번 더 통과.
+  - 판단: compose up이 db 컨테이너를 다시 만들었다(pgdata 볼륨이라 데이터는 그대로, 행 수 확인). 원인 [확인 필요], F-25로 기록.
+- 2026-11-14 20:36~20:42 H2. Dockerfile 하나에 target 세 개(job-base 공통, spark-job, duckdb-job, airflow). 판단: 파일 하나에 두면 requirements.txt와 jar 버전을 한곳에서 본다.
+  - 빌드 109초. `seoul-spark-job:3.5.9` 1.8GB, `seoul-duckdb-job:2.0.0` 768MB. compose `profiles: [jobs]`, 20g 스왑 금지, cpus 12. 코드 `/opt/project:ro`, `lakehouse/`와 `scratch`만 쓰기.
+  - 확인: 두 이미지에서 `tests.check_scratch` 통과, spark-job에서 Iceberg 202607 `count(*)` 141,178,148행(8초), duckdb-job `measure.duckdb_sql --help`.
+  - 판단: 잠금 없이 돌린 첫 count가 lineage DAG(잠금을 잡고 `/scratch`를 비움)와 겹쳐 셔플 파일이 사라져 실패했다. 잠금 밖에서 `/scratch`를 쓴 내 실수. 잠금 안에서 다시 돌려 통과(F-26).
+- 2026-11-14 20:42~20:48 H3. `common.heavy_lock()`을 advisory lock(키 20261114, `pg_try_advisory_lock`, 연결을 프로세스 끝까지 보유)으로. 이름·쓰는 법 그대로. 래퍼 `python -m common lock -- <명령>`을 둠(판단: DAG의 bash 태스크와 계산 컨테이너가 같은 잠금을 쓰려면 셸에서 부를 문이 필요하다). wh_load·lineage의 `flock`을 래퍼로 교체, `check_scratch`도 교체.
+  - 새 시험 `tests/check_heavy_lock.py`(호스트): 스케줄러가 잡은 동안 duckdb-job 1.8초 만에 실패(메시지에 잡은 쪽), 풀린 뒤 잡힘, 잡은 프로세스 kill -9 뒤 0.2초 안에 풀림. 통과.
+- 2026-11-14 20:50~21:09 H4. provider-docker 4.5.9, docker 7.2.0(3.3.2 constraints), `tecnativa/docker-socket-proxy:v0.5.0`(128m, 소켓 ro, 호스트 포트 없음). 이미지 빌드 161초.
+  - 연 API 묶음: `CONTAINERS`, `POST`, `IMAGES`(이미지 있는지 확인하는 `GET /images/json`이 403이라 추가, F-27). `_ping`, `version`은 기본 허용. `info`, `volumes`, `networks`는 403 그대로.
+  - `dags/jobs.py` `spark_job()`: 호스트 경로 `HOST_PROJECT_DIR`(.env, 비밀 아님) 바인드, `lakehouse/`만 쓰기, `scratch` 이름 볼륨, `mount_tmp_dir=False`, 네트워크 `new_proj_default`, 비밀은 `private_environment`. `docker inspect`로 마운트·상한 확인(Memory=MemorySwap=21474836480, NanoCpus=12000000000).
+  - 판단: provider의 `cpus`는 `cpu_shares`만 넣어 NanoCpus가 0이었다. `JobOperator`가 `nano_cpus`와 `memswap_limit`을 더한다.
+  - 판단: `auto_remove="success"`가 실패한 컨테이너도 지웠다(중단 시험 컨테이너 ba40ad2b46bf가 사라짐, F-28). `auto_remove="never"` + 성공 때만 직접 지움, 실패 때는 id·OOMKilled·ExitCode를 로그에 남김. `exit 3` 시험으로 확인(e91841dc975d `musing_hawking` 남김).
+  - 중단 시험: 실행 중 compute를 API로 failed 표시 → 계산 컨테이너가 7.7초 안에 멈추고 잠금 풀림(`logs/h4_stop_test.log`). provider `on_kill`이 컨테이너를 stop한다. F 없음.
+  - 비밀: 작업 로그와 렌더된 템플릿 필드에 `DATABASE_URL`, `POSTGRES_PASSWORD` 값이 없음을 grep으로 확인.
+  - 21:08 J-7 통과(`temp_budget()` 576.6GB, C: 여유 588G) 뒤 J-14 방식으로 생활이동 zip 재투입, `manual__2026-11-14T12:08:43` 실행 시작.
+- 2026-11-14 21:27~21:41 재부팅(사용자). 21:27:22 Docker Desktop이 compose 컨테이너를 모두 멈추고(종료 코드 143, 스케줄러·metabase·pgadmin 137), 생활이동 계산 컨테이너 `crazy_kilby`는 21:38 Docker 재시작 때 255로 끝났다(Iceberg 적재 315.5초는 끝났고 실행기 도중). 실행기의 교체 트랜잭션 전이라 `stg` 표는 그대로, Iceberg 202607은 같은 파일로 새 스냅샷만 생김. inbox zip은 남아 있었다. 중단된 H4 수치는 쓰지 않는다.
+  - 다시 띄움: metabase·pgadmin은 바뀐 것이 없는데 `up --dry-run`이 Recreate로 보여(F-25와 같은 현상) `docker start`로만 켰다. Airflow 구성 요소와 ui는 이미 빌드해 둔 슬림 이미지(519f4320c5bb, JDK·spark-venv·jar 없음 확인)로 다시 만들어졌다. 판단: H5의 이미지 교체가 H4 재측정 앞으로 왔다. 계산은 spark-job 이미지에서 돌아 H4가 보는 경로는 같다. 스케줄러 상한은 22g 그대로.
+  - 스케줄러가 뜨자 주인 없는 `compute`(시도 1)를 되돌려 시도 2로 다시 실행했다(21:41:37, 새 컨테이너 `stoic_bell`). `retries: 0`인데도 다시 돈 것은 Airflow가 죽은 스케줄러의 태스크를 실패가 아니라 "고아"로 되돌리기 때문이다. 종료 코드 137 같은 태스크 실패는 여전히 재시도되지 않는다. 지난 실행의 `/scratch` 찌꺼기는 새 실행이 잠금을 잡으며 비웠다(S5가 실제 비정상 종료 뒤에 동작). 이 실행을 H4 재측정으로 쓴다. vm_watch `h4r_*`, job_stats `h4r_living`.
+- 2026-11-14 22:06 H4 재측정(시도 2)이 실행기 무출력 20분 뒤 `ChunkedEncodingError`로 실패(F-29, socket-proxy 유휴 10분 제한). 계산 컨테이너 `stoic_bell`을 멈춤(137, 남김, 교체 전이라 `stg` 그대로). `dags/jobs.py`에 1분 heartbeat를 넣고 11분 무출력 시험 통과 뒤, compute와 하위를 API로 Clear해 시도 3(`stoic_wiles`, 22:10:10)으로 다시 돌림.
+- 2026-11-14 23:16~23:22 H4 완료(측정 46). compute 시도 3 성공(Iceberg 286.1초, 실행기 3,705.4초, 측정 42보다 11.3% 느림, 셔플·흘림 같음), `cleanup_inbox`(inbox 비움), wh_load·lineage 성공. **상품 데이터 파일 8개 sha256이 H0과 같음**(`logs/h0/after_h4_product.sha256`). 계산 컨테이너 최대 10.25GiB.
+  - 판단: 계산 컨테이너의 Spark 이벤트 로그가 성공한 컨테이너와 함께 지워져 작업별 경과 표는 없음(`ops.engine_run`은 남음). 남은 것으로 기록.
+- 2026-11-14 23:16~23:34 H5(측정 47). 슬림 이미지는 재부팅 뒤 이미 적용(4.49GB·68초, 전 6.01GB·161초). wh_load(슬림, 22g 상한) 중 스케줄러 RSS 최대 1,040MiB → 1792m. dag-processor가 H4 재측정 중 442MiB까지 올라 512m → 768m(판단 112). 계산 상한 18.04 → 18g(compose spark-job·duckdb-job, `dags/jobs.py` MEM). 다시 띄운 뒤 import 오류 0, wh_load 2회·seoul_api·lineage 2회 성공, 스케줄러 최대 982MiB, 상품 sha256 그대로.
+- 2026-11-14 23:34~23:37 H6(측정 48, guarantees 2.7). OOM 유도 3회 모두 통과: `h6-oom-1~3` OOMKilled=true·137(22~24초), 하트비트 간격 최대 5.8·6.0·6.4초, seoul_api 3회 성공, 멈춘 서비스 없음. 그동안 seoul_api가 부른 wh_load가 스케줄러에서 dbt를 돌렸고 성공(스케줄러 RSS 최대 1,172MiB). 디스크 유도 8.7초 오류·잔여 0B.
+- 2026-11-14 23:44~23:55 D1(측정 49). J-7 통과(DuckDB 문턱 151.2GB x 1.2 + 50GiB ≈ 235GB, C: 여유 567G, `temp_budget()` 554.6GB). 656.0초에 16GiB 오류(측정 43 재현). 커진 태그: `HASH_TABLE` 최대 14.01GiB(임시 125GiB), 흘리지 않는 `ALLOCATOR` 10.36GiB. 키 9개 해시 집계가 두 물결.
+- 2026-11-14 23:55 ~ 11-15 00:05 D2(측정 50, F-30). 배치 필터가 Iceberg 파티션까지 내려감 확인. 배치 1~3 각 약 69초 성공, 배치 4에서 16GiB 오류(시도 1). 넘친 배치만 B로 다시 하도록 고쳐(`measure/duckdb_sql.py`, 판단 113) 시도 2 → 배치 4를 B로 다시 하던 중 컨테이너 17.87/18GiB 뒤 137. 지시서 4절대로 **"완주 못 함"** 결론. `EXCEPT ALL`은 계산이 끝나지 않아 없음(3절 멈춤 조건 아님). 같은 시간 Airflow·db 그대로, 잠금 풀림.

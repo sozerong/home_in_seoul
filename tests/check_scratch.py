@@ -5,7 +5,9 @@
    - 잠금을 잡은 프로세스는 시작할 때 찌꺼기를 비우고, 끝날 때(예외로 끝나도) 자기 파일까지 비운다.
 2. 위치(S4, J-5): 잠금을 잡고 Spark 셔플과 DuckDB 흘림을 일으켜, 파일이 /scratch 아래에 생기는지 본다.
 무거운 작업이 돌고 있으면 바로 멈춘다(작업 공간을 비우므로).
-실행(Airflow 컨테이너): PYTHONPATH=/tmp/duckdb_pkg /opt/airflow/spark-venv/bin/python -m tests.check_scratch
+실행(계산 컨테이너 둘 다, 결정 109): docker compose run --rm spark-job python -m tests.check_scratch
+                                   docker compose run --rm duckdb-job python -m tests.check_scratch
+  엔진이 없는 이미지에서는 그 엔진의 위치 확인만 건너뛴다(spark-job에는 DuckDB가, duckdb-job에는 Spark가 없다).
 """
 import os
 import subprocess
@@ -13,7 +15,7 @@ import sys
 import threading
 import time
 
-from common import ROOT, SCRATCH, heavy_lock
+from common import HEAVY_LOCK_KEY, ROOT, SCRATCH, heavy_lock
 
 
 def files_under(folder):
@@ -25,8 +27,10 @@ def python(code):
 
 
 # 1. 비우기
-holder = subprocess.Popen(["flock", "-n", "/tmp/heavy.lock", "sleep", "5"])
-time.sleep(0.5)
+# 잠금만 잡고 작업 공간은 건드리지 않는 프로세스(죽은 실행 대신). 못 잡으면 바로 끝나 poll()에 드러난다
+holder = subprocess.Popen([sys.executable, "-c", "import time, psycopg, common; c = psycopg.connect(common.read_env('DATABASE_URL'), autocommit=True); "
+                           f"assert c.execute('SELECT pg_try_advisory_lock({HEAVY_LOCK_KEY})').fetchone()[0]; time.sleep(5)"], cwd=ROOT)
+time.sleep(2)
 if holder.poll() is not None:
     raise SystemExit("다른 무거운 작업이 잠금을 잡고 있습니다. 끝난 뒤 다시 돌리세요")
 junk = [f"{SCRATCH}/spark/blockmgr-dead/00/shuffle_0_0_0.data", f"{SCRATCH}/duckdb/duckdb_temp_dead.tmp", f"{SCRATCH}/unzip/living_dead/07.csv"]
@@ -53,20 +57,25 @@ print("예외로 끝나도 비움")
 
 # 2. 위치
 lock = heavy_lock()  # noqa: F841  아래 엔진들이 작업 공간을 쓴다
-from transform.iceberg import SPARK_LOCAL, spark_session  # noqa: E402
+try:
+    import pyspark  # noqa: F401
+except ImportError:
+    print("Spark 없음: 건너뜀 (spark-job 이미지에서 돌린다)")
+else:
+    from transform.iceberg import SPARK_LOCAL, spark_session
 
-spark = spark_session("check-scratch", {"spark.sql.shuffle.partitions": "4"})
-spark.range(2_000_000).selectExpr("id % 1000 AS k").groupBy("k").count().collect()  # 셔플 한 번
-shuffle = [f for f in files_under(SPARK_LOCAL) if ".data" in f or ".index" in f]
-spark.stop()
-assert SPARK_LOCAL.startswith(f"{SCRATCH}/"), SPARK_LOCAL
-assert shuffle, f"{SPARK_LOCAL} 아래에 셔플 파일이 없습니다"
-print(f"Spark 셔플 파일 {len(shuffle)}개가 {SPARK_LOCAL} 아래에 생김 (예: {shuffle[0]})")
+    spark = spark_session("check-scratch", {"spark.sql.shuffle.partitions": "4"})
+    spark.range(2_000_000).selectExpr("id % 1000 AS k").groupBy("k").count().collect()  # 셔플 한 번
+    shuffle = [f for f in files_under(SPARK_LOCAL) if ".data" in f or ".index" in f]
+    spark.stop()
+    assert SPARK_LOCAL.startswith(f"{SCRATCH}/"), SPARK_LOCAL
+    assert shuffle, f"{SPARK_LOCAL} 아래에 셔플 파일이 없습니다"
+    print(f"Spark 셔플 파일 {len(shuffle)}개가 {SPARK_LOCAL} 아래에 생김 (예: {shuffle[0]})")
 
 try:
     import duckdb
 except ImportError:
-    print("DuckDB 없음: 건너뜀 (PYTHONPATH=/tmp/duckdb_pkg)")
+    print("DuckDB 없음: 건너뜀 (duckdb-job 이미지에서 돌린다)")
 else:
     from measure.duckdb_sql import TEMP_DIR
     con = duckdb.connect()

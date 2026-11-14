@@ -53,6 +53,7 @@
 | 배치 관문 도입 | stg, wh, mart 두 방향 `EXCEPT ALL` + 상품 sha256 | 측정 25 | 모든 원본 | ① | |
 | 상가정보 정제 Python → dbt | 6코드 부분 두 방향 `EXCEPT ALL`, `bjd_code` 비교 | 측정 27 | 30,394행, 466행 | ① | 상품 sha256은 교체 전 해시가 남지 않아(같은 날 폴더를 덮어씀) 마트 표 비교로 대신했다 |
 | 변이 시험 대조군 | 변이 없는 시험 환경(M0)과 실제 mart 비교 | 측정 22, 31 | 상품 4표 | ② (`measure.lineage_mutation`) | **첫 시도 실패**(측정 22): 같은 시각 다른 실행이 원본을 바꿔 달랐다. 그 실행이 끝난 뒤 같음 |
+| 생활이동 계산 위치 Airflow 컨테이너 → 계산 컨테이너(DockerOperator, 결정 109) | H0에 상품 데이터 파일 sha256을 남기고, 분리·슬림 이미지 뒤 같은 zip을 다시 넣어 DAG 전체 실행 → wh_load 뒤 sha256 비교, 행 수 비교 | 측정 46, `logs/h0/product_v2026.11.14.sha256`, `after_h4_product.sha256` | 2026-11-14 1회 성공(앞선 두 시도는 재부팅·F-29로 끊김, 교체 전이라 표 그대로). 10달 1,405,791,964행 | ① | 경계·격리·판정 표는 행 수만 비교(측정 42처럼 보관본과 두 방향 `EXCEPT ALL`은 하지 않음, 보관본을 지운 뒤라). 상품 8개 파일은 바이트까지 같음 |
 
 **의도한 변경**은 차이 0이 아니라 차이를 세어 남긴다.
 
@@ -101,6 +102,8 @@
 | 메모리가 넘치면 그 컨테이너만 죽는다(VM·PostgreSQL은 산다) (F-16 처방, 결정 101 L2) | [유도] 같은 이미지의 일회용 컨테이너(`--memory 2g`, 스왑 금지)에서 DuckDB `memory_limit`를 일부러 12GB로 잡고 메모리를 많이 쓰는 집계 → `OOMKilled=true`, 종료 코드 137. 끝날 때까지 1초마다 PostgreSQL `SELECT 1` | `measure/induce_guard.py mem`, F-17, 측정 37 | ② (2026-11-13 3회: 210초, 192초, 234초에 OOM. 탐침은 1회차 90회(죽기 1분 전까지만), 2회차 103회, 3회차 169회 모두 성공. 다른 컨테이너 4개 그대로, VM 스왑 사용 0). 한계: Airflow 컨테이너 자체가 아니라 같은 이미지의 쌍둥이로 봤다(스케줄러가 함께 죽는 것은 결정 101 A의 알려진 단점). VM 전체 상한(L1)은 아직 없다 |
 | 임시 공간이 넘치면 DuckDB가 오류로 끝난다 (F-16 처방, L3) | [유도] Airflow 컨테이너 안 DuckDB(`memory_limit` 1GB, `max_temp_directory_size` 1GiB)로 2억 행 정렬 → `Out of Memory Error: failed to offload data block ... max_temp_directory_size` | `measure/induce_guard.py disk`, F-17 | ② (2026-11-13 2회: 7.2초, 6.8초. 남은 임시 파일 0B). 실제 도구(`measure/duckdb_sql.py`)는 이 상한을 호스트 C: 여유에서 계산한다(`common.temp_budget`). 한계: Spark에는 임시 폴더 상한이 없어 시작 전 여유 점검(`--min-temp-gb`)만 한다 |
 | 실제 부하에서 넘쳐도 그 작업만 오류로 끝난다 (L2·L3, 유도 아님) | 3.3 DuckDB 비교 3회(측정 39): 메모리 16GiB 상한 오류 2회, 임시 상한 117GiB 오류 1회. 같은 시간 vm_watch 스왑 0, OOM kill 0, PostgreSQL·Airflow 응답 | 측정 39, F-19 | ① (2026-11-13 3회, 유도가 아닌 실제 측정 실행). F-16(같은 SQL, 상한 없음)에서는 VM 전체가 멈췄다 |
+| 계산 컨테이너가 넘쳐도 지휘(Airflow)는 그대로다 (결정 109 H6) | [유도] 가벼운 DAG(seoul_api)를 돌려 두고, 계산 이미지(`seoul-duckdb-job`)로 상한 2GiB·스왑 금지 컨테이너를 띄워 DuckDB `memory_limit` 12GB로 메모리를 많이 쓰는 집계(F-17과 같은 질의) → `docker inspect` OOMKilled·종료 코드. 같은 시간 1초마다 메타데이터 DB의 스케줄러 하트비트, 끝난 뒤 DAG 결과와 compose 서비스 상태, 스케줄러 안 vm_watch | `measure/induce_guard.py mem 3`, `logs/h6_mem.log`, 측정 48 | ② (2026-11-14 23:34~23:36 3회: 24·24·22초에 OOMKilled=true, 137. 하트비트 간격 최대 5.8·6.0·6.4초(평소 약 5초), 탐침 실패 0, seoul_api 3회 성공, 멈춘 서비스 없음. 그동안 seoul_api가 부른 wh_load(dbt 빌드)가 스케줄러에서 함께 돌았고 스케줄러 RSS 최대 1,172MiB / 1792MiB, oom_kill 0). 시험 컨테이너 `h6-oom-1~3`은 남김. 한계: 같은 VM이라 VM 전체 메모리와 디스크는 여전히 공유한다(VM 상한 L1 없음). 실제 생활이동 계산 컨테이너가 넘친 것이 아니라 같은 이미지·같은 방식의 유도다. 결정 101 A 때와 달리 시험 컨테이너가 실제 계산 컨테이너와 같은 구조(작업마다 컨테이너)라 쌍둥이 한계는 없어졌다 |
+| 임시 공간이 넘치면 DuckDB가 오류로 끝난다, 계산 컨테이너에서 (결정 109 H6) | 위 디스크 유도를 duckdb-job 컨테이너에서 | `measure/induce_guard.py disk`, `logs/h6_disk.log` | ② (2026-11-14 1회: 8.7초, 남은 임시 파일 0B) |
 | Spark 실행기 실제 실행이 상한 안에서 끝난다 | 측정 38: 결정 101 상한(22GiB, 스왑 금지)에서 3,201초, RSS 최대 10.37GiB, 스왑 0, OOM 0 | 측정 38 | ① (1회) |
 
 ### 2.8 에이전트는 운영을 바꾸지 않는다 (결정 108)
@@ -108,6 +111,14 @@
 | 대상 | 방법 | 근거 | 조건 | 강도 | 한계 |
 |---|---|---|---|---|---|
 | SQL 에이전트 실행(기준선·후보 빌드, 판정) | 실행 전후 운영 표 50개 행 수, 상품 manifest sha256 비교. 끝난 뒤 `*_sbx_*` 스키마와 worktree 수 | 측정 45 | S1 1회(+ 같은 브랜치 다시 판정 1회) | ① | 행 수와 manifest만 봄(값 단위 비교 아님). DB 역할로 막는 것(`agent_rw`, 설계 7절)은 아직 없어 코드가 운영 스키마에 쓰지 않는다는 것에 기댄다 |
+
+### 2.9 무거운 작업은 컨테이너를 넘어 한 번에 하나 (결정 109 H3, resource_guard L5)
+
+| 대상 | 방법 | 근거 | 조건 | 강도 | 한계 |
+|---|---|---|---|---|---|
+| `common.heavy_lock()`(PostgreSQL advisory lock 20261114)이 서로 다른 컨테이너 사이에서 배타적이다 | 스케줄러 컨테이너에서 잠금을 잡고(`python -m common lock -- sleep 60`) 그동안 duckdb-job 컨테이너에서 잡기 → 바로 실패하고 메시지에 잡은 쪽(pid, application_name, 주소)이 나옴. 첫 쪽이 끝난 뒤 다시 잡기 → 성공. 잡은 프로세스를 kill -9 → 연결이 끊겨 풀리는지 | `tests/check_heavy_lock.py`, 지시서 진행 기록 H3 | 2026-11-14 1회 통과: 두 번째 시도 1.8초 만에 실패(컨테이너 시작 포함), 풀린 뒤 1.8초에 잡힘, kill -9 뒤 0.2초 안에 풀림 | ② | 잠금은 자발적이다. 잠금 없이 `docker compose run`으로 같은 `scratch`를 쓰면 막지 못한다(F-26). DB가 멈추면 잠금도 쓸 수 없다(무거운 작업도 어차피 DB가 필요) |
+| 잠금을 잡은 쪽만 작업 공간을 비운다(결정 107 S5)가 계산 이미지에서도 성립 | `tests/check_scratch.py`를 spark-job, duckdb-job에서 각각: 잠금을 다른 프로세스가 잡고 있으면 찌꺼기를 지우지 않음, 잡은 쪽은 시작·끝·예외 때 비움, Spark 셔플과 DuckDB 임시가 `/scratch` 아래에 생김 | `tests/check_scratch.py`, 진행 기록 H2 | 2026-11-14 각 1회 통과 | ② | 같음 |
+| DockerOperator 계산 태스크를 실패로 표시하면 계산 컨테이너도 멈추고 잠금이 풀린다 | 생활이동 compute 실행 중 API로 failed 표시 → `docker inspect` 상태와 `pg_locks` | `logs/h4_stop_test.log`, 진행 기록 H4 | 2026-11-14 1회: 7.7초 안에 멈춤, 잠금 0 | ① | provider `on_kill`의 stop(기본 10초 유예)에 기댄다. 스케줄러가 갑자기 죽는 경우(on_kill이 안 불림) 계산 컨테이너는 계속 돈다 [미시험] |
 
 ## 3. 증명하지 않았거나 깨진 것
 

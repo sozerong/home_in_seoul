@@ -1,8 +1,8 @@
 """Iceberg 표를 다루는 Spark 세션 (고도화 4단계, 결정 35).
 
 카탈로그 lh: 어느 파일이 지금 표인지의 기록은 PostgreSQL iceberg DB(JDBC 카탈로그)에,
-데이터·메타데이터 파일은 프로젝트의 lakehouse/ 폴더에 둔다. Airflow 컨테이너 안 spark-venv에서 실행한다.
-사용법: /opt/airflow/spark-venv/bin/python -m transform.iceberg --selftest
+데이터·메타데이터 파일은 프로젝트의 lakehouse/ 폴더에 둔다. 계산 컨테이너(seoul-spark-job, 결정 109)에서 실행한다.
+사용법: docker compose run --rm spark-job python -m common lock -- python -m transform.iceberg --selftest
 """
 import glob
 import sys

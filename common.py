@@ -37,24 +37,37 @@ def temp_budget(tmp=SCRATCH):
     return min(shutil.disk_usage(tmp).free, shutil.disk_usage(ROOT).free) - RESERVE_BYTES
 
 
+HEAVY_LOCK_KEY = 20261114  # PostgreSQL advisory lock 키 하나(결정 109 H3). 값 자체는 뜻이 없고 모든 무거운 작업이 같은 값을 쓴다
+_held = []  # 잡은 연결을 프로세스가 끝날 때까지 들고 있는다(지역 변수로만 두면 버려질 때 연결이 닫혀 잠금이 풀린다)
+WHO_HOLDS = ("SELECT a.pid, a.application_name, a.client_addr, a.backend_start FROM pg_locks l JOIN pg_stat_activity a USING (pid) "
+             f"WHERE l.locktype = 'advisory' AND l.granted AND l.objid = {HEAVY_LOCK_KEY}")
+
+
 def heavy_lock():
     """무거운 작업(Spark 실행기, DuckDB, dbt 전체 빌드, 리니지 추출)은 한 번에 하나 (resource_guard.md L5).
 
-    Airflow는 pool heavy(크기 1)로 줄 세우고, 손으로 돌린 측정도 같은 잠금 파일을 잡는다. 기다리지 않고 바로 실패한다(겹침이 드러나게).
-    돌려준 파일을 닫거나 프로세스가 끝나면 풀린다. 잠금 파일은 컨테이너 안(/tmp)이라 같은 컨테이너의 프로세스끼리만 막는다.
+    Airflow는 pool heavy(크기 1)로 줄 세우고, 손으로 돌린 측정도 같은 잠금을 잡는다. 기다리지 않고 바로 실패한다(겹침이 드러나게).
+    잠금은 PostgreSQL advisory lock이라 컨테이너를 넘어 막는다(결정 109: 스케줄러, spark-job, duckdb-job이 서로 다른 컨테이너).
+    잡은 연결이 닫히면 풀린다: 프로세스가 끝나거나 죽으면(kill -9, OOM) 커널이 소켓을 닫고, PostgreSQL이 그 세션을 끝내며 놓는다.
     잠금을 잡으면 작업 공간을 비우고 시작하고, 프로세스가 끝날 때(예외로 끝나도) 다시 비운다(결정 107 S5, J-6).
     잠금이 한 번에 하나를 보장하므로 다른 실행의 파일을 지울 위험이 없다. 잠금을 못 잡으면 비우지 않는다(위에서 실패).
-    강제 종료(kill -9, OOM)되면 끝 비우기는 돌지 않고, 다음 잠금을 잡은 실행이 시작할 때 비운다.
+    강제 종료되면 끝 비우기는 돌지 않고, 다음 잠금을 잡은 실행이 시작할 때 비운다.
     """
-    import fcntl
-    f = open("/tmp/heavy.lock", "w")
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        raise SystemExit("다른 무거운 작업이 /tmp/heavy.lock을 잡고 있습니다. 끝난 뒤 다시 돌리세요") from None
+    import socket
+    import sys
+
+    import psycopg
+    who = f"heavy {socket.gethostname()} {os.getpid()} {' '.join(sys.argv)}"[:63]  # pg_stat_activity에서 잡은 쪽을 알아보게
+    conn = psycopg.connect(read_env("DATABASE_URL"), autocommit=True, application_name=who)
+    if not conn.execute("SELECT pg_try_advisory_lock(%s)", [HEAVY_LOCK_KEY]).fetchone()[0]:
+        holder = conn.execute(WHO_HOLDS).fetchall()
+        conn.close()
+        raise SystemExit(f"다른 무거운 작업이 잠금을 잡고 있습니다(advisory lock {HEAVY_LOCK_KEY}, 잡은 쪽 {holder}). "
+                         f"끝난 뒤 다시 돌리세요. 확인: {WHO_HOLDS}")
+    _held.append(conn)
     clear_scratch()
     atexit.register(clear_scratch)
-    return f
+    return conn
 
 
 def clear_scratch():
@@ -67,3 +80,14 @@ def clear_scratch():
             shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
         except FileNotFoundError:  # 엔진이 끝나며 같은 폴더를 함께 지운 경우
             pass
+
+
+if __name__ == "__main__":
+    # 셸 명령을 잠금 안에서 돌린다: python -m common lock -- <명령...>. DAG의 dbt 전체 빌드와 리니지 추출이 쓴다(옛 flock -n 자리).
+    # 명령의 종료 코드를 그대로 돌려준다(설계 원칙 4). 잠금을 못 잡으면 명령을 돌리지 않고 실패한다.
+    import subprocess
+    import sys
+    if sys.argv[1:3] != ["lock", "--"] or len(sys.argv) < 4:
+        raise SystemExit("사용법: python -m common lock -- <명령...>")
+    heavy_lock()
+    raise SystemExit(subprocess.run(sys.argv[3:]).returncode)  # 끝 비우기는 heavy_lock이 건 atexit이 한다

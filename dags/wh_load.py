@@ -29,9 +29,10 @@ with DAG(
 ):
     in_dbt = "set -euo pipefail; cd /opt/project/warehouse/dbt; "
     dbt = "/opt/airflow/dbt-venv/bin/dbt"  # dbt 전용 가상환경 (결정 30 D3)
-    # 전체 빌드는 무거운 작업이라 pool heavy와 잠금 파일로 한 번에 하나(resource_guard.md L5, common.heavy_lock과 같은 파일)
+    # 전체 빌드는 무거운 작업이라 pool heavy와 heavy 잠금(PostgreSQL advisory lock, common.heavy_lock)으로 한 번에 하나(resource_guard.md L5)
     build = BashOperator(task_id="dbt_build", pool="heavy",
-                         bash_command=in_dbt + f"flock -n /tmp/heavy.lock sh -c '{dbt} run-operation drop_build_schemas && {dbt} build'")
+                         bash_command="set -euo pipefail; cd /opt/project; python -m common lock -- "
+                                      f"sh -c 'cd warehouse/dbt && {dbt} run-operation drop_build_schemas && {dbt} build'")
     # ponytail: 교체가 실패하면 마지막 build_run은 교체되지 않은 빌드다. 그 실패는 알림으로 따로 드러난다
     record = BashOperator(task_id="record_build",
                           bash_command="set -euo pipefail; cd /opt/project; python -m warehouse.build_record")

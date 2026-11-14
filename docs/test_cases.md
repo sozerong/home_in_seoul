@@ -129,12 +129,12 @@ design_remaining_work.md의 절마다 무엇을 넣어 어떻게 확인했는지
 - 넣은 것: `python -m measure.s6a_sql`. 사본 프로젝트에 헬스장 R10307(seed 1줄, 마트 SQL 3줄)을 더해 `_s6a` 스키마로 빌드.
 - 기대: Python 수정 0, 원본 다시 적재 0, `dong_profile`에 컬럼 2개만 더해지고, `dong_mois_map`, `commute_od`, `rent_listing` 차이 0.
 - 결과: 모두 기대대로. dbt 116개 PASS, 338.3초. 헬스장 3,570곳(측정 17과 같음).
-- 다시 돌리는 법: `docker exec new_proj-airflow-1 bash -c "cd /opt/project && python -m measure.s6a_sql"`
+- 다시 돌리는 법: `docker compose exec -w /opt/project airflow-scheduler python -m measure.s6a_sql` (결정 109 뒤 서비스 이름)
 
 ## 3절. 생활이동 이전 (결정 87~94)
 
 ### 3.2-1. 첫 측정: 경계 표 그룹 수가 기준을 넘으면 멈춤 (측정 29)
-- 넣은 것: `/opt/airflow/spark-venv/bin/python -m measure.living_g3` (Iceberg 원본 10개월, 1,405,791,964행).
+- 넣은 것: `docker compose run --rm spark-job python -m measure.living_g3` (결정 109 뒤 실행 명령. 측정 당시는 Airflow 컨테이너 안 Spark 가상환경) (Iceberg 원본 10개월, 1,405,791,964행).
 - 기대(설계 3.2): G3 그룹 수가 40,382,008 이하면 진행, 넘으면 멈추고 차원 줄이기 선택지를 보인다.
 - 결과: 816,203,740(20.2배). 멈춤. 후보 6개를 더 재서 기준 아래는 f(13,842,750) 하나였다. 사용자 결정 대기.
 

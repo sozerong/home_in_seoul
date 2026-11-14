@@ -4,7 +4,7 @@
 격리 표에 원래 값을 남겨야 해서, 여기서 숫자로 바꾸다 깨진 값을 잃으면 안 된다.
 처리 단위는 대상연월 파티션 하나. 다시 돌리면 그 파티션만 새 스냅샷으로 바뀐다(멱등). 예전 내용은 과거 스냅샷으로 남는다.
 row_no는 CSV 안의 줄 번호(머리글 = 1)로, stg.living_quarantine의 row_no와 같은 뜻이다.
-사용법: /opt/airflow/spark-venv/bin/python -m transform.living_iceberg 수집일YYYY-MM-DD 대상연월YYYYMM
+사용법: docker compose run --rm spark-job python -m transform.living_iceberg 수집일YYYY-MM-DD 대상연월YYYYMM
 """
 import argparse
 import datetime

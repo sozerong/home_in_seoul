@@ -7,8 +7,8 @@ test_*.sql은 위반 행을 돌려주는 SQL이다. warn_*.sql도 같지만 위�
 옮기기 = 비우고 복사(F-13 처방 A). 표를 지우고 이름을 바꾸면 그 표를 읽는 dbt 뷰(wh.fact_commute) 때문에 거절된다.
 --save 뷰=표: 마지막 뷰 말고도 PostgreSQL에 남길 뷰(관문 판정, 격리 행. 판단 64). 같은 트랜잭션에서 옮긴다.
 Spark 이벤트 로그를 켜고, 끝나면(실패해도) 단계별 지표를 ops.engine_run에 남긴다. 한 행 = 실행 x 단계.
-실행(Airflow 컨테이너):
-  /opt/airflow/spark-venv/bin/python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status
+실행(계산 컨테이너, 결정 109. Airflow에서는 file_living_migration DAG의 compute 태스크가 DockerOperator로 같은 명령을 돌린다):
+  docker compose run --rm spark-job python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status
       --save batch_status=stg.living_batch_status quarantine=stg.living_quarantine
   --show 뷰: 먼저 계산해 캐시하고 출력한다(작은 뷰. 테스트가 여러 번 읽어도 한 번만 계산)
   --driver-memory, --shuffle-partitions, --aqe: 엔진 분석(3.10)에서 바꾼다. --no-write: 쓰지 않고 지표만 남긴다

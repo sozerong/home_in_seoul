@@ -1138,11 +1138,12 @@
   - dbt는 Airflow 이미지에 남긴다. wh_load, `agent/sandbox.py`, 측정 도구가 `dbt-venv`를 쓰고, 계산은 주로 PostgreSQL 쪽이다. dbt 프로세스 RSS는 스케줄러 상한 근거로만 잰다.
   - SQL 에이전트 컨테이너는 이번 범위 밖이다.
   - 진행은 `docs/handoff_airflow_split.md`를 따른다.
-- 검증: [미검증]
-  1. 계산 컨테이너를 일부러 OOM 내는 동안 스케줄러 하트비트 공백, 같이 돈 DAG의 성공 여부, 종료 코드 137이 찍힌 컨테이너를 본다.
-  2. 생활이동 전체 실행 뒤 상품 sha256이 분리 전과 같은지 본다.
-  3. Airflow 이미지 크기와 빌드 시간을 전후로 잰다.
-- 결과와 남은 것: 진행 전. k8s 이식은 대기(사용자, 2026-11-14).
+- 검증 (2026-11-14, `docs/handoff_airflow_split.md` 진행 기록):
+  1. OOM 유도 3회(측정 48, guarantees 2.7): 시험 컨테이너만 OOMKilled=true·137(22~24초). 스케줄러 하트비트 간격 최대 5.8·6.0·6.4초(평소 약 5초), 탐침 실패 0, 같이 돈 seoul_api 3회와 wh_load 1회 성공, 멈춘 서비스 없음. 강도 ②.
+  2. 생활이동 전체 실행(측정 46): DockerOperator로 compute 성공, 이어 wh_load·lineage 성공, 상품 데이터 파일 8개 sha256이 분리 전(H0)과 같음. 실행기 3,705.4초로 측정 42보다 11.3% 느림(셔플·흘림 양은 같음, 원인 미확정, 1회).
+  3. Airflow 이미지(측정 47): provider 추가 뒤 6.01GB·161초 → 슬림 4.49GB·68초(내용 1.58 → 1.01GB). 계산 이미지 두 개 1.8GB, 768MB가 따로 생겼다.
+  - 그 밖: 컨테이너를 넘는 잠금 시험 통과(guarantees 2.9), 중단 시험(실패 표시 → 계산 컨테이너 7.7초 안에 멈춤).
+- 결과와 남은 것: 적용. 구성: `airflow-init`, `airflow-apiserver`(512m), `airflow-scheduler`(1792m), `airflow-dag-processor`(768m), `airflow-triggerer`(768m), `socket-proxy`(128m), 계산 `spark-job`·`duckdb-job`(18g, profiles, 작업마다 컨테이너). 생긴 문제와 처방: F-24(덤프 덮어씀), F-25(db 재생성, 원인 미확정), F-26(잠금 밖 scratch 사용), F-27(프록시 403), F-28(auto_remove), F-29(프록시 유휴 10분 → heartbeat). 남은 것: 스케줄러가 갑자기 죽을 때 계산 컨테이너 정리(on_kill 안 불림, 미시험), 계산 컨테이너의 Spark 이벤트 로그 보존, 속도 차이 원인(반복 측정), 잠금은 자발적(잠금 없는 `docker compose run`은 막지 못함). k8s 이식은 대기(사용자, 2026-11-14). 그때 DockerOperator → KubernetesPodOperator, socket-proxy → 서비스 계정 권한, scratch 볼륨 → emptyDir.
 
 ## 결정 110. DuckDB OOM은 배치 단위 처리로 푼다: (target_ym, collected_date)마다 돌리고, 배치를 넘는 계산만 마지막에 (F-19, 측정 43)
 - 상황: 같은 관문 SQL에서 Spark는 흘리면서 끝났지만(측정 42, oom_kill 0), DuckDB는 16GiB 상한에서 threads 12와 4 모두 `OutOfMemoryException`으로 끝났다(측정 43).
@@ -1162,5 +1163,7 @@
 - 결정과 이유 (2026-11-14 사용자 결정): **A.**
   - 그 전에 `duckdb_memory()`를 옆 연결에서 주기적으로 기록하며 지금 SQL을 한 번 돌려, 어느 태그가 커지는지 남긴다(측정 43의 [확인 필요]).
   - SQL 파일은 고치지 않고 원천 뷰를 배치로 거르는 방식으로 한다. 두 엔진이 같은 SQL을 돈다는 결정 94의 조건을 지키기 위해서다.
-- 검증: [미검증] 16GiB 안에서 완주하는지, 배치별 시간과 메모리 최대, Spark 결과 표와 두 방향 `EXCEPT ALL`이 0행인지 본다.
-- 결과와 남은 것: 진행 전. 같은 배치 처리를 Spark에 대 보고 흘림이 줄어드는지는 그다음 후보(Spark 깊이 파기)다.
+- 검증 (2026-11-14~15, 계산 컨테이너 duckdb-job, 컨테이너 상한 18GiB):
+  - D1(측정 49): 지금 SQL 그대로 656.0초에 16GiB 오류(측정 43 재현). `HASH_TABLE` 최대 14.01GiB·임시 125GiB, 흘리지 않는 `ALLOCATOR`가 물결마다 쌓여 10.36GiB. 키 9개 해시 집계가 한 문장에서 두 번(H3).
+  - D2(측정 50): 배치 필터가 Iceberg 파티션까지 내려감(파일 118개 중 11개). 배치 1~3은 각 약 69초, `ALLOCATOR` 1.1GiB로 성공. 배치 4에서 누적 임시 표와 해시 집계가 16GiB를 나눠 써 오류, 그 배치만 B로 다시 하자 컨테이너 137(F-30). 2회 재현. `EXCEPT ALL`은 계산이 끝나지 않아 하지 못함.
+- 결과와 남은 것: **완주 못 함.** 배치로 나누자 D1의 원인(`ALLOCATOR` 누적)은 사라졌지만, 결과를 같은 인스턴스의 임시 표에 쌓는 방식이 새 병목이 됐다. 예산은 늘리지 않았다(J-15). 다음 후보(사용자 결정): 배치 결과를 Parquet로 내보내고 마지막에 파일로 읽기, 배치 안에서 필요한 열·행만 남기고 누적, 배치마다 DuckDB 인스턴스를 새로. 같은 배치 처리를 Spark에 대 보는 것은 그다음 후보(Spark 깊이 파기)다.

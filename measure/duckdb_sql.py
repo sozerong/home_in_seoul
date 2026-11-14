@@ -10,9 +10,17 @@ iceberg_tables)에서 지금 metadata.json 경로를 읽어 iceberg_scan으로 �
 지표: 문장마다 DuckDB 프로파일(JSON)을 /tmp/duckdb-profiles/{run_id}/에 남기고 ops.engine_run(engine='duckdb')에 한 행씩 쓴다.
   stage_id = 문장 순번, stage_ms = 지연, peak_exec_mem_bytes = 버퍼 메모리 최대, disk_spill_bytes = 임시 폴더 최대 크기.
   Spark 전용 열(태스크, 셔플, 메모리 흘림)은 0, 프로세스 최대 RSS는 jvm_heap_peak_bytes 자리에 넣는다(마지막 행).
-실행(Airflow 컨테이너, duckdb는 /tmp/duckdb_pkg에 임시 설치):
-  PYTHONPATH=/tmp/duckdb_pkg /opt/airflow/spark-venv/bin/python -m measure.duckdb_sql spark_sql/living --show batch_status --compare
+실행(계산 컨테이너 duckdb-job, 결정 109. duckdb 2.0.0과 iceberg·postgres 확장이 이미지에 있다):
+  docker compose run --rm duckdb-job python -m measure.duckdb_sql spark_sql/living --show batch_status --compare
   --memory-limit, --threads: 엔진 분석(3.10)에서 바꾼다. 기본은 DuckDB 기본값(지정하지 않음)
+  --memwatch 초: 옆 연결에서 그 간격으로 duckdb_memory()를 읽어 태그별 메모리·임시 사용을 logs/duckdb_memwatch/{run_id}.csv에
+      줄마다 flush해 쓴다(결정 110 D1). 메모리 오류로 끝나도 마지막 줄까지 남는다.
+  --per-batch: 배치(대상연월, 수집일)마다 원천 뷰를 그 배치로 걸러 checked -> clean, quarantine을 계산해 누적 표에 더하고,
+      다 끝난 뒤 batch_status(배치를 넘는 lag)와 마지막 뷰를 누적 표로 계산한다(결정 110 D2). SQL 파일은 그대로다(결정 94).
+      clean은 배치 키(target_ym, collected_date)로 묶고 quarantine은 그 키로 조인하므로 배치별 결과의 합이 전체 계산과 같다.
+      어느 배치의 clean이 메모리 오류로 끝나면 그 배치만 선택지 B(checked를 임시 표로 먼저)로 다시 계산한다(지시서 4절 넘침 규칙).
+      --batch-checked: 모든 배치에서 처음부터 B로 한다(결정 110 선택지 B).
+  --compare: 결과를 Spark 운영 표와 두 방향 EXCEPT ALL로 비교한다. --per-batch면 batch_status, quarantine도 비교한다.
 """
 import argparse
 import datetime
@@ -20,6 +28,7 @@ import json
 import os
 import re
 import resource
+import threading
 import time
 import uuid
 
@@ -78,18 +87,69 @@ class Runner:
                               "peak_exec_mem_bytes": p.get("peak_buffer_memory"), "jvm_heap_peak_bytes": None})
 
 
-def run(r, args, views, tests):
-    con = r.con
+class MemWatch:
+    """옆 연결(같은 DB 인스턴스의 두 번째 커서)에서 duckdb_memory()를 주기적으로 읽는다(결정 110 D1).
+    한 줄 = 시각 x 태그. 읽기가 실패하면(메모리 바닥 등) 그 사실을 한 줄로 남기고 계속한다."""
+
+    def __init__(self, con, seconds, run_id):
+        self.cur, self.seconds = con.cursor(), seconds
+        os.makedirs(ROOT / "logs" / "duckdb_memwatch", exist_ok=True)
+        self.path = ROOT / "logs" / "duckdb_memwatch" / f"{run_id}.csv"
+        self.f = open(self.path, "w", encoding="utf-8")
+        self.f.write("ts,tag,memory_usage_bytes,temporary_storage_bytes\n")
+        self.f.flush()
+        self.stop = threading.Event()
+        self.reset()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+        self.thread.start()
+
+    def reset(self):
+        """배치마다 최대값을 새로 잰다."""
+        self.peak_mem, self.peak_temp, self.peak_tags = 0, 0, {}
+
+    def loop(self):
+        while not self.stop.wait(self.seconds):
+            ts = datetime.datetime.now().isoformat(timespec="seconds")
+            try:
+                rows = self.cur.execute("SELECT tag, memory_usage_bytes, temporary_storage_bytes FROM duckdb_memory()").fetchall()
+            except Exception as e:  # noqa: BLE001  재는 쪽이 실패해도 본 실행은 그대로 둔다
+                self.f.write(f"{ts},ERROR,{type(e).__name__},\n")
+                self.f.flush()
+                continue
+            for tag, mem, temp in rows:
+                self.f.write(f"{ts},{tag},{mem},{temp}\n")
+                self.peak_tags[tag] = max(self.peak_tags.get(tag, 0), mem)
+            self.peak_mem = max(self.peak_mem, sum(r[1] for r in rows))
+            self.peak_temp = max(self.peak_temp, sum(r[2] for r in rows))
+            self.f.flush()
+
+    def close(self):
+        self.stop.set()
+        self.thread.join(timeout=self.seconds + 5)
+        self.f.close()
+
+
+def setup(con):
+    """코드표와 원천 뷰(lh.living.migration_rows)를 만들고 Iceberg 현재 metadata.json 경로를 돌려준다."""
     con.execute("CREATE TEMP TABLE codes (code VARCHAR)")
     con.executemany("INSERT INTO codes VALUES (?)", [(c,) for c in sorted(load_codes())])
     con.execute("ATTACH ':memory:' AS lh; CREATE SCHEMA lh.living")
-    con.execute(f"CREATE VIEW lh.living.migration_rows AS SELECT * FROM iceberg_scan('{metadata_location()}')")
+    location = metadata_location()
+    con.execute(f"CREATE VIEW lh.living.migration_rows AS SELECT * FROM iceberg_scan('{location}')")
+    return location
+
+
+def show_or_view(r, args, views):
     for name, sql in views:
         if name in args.show:
             r.execute(f"show {name}", f"CREATE TEMP TABLE {name} AS {translate(sql)}")
-            print(con.sql(f"SELECT * FROM {name}"))
+            print(r.con.sql(f"SELECT * FROM {name}"))
         else:
-            con.execute(f"CREATE TEMP VIEW {name} AS {translate(sql)}")
+            r.con.execute(f"CREATE TEMP VIEW {name} AS {translate(sql)}")
+
+
+def tests_and_result(r, views, tests):
+    """테스트를 돌리고 마지막 뷰를 result 표로 계산한다."""
     failed = []
     for name, sql in tests:
         bad = r.execute(f"test {name}", f"SELECT * FROM ({translate(sql)}) LIMIT 20")
@@ -98,15 +158,91 @@ def run(r, args, views, tests):
     if failed:
         raise SystemExit(f"테스트 실패: {failed}")
     r.execute("write result", f"CREATE TEMP TABLE result AS SELECT * FROM {views[-1][0]}")
-    print("결과 행 수:", con.sql("SELECT count(*) FROM result").fetchone()[0])
-    if args.compare:
-        con.execute("INSTALL postgres; LOAD postgres")
-        con.execute(f"ATTACH '{read_env('DATABASE_URL')}' AS pg (TYPE postgres, READ_ONLY)")
-        cols = ", ".join(c for c, in con.execute("SELECT column_name FROM duckdb_columns() WHERE database_name = 'pg' "
-                                                 "AND schema_name = 'stg' AND table_name = 'living_commute' ORDER BY column_index").fetchall())
-        diff = con.execute(f"SELECT count(*) FROM ((SELECT {cols} FROM result EXCEPT ALL SELECT {cols} FROM pg.stg.living_commute) "
-                           f"UNION ALL (SELECT {cols} FROM pg.stg.living_commute EXCEPT ALL SELECT {cols} FROM result))").fetchone()[0]
-        print(f"stg.living_commute(Spark 결과)와 두 방향 차이: {diff}행")
+    print("결과 행 수:", r.con.sql("SELECT count(*) FROM result").fetchone()[0])
+
+
+def run(r, args, views, tests, watch=None):
+    setup(r.con)
+    show_or_view(r, args, views)
+    tests_and_result(r, views, tests)
+
+
+BATCH_VIEWS = ["checked", "clean", "quarantine"]  # 배치 키로 닫힌 뷰. 나머지(batch_status, commute)는 배치를 넘는다
+
+
+def gib(b):
+    return f"{b / 2 ** 30:.2f}GiB"
+
+
+def run_per_batch(r, args, views, tests, watch):
+    """결정 110 D2. 배치마다 원천을 걸러 clean, quarantine을 누적하고, 끝난 뒤 배치를 넘는 뷰를 계산한다."""
+    con = r.con
+    location = setup(con)
+    assert [n for n, _ in views][:3] == BATCH_VIEWS, [n for n, _ in views]
+    sql = dict(views)
+    batches = r.execute("batch list", f"SELECT DISTINCT target_ym, collected_date FROM iceberg_scan('{location}') ORDER BY 1, 2")
+    print(f"배치 {len(batches)}개: {[(ym, str(cd)) for ym, cd in batches]}", flush=True)
+    stats = []
+    for i, (ym, cd) in enumerate(batches):
+        if watch:
+            watch.reset()
+        t0 = time.perf_counter()
+        con.execute(f"CREATE OR REPLACE VIEW lh.living.migration_rows AS SELECT * FROM iceberg_scan('{location}') "
+                    f"WHERE target_ym = '{ym}' AND collected_date = DATE '{cd}'")
+        con.execute("DROP VIEW IF EXISTS quarantine; DROP TABLE IF EXISTS clean; DROP VIEW IF EXISTS checked; DROP TABLE IF EXISTS checked")
+        used_b = bool(args.batch_checked)
+        if used_b:  # 선택지 B: 배치 원천을 한 번만 읽고 checked를 표로 둔다
+            r.execute(f"batch {ym} {cd} checked", f"CREATE TEMP TABLE checked AS {translate(sql['checked'])}")
+        else:
+            con.execute(f"CREATE TEMP VIEW checked AS {translate(sql['checked'])}")
+        try:
+            r.execute(f"batch {ym} {cd} clean", f"CREATE TEMP TABLE clean AS {translate(sql['clean'])}")
+        except duckdb.OutOfMemoryException:
+            if used_b:
+                raise
+            # 지시서 4절 넘침 규칙: 넘친 배치 안에서만 B로 다시. 누적 표에 넣기 전이라 다시 해도 중복이 없다
+            print(f"배치 {ym} {cd}: clean 메모리 오류 → 이 배치만 선택지 B(checked를 임시 표로)로 다시", flush=True)
+            used_b = True
+            con.execute("DROP TABLE IF EXISTS clean; DROP VIEW IF EXISTS checked")
+            r.execute(f"batch {ym} {cd} checked (B)", f"CREATE TEMP TABLE checked AS {translate(sql['checked'])}")
+            r.execute(f"batch {ym} {cd} clean (B)", f"CREATE TEMP TABLE clean AS {translate(sql['clean'])}")
+        con.execute(f"CREATE TEMP VIEW quarantine AS {translate(sql['quarantine'])}")
+        if i == 0:
+            con.execute("CREATE TEMP TABLE clean_all AS SELECT * FROM clean LIMIT 0")
+            con.execute("CREATE TEMP TABLE quarantine_all AS SELECT * FROM quarantine LIMIT 0")
+        con.execute("INSERT INTO clean_all SELECT * FROM clean")
+        r.execute(f"batch {ym} {cd} quarantine", "INSERT INTO quarantine_all SELECT * FROM quarantine")
+        sec = time.perf_counter() - t0
+        row = {"target_ym": ym, "collected_date": str(cd), "sec": round(sec, 1), "b": used_b}
+        if watch:
+            row |= {"mem_peak": watch.peak_mem, "temp_peak": watch.peak_temp,
+                    "top_tags": sorted(watch.peak_tags.items(), key=lambda kv: -kv[1])[:3]}
+        stats.append(row)
+        print(f"배치 {ym} {cd}: {sec:.1f}초{' (B)' if used_b else ''}" + (f", duckdb_memory 합 최대 {gib(watch.peak_mem)}, 임시 최대 {gib(watch.peak_temp)}, "
+                                               f"태그 최대 {[(t, gib(b)) for t, b in row['top_tags']]}" if watch else ""), flush=True)
+    con.execute("DROP VIEW quarantine; DROP TABLE clean; DROP VIEW IF EXISTS checked; DROP TABLE IF EXISTS checked")
+    con.execute("CREATE TEMP VIEW clean AS SELECT * FROM clean_all; CREATE TEMP VIEW quarantine AS SELECT * FROM quarantine_all")
+    con.execute(f"CREATE OR REPLACE VIEW lh.living.migration_rows AS SELECT * FROM iceberg_scan('{location}')")
+    if watch:
+        watch.reset()
+    show_or_view(r, args, views[3:])
+    tests_and_result(r, views, tests)
+    if watch:
+        print(f"배치를 넘는 계산(batch_status, 테스트, 마지막 뷰): duckdb_memory 합 최대 {gib(watch.peak_mem)}, 임시 최대 {gib(watch.peak_temp)}")
+    print("배치별:", json.dumps(stats, ensure_ascii=False))
+
+
+def compare(con, pairs):
+    """(DuckDB 표, stg 표) 쌍마다 DuckDB 쪽 열(운영 표에만 있는 checked_at 등은 뺀다)로 두 방향 EXCEPT ALL 행 수를 센다."""
+    con.execute("INSTALL postgres; LOAD postgres")
+    con.execute(f"ATTACH '{read_env('DATABASE_URL')}' AS pg (TYPE postgres, READ_ONLY)")
+    for mine, theirs in pairs:
+        pg_cols = {c for c, in con.execute("SELECT column_name FROM duckdb_columns() WHERE database_name = 'pg' "
+                                          f"AND schema_name = 'stg' AND table_name = '{theirs}'").fetchall()}
+        cols = ", ".join(c for c in con.execute(f"SELECT * FROM {mine} LIMIT 0").columns if c in pg_cols)
+        diff = con.execute(f"SELECT count(*) FROM ((SELECT {cols} FROM {mine} EXCEPT ALL SELECT {cols} FROM pg.stg.{theirs}) "
+                           f"UNION ALL (SELECT {cols} FROM pg.stg.{theirs} EXCEPT ALL SELECT {cols} FROM {mine}))").fetchone()[0]
+        print(f"stg.{theirs}(Spark 결과)와 {mine}의 두 방향 차이: {diff}행 (비교 열: {cols})")
 
 
 def main():
@@ -117,6 +253,9 @@ def main():
     parser.add_argument("--threads")
     parser.add_argument("--max-temp", help="임시 폴더 상한(예: 100GiB). 기본: common.temp_budget() (L3)")
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--memwatch", type=float, metavar="SEC", help="duckdb_memory()를 이 간격으로 logs/duckdb_memwatch/에 기록(D1)")
+    parser.add_argument("--per-batch", action="store_true", help="배치(대상연월, 수집일) 단위로 계산(결정 110 D2)")
+    parser.add_argument("--batch-checked", action="store_true", help="--per-batch에서 checked를 배치마다 임시 표로(결정 110 B)")
     parser.add_argument("--set", nargs="*", default=[], metavar="KEY=VALUE", help="그 밖의 DuckDB 설정(F-18 가설 시험)")
     args = parser.parse_args()
     views, tests = sql_files(ROOT / args.folder)
@@ -140,14 +279,25 @@ def main():
     con.execute("LOAD iceberg")
     con.execute("PRAGMA enable_profiling = 'json'")
     con.execute(f"PRAGMA profiling_output = '{PROFILE_DIR}/setup.json'")  # 준비 문장의 프로파일이 화면에 찍히지 않게
+    settings["mode"] = ("per_batch_checked" if args.batch_checked else "per_batch") if args.per_batch else "whole"
     r, ok, error = Runner(con, run_id), False, None
+    watch = MemWatch(con, args.memwatch, run_id) if args.memwatch else None
+    if watch:
+        print(f"memwatch: {watch.path} ({args.memwatch}초 간격)", flush=True)
     try:
-        run(r, args, views, tests)
+        (run_per_batch if args.per_batch else run)(r, args, views, tests, watch)
+        if args.compare:
+            pairs = [("result", "living_commute")]
+            if args.per_batch:
+                pairs += [("batch_status", "living_batch_status"), ("quarantine_all", "living_quarantine")]
+            compare(con, pairs)
         ok = True
     except BaseException as e:
         error = f"{type(e).__name__}: {e}"[:2000]
         raise
     finally:
+        if watch:
+            watch.close()
         run_ms = int((time.perf_counter() - t0) * 1000)
         if r.rows:
             r.rows[-1]["jvm_heap_peak_bytes"] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024  # 프로세스 최대 RSS

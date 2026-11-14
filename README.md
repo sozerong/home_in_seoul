@@ -26,6 +26,8 @@ flowchart LR
     AF -.-> W
     AF -.-> M
     AF -.-> P
+    AF -->|DockerOperator| JOB[[계산 컨테이너<br>seoul-spark-job / seoul-duckdb-job<br>작업마다 하나, 18GiB]]
+    JOB -.-> I
 ```
 
 | 층 | 무엇 | 어디 |
@@ -39,6 +41,7 @@ flowchart LR
 | 운영 대시보드 | 지금 정상인지, 어느 출처와 DAG를 고칠지 색으로 판정. 읽기 전용 계정으로 봄 | Metabase, 카드 `warehouse/sql/ops/`, 생성 `warehouse/metabase_setup.py` (결정 38, 39) |
 | 파이프라인 UI | 파이프라인 구조, 실행·관문·품질, 컬럼 리니지 지도, 변경 시나리오를 DB와 Airflow API에서 읽어 보여 주는 읽기 전용 화면 | `ui/`, [docs/ui.md](docs/ui.md) (결정 106) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
+| 실행 구조 | Airflow는 구성 요소별 컨테이너(API 서버, 스케줄러, DAG 처리기, 트리거러)로 지휘만 하고, Spark 계산은 작업마다 따로 뜨는 계산 컨테이너에서 돈다. 계산이 메모리를 넘쳐도 그 컨테이너만 끝나고 스케줄러는 산다(측정 48). 무거운 작업은 PostgreSQL advisory lock으로 컨테이너를 넘어 한 번에 하나 | `docker-compose.yml`, `dags/jobs.py`, `common.heavy_lock` (결정 109) |
 
 ## 데이터 소스
 | 영역 | 데이터 | 받는 곳 | 갱신 | 받는 방법 |
@@ -87,18 +90,27 @@ for %f in (01_stg_rent 02_stg_station_master 03_stg_congestion 05_stg_sbiz_store
 모든 DDL은 `IF NOT EXISTS`라 여러 번 실행해도 된다.
 
 ### 3. Airflow
+`.env`에 Airflow 구성 요소가 함께 쓰는 값 세 줄을 더한다(비밀 둘은 아무 긴 값, fernet 키는 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`):
 ```
-docker build -t seoul-airflow:3.3.2 .
+AIRFLOW_FERNET_KEY=...
+AIRFLOW_JWT_SECRET=...
+# DockerOperator가 계산 컨테이너에 붙일 레포의 호스트 경로(비밀 아님)
+HOST_PROJECT_DIR=C:/Users/me/new_proj
+```
+```
+docker compose build
+docker compose --profile jobs build spark-job duckdb-job
 docker compose up -d
 ```
+Airflow는 구성 요소별 컨테이너로 뜬다(결정 109): `airflow-init`(DB 준비 후 끝남), `airflow-apiserver`(화면·API), `airflow-scheduler`, `airflow-dag-processor`, `airflow-triggerer`, 그리고 계산 컨테이너를 만들 때만 쓰는 `socket-proxy`. Spark와 DuckDB는 Airflow 안에서 돌지 않고, 작업마다 `seoul-spark-job`·`seoul-duckdb-job` 컨테이너가 따로 뜬다(DAG는 DockerOperator, 손으로는 `docker compose run --rm spark-job ...`).
 http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG는 처음에 일시정지 상태다.
 무거운 작업(생활이동 정제, dbt 전체 빌드, 리니지 추출)은 pool `heavy`(크기 1)로 한 번에 하나만 돈다(`docs/resource_guard.md` L5). 처음 한 번 만든다:
 ```
-docker compose exec airflow airflow pools set heavy 1 "무거운 작업 한 번에 하나"
+docker compose exec airflow-scheduler airflow pools set heavy 1 "무거운 작업 한 번에 하나"
 ```
-이미지 안에 dbt(`/opt/airflow/dbt-venv`)와 Spark 3.5.9 + Iceberg 1.12.0(`/opt/airflow/spark-venv`, Java 17)이 각자 가상환경으로 들어 있다. Iceberg 연결 확인:
+Airflow 이미지에는 dbt(`/opt/airflow/dbt-venv`)가, `seoul-spark-job` 이미지에는 Spark 3.5.9 + Iceberg 1.12.0(Java 17)이, `seoul-duckdb-job` 이미지에는 DuckDB 2.0.0이 들어 있다. Iceberg 연결 확인:
 ```
-docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m transform.iceberg --selftest
+docker compose run --rm spark-job python -m common lock -- python -m transform.iceberg --selftest
 ```
 
 DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
@@ -116,15 +128,15 @@ DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, �
 
 과거 기간이 필요하면 백필한다(예: 전월세 4주):
 ```
-docker compose exec airflow airflow backfill create --dag-id molit_rent --from-date 2026-09-20 --to-date 2026-10-18 --reprocess-behavior none --max-active-runs 1
+docker compose exec airflow-scheduler airflow backfill create --dag-id molit_rent --from-date 2026-09-20 --to-date 2026-10-18 --reprocess-behavior none --max-active-runs 1
 ```
 
 ### 5. 마트와 데이터 상품
 스테이징이 바뀔 때마다 `wh_load` DAG가 dbt 빌드(빌드용 스키마 `wh_build`·`mart_build`에 모델과 테스트), 스키마 교체(테스트를 모두 통과하면 `wh`·`mart`로), 내보내기를 차례로 돌린다(결정 30~32). 테스트가 하나라도 실패하면 실제 `wh`·`mart`와 상품은 그대로다. 손으로 다시 만들 때:
 ```
-docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt run-operation drop_build_schemas
-docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt build
-docker compose exec -w /opt/project/warehouse/dbt airflow /opt/airflow/dbt-venv/bin/dbt run-operation swap_schemas
+docker compose exec -w /opt/project/warehouse/dbt airflow-scheduler /opt/airflow/dbt-venv/bin/dbt run-operation drop_build_schemas
+docker compose exec -w /opt/project/warehouse/dbt airflow-scheduler /opt/airflow/dbt-venv/bin/dbt build
+docker compose exec -w /opt/project/warehouse/dbt airflow-scheduler /opt/airflow/dbt-venv/bin/dbt run-operation swap_schemas
 python -m warehouse.export_product
 ```
 모델 사이의 관계 그림은 `dbt docs generate` 후 `dbt docs serve`로 볼 수 있다.
@@ -147,9 +159,11 @@ http://127.0.0.1:8090 을 연다. 내 PC에서만 열린다.
 ### 7. 확인
 ```
 for %f in (tests\test_*.py) do python -m tests.%~nf
-docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap
-docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_scratch
-docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_living_conflict
+docker compose run --rm spark-job python -m tests.check_runner_swap
+docker compose run --rm spark-job python -m tests.check_scratch
+docker compose run --rm duckdb-job python -m tests.check_scratch
+docker compose run --rm spark-job python -m tests.check_living_conflict
+python -X utf8 tests\check_heavy_lock.py
 docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 ```
 `tests\test_*.py`는 DB 없이 돌아 CI(`.github/workflows/ci.yml`)도 같은 것을 돌린다. DB가 필요한 확인은 `tests\check_*.py`다(CI 밖). `demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
@@ -175,13 +189,13 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 
 | 주장 | 증명 방법 | 수치 | 다시 돌리는 명령 |
 |---|---|---|---|
-| 원천이 바뀌어도 SQL만 고친다 | 같은 가정(쓰는 필드 이름 변경 S1, 요구 추가 S6b)을 정제를 SQL로 옮기기 전과 후에 시험 | S1: 옮기기 전에는 코드·시험·문서 5개 파일을 고쳐야 했고 고친 뒤에는 옛 수집일을 다시 못 돌렸다(측정 13). 옮긴 뒤에는 2줄(매크로 별칭, `coalesce`)로 10-21·11-03 두 수집일 모두 65,169행(측정 23). S6b: 정제 Python 4곳 이상과 DDL(측정 18) → 마트 파일 1개, 기존 상품 4표 차이 0(측정 34) | `docker compose exec -w /opt/project airflow python -m measure.s1_sql`<br>`docker compose exec -w /opt/project airflow python -m measure.s6b_sql` |
-| 옮겨도 결과가 같다 | 옛 결과를 보관하고 새 경로로 다시 만든 뒤 두 방향 `EXCEPT ALL`(+ 열 타입, 상품 sha256) | 혼잡도 325,845행, 전월세 450,957행 + 격리 11행, 생활이동 Python → Spark SQL 차이 0(측정 23, 24, 33). 생활이동 실행기 처방(F-9) 전후 경계 13,782,826행·격리 31,935,758행·판정 10행 차이 0(측정 42) | `docker compose exec -T db psql -U seoul -d seoul < measure\living_keep_compare.sql` (보관본이 있을 때, guarantees 2.2) |
+| 원천이 바뀌어도 SQL만 고친다 | 같은 가정(쓰는 필드 이름 변경 S1, 요구 추가 S6b)을 정제를 SQL로 옮기기 전과 후에 시험 | S1: 옮기기 전에는 코드·시험·문서 5개 파일을 고쳐야 했고 고친 뒤에는 옛 수집일을 다시 못 돌렸다(측정 13). 옮긴 뒤에는 2줄(매크로 별칭, `coalesce`)로 10-21·11-03 두 수집일 모두 65,169행(측정 23). S6b: 정제 Python 4곳 이상과 DDL(측정 18) → 마트 파일 1개, 기존 상품 4표 차이 0(측정 34) | `docker compose exec -w /opt/project airflow-scheduler python -m measure.s1_sql`<br>`docker compose exec -w /opt/project airflow-scheduler python -m measure.s6b_sql` |
+| 옮겨도 결과가 같다 | 옛 결과를 보관하고 새 경로로 다시 만든 뒤 두 방향 `EXCEPT ALL`(+ 열 타입, 상품 sha256) | 혼잡도 325,845행, 전월세 450,957행 + 격리 11행, 생활이동 Python → Spark SQL 차이 0(측정 23, 24, 33). 생활이동 실행기 처방(F-9) 전후 경계 13,782,826행·격리 31,935,758행·판정 10행 차이 0(측정 42). Airflow 지휘·계산 분리(결정 109) 뒤 계산 컨테이너에서 같은 실행: 같은 행 수, 상품 데이터 파일 8개 sha256이 분리 전과 같음(측정 46) | `docker compose exec -T db psql -U seoul -d seoul < measure\living_keep_compare.sql` (보관본이 있을 때, guarantees 2.2) |
 | 다시 돌려도 같다 | 같은 입력을 다시 처리하고 결과 비교 | 같은 생활이동 zip을 Airflow DAG로 다시 넣어 세 표 차이 0, 상품 파일 8개 sha256 같음(측정 42). Iceberg 같은 파티션 두 번 덮어쓰기 차이 0(측정 9). 전월세 처리 단위 백필 6회(측정 6) | 레이크의 zip을 `lake\_inbox\living_migration\`에 다시 넣고 Airflow에서 `file_living_migration` 실행 뒤 위 비교. 처리 단위 하나는 Airflow 화면에서 Clear |
-| 전부 되거나 전부 안 된다 | 교체 도중 실패를 일부러 넣는다 | 스키마 교체: 둘째 스키마 실패 → 첫째도 취소(결정 32), 실제 wh_load에서도 1회(결정 61). 실행기 교체: 첫 표를 0행으로 두면 둘째 표도 이전 그대로(F-13). 실제 실행에서 세 표 교체가 한 트랜잭션 448.6초(측정 42) | `docker compose exec -w /opt/project airflow /opt/airflow/spark-venv/bin/python -m tests.check_runner_swap` |
-| 실패는 드러난다 | 나쁜 입력과 자원 고갈을 일부러 만든다 | 쓰는 키 이름 변경 → 관문 거절(측정 23, 30). 한 배치의 9.95%를 깨뜨림 → 그 배치만 거절, 다른 출처는 갱신(측정 25). 메모리 초과 → 그 컨테이너만 종료 코드 137, PostgreSQL 탐침 모두 성공(F-17). 임시 공간 상한 → DuckDB가 오류로 끝나고 VM은 멈추지 않음(측정 39) | `.venv\Scripts\python -u -m measure.induce_guard mem`<br>`.venv\Scripts\python -u -m measure.induce_guard disk` |
+| 전부 되거나 전부 안 된다 | 교체 도중 실패를 일부러 넣는다 | 스키마 교체: 둘째 스키마 실패 → 첫째도 취소(결정 32), 실제 wh_load에서도 1회(결정 61). 실행기 교체: 첫 표를 0행으로 두면 둘째 표도 이전 그대로(F-13). 실제 실행에서 세 표 교체가 한 트랜잭션 448.6초(측정 42) | `docker compose run --rm spark-job python -m tests.check_runner_swap` |
+| 실패는 드러난다 | 나쁜 입력과 자원 고갈을 일부러 만든다 | 쓰는 키 이름 변경 → 관문 거절(측정 23, 30). 한 배치의 9.95%를 깨뜨림 → 그 배치만 거절, 다른 출처는 갱신(측정 25). 메모리 초과 → 그 계산 컨테이너만 종료 코드 137, 스케줄러 하트비트 간격 최대 6.4초(평소 약 5초), 같이 돈 DAG·dbt 성공(3회, 측정 48). 실제 DuckDB 측정이 컨테이너 상한에 닿았을 때도 Airflow는 그대로(측정 50). 임시 공간 상한 → DuckDB가 오류로 끝나고 VM은 멈추지 않음(측정 39, 48) | `python -X utf8 -u -m measure.induce_guard mem 3`<br>`python -X utf8 -u -m measure.induce_guard disk` |
 
-한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42).
+한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42). 계산을 작업 컨테이너로 뺀 뒤에는 11.3% 느렸다(1회, 원인 미확정, 측정 46). 같은 SQL을 DuckDB로 16GiB 안에서 끝내는 것은 배치 단위 처리로도 아직 못 했다(측정 49, 50, F-30).
 
 ## 도구를 고른 이유
 | 도구 | 쓰나 | 이유 |
@@ -195,7 +209,7 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 ## 실패했을 때
 - 작업이 실패하면 `logs\alerts.log`에 DAG, 작업, 처리 단위, 원인이 한 줄씩 남는다.
 - 처리 단위 하나(예: `offi_11680_202609`)만 Airflow 화면에서 Clear하면 그 칸만 다시 돈다. 모든 적재는 처리 단위마다 지우고 다시 넣으므로 몇 번을 다시 돌려도 결과가 같다. 거절된 배치는 운영 대시보드 "거절된 배치" 카드에 보인다.
-- 무거운 실행(생활이동 실행기, dbt 전체 빌드, 리니지 추출, DuckDB 측정)은 `/tmp/heavy.lock`으로 한 번에 하나만 돈다. 컨테이너 메모리 상한(Airflow 22g, db 4g 등)은 `docker-compose.yml`에 있다. 넘치면 그 작업만 오류로 끝나고 다른 서비스는 계속 돈다([docs/resource_guard.md](docs/resource_guard.md), 결정 101, guarantees 2.7).
+- 무거운 실행(생활이동 실행기, dbt 전체 빌드, 리니지 추출, DuckDB 측정)은 PostgreSQL advisory lock(`common.heavy_lock()`, 셸에서는 `python -m common lock -- <명령>`)으로 컨테이너를 넘어 한 번에 하나만 돈다. 컨테이너 메모리 상한(db 4g, 계산 컨테이너, Airflow 구성 요소별)은 `docker-compose.yml`에 있다. 계산 컨테이너가 넘치면 그 컨테이너만 OOM으로 끝나고(남겨 두어 `docker inspect`로 원인을 본다) 스케줄러와 다른 서비스는 계속 돈다([docs/resource_guard.md](docs/resource_guard.md), 결정 101, 109, guarantees 2.7).
 - Docker 가상 디스크(`docker_data.vhdx`)는 컨테이너 안에서 파일을 지워도 줄지 않는다. 호스트 C: 여유가 줄면 `wsl -d docker-desktop -e /sbin/fstrim -v /mnt/docker-desktop-disk` 뒤 Docker를 끄고 `wsl --shutdown`, 관리자 diskpart `compact vdisk`(측정 36).
 - PostgreSQL이 비정상 종료에서 복구되면 누적 통계가 지워져 autovacuum이 대상을 모른다. 복구 뒤 `ANALYZE`를 한 번 돌린다(F-3).
 
