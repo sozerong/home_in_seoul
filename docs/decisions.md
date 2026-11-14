@@ -1108,9 +1108,59 @@
 - 결정과 이유 (사용자, 2026-11-14): 위 표의 "고른 것". 에이전트의 일은 바뀐 데이터에 맞게 SQL(`warehouse/dbt/models/stg_dbt/**`, `macros/**`)을 고치는 것 하나다. 판정 G1~G5, PR, 알림은 에이전트 밖의 코드가 한다(에이전트가 자기 결과를 채점하지 않게). 경고만 있는 신호(모르는 키)는 에이전트를 돌리지 않는다. D2~D4는 사용자 답이 없어 설계도의 제안을 가정으로 둔다.
 - 검증: 정답표 `docs/agent_answer_key.json` 사용자 승인(A0, 2026-11-14). 에이전트 실행 전에 커밋한다. A1 완료 기준(design_agent.md 11.6), A6 평가에서 거짓 통과 0, 사례마다 3회.
 - 결과와 남은 것 (A0 확인, 2026-11-14):
+  - SDK 설치(2026-11-14, 사용자 승인): Airflow 기본 환경에 `claude-agent-sdk==0.2.182`. dry-run에서 새로 깔리는 것은 SDK 하나뿐이었고 기존 패키지 버전 변화 없음. 내장 CLI `_bundled/claude` 2.1.325가 돌고(node 불필요), 설치 크기 351MB. 별도 venv 제안은 의존이 겹치지 않아 거뒀다. `Dockerfile`에 같은 줄을 넣었다(컨테이너를 다시 만들 때 적용).
   - SDK: `claude-agent-sdk` 0.2.182, Python 3.10 이상, 플랫폼별 wheel(manylinux x86_64 약 150MB대)이다. Claude Code 실행 파일이 wheel에 함께 들어 있는 것으로 보이며 Airflow 컨테이너에 node는 없다. 함께 들어 있는지는 설치할 때 확인한다 [확인 필요]. 의존(mcp >=1.23 <3, anyio, jsonschema)은 컨테이너의 mcp 2.3.0, anyio 4.15.1, jsonschema 4.26.0과 맞는다. 설치 위치는 dbt-venv, spark-venv와 같은 방식의 별도 venv(`/opt/airflow/agent-venv`)를 제안한다.
+  - 인증 확인(2026-11-14): Airflow 컨테이너에서 SDK 한 턴(도구 없음). init 메시지 `apiKeySource: none`(API 키를 쓰지 않음), 모델 `claude-opus-5-5`, `is_error: False`, 2.47초. `total_cost_usd` 0.0766은 SDK가 토큰 수로 계산해 보여 주는 값이고, 구독 토큰 인증이라 청구액은 아닌 것으로 본다 [확인 필요]. 짧은 질문 하나에도 이 정도가 잡히는 것은 Claude Code 시스템 프롬프트가 커서다(턴마다 고정으로 드는 몫).
   - 컨테이너: git 있음(`/usr/bin/git`), `/scratch` 볼륨 여유 783G (D3 가정 성립).
   - API 키: `.env`에 `ANTHROPIC_API_KEY` 없음. 사용자가 발급해 넣어야 한다.
   - GitHub: 레포 `sozerong/home_in_seoul`은 **공개**이고 main **보호 없음**. 지금 gh 토큰은 `repo` 전체 범위라 7절 조건(이 레포만, PR 생성까지)보다 넓다. 이 레포만 고른 fine-grained 토큰(contents, pull requests 쓰기)과 main 보호 규칙(PR, CI 통과 필수)이 A5 전에 있어야 한다. 공개 레포라 PR 본문의 원본 표본도 공개된다(공공데이터라 문제는 작다고 보지만 결정이 필요).
   - 정답표에서 드러난 것: 신호가 생기는 사례는 S1, M1, M7 셋이다. M2, M3, M4, M6은 관문 규칙이 그 값 변화를 보지 않아 신호가 없다(에이전트 범위 밖, 대조군으로 쓴다). S3는 신호가 없어 판정 코드 사례다. M5는 결정 105로 재현 불가라 뺐다.
   - 순서: handoff_decisions.md(F-9 실행, 측정 42, 43)와 UI 세션이 끝난 뒤 A1을 시작한다. A1은 dbt 빌드와 heavy 잠금을 쓴다.
+
+## 결정 109. 무거운 계산을 Airflow 컨테이너 밖 작업 컨테이너로 뺀다: standalone 해체 + DockerOperator (결정 101 B를 Docker 단계로 앞당김)
+- 상황: 결정 101은 상한을 Airflow 컨테이너 하나(22g)에 걸고, 넘치면 스케줄러까지 함께 죽는 단점을 알면서 B(작업 컨테이너 분리)를 k8s 이식 때로 미뤘다. 그 사이 문제가 네 가지로 드러났다.
+  - 장애 범위: DuckDB가 같은 컨테이너에서 넘쳐 VM이 멈추고 스케줄러 하트비트가 약 69분 끊겼다(F-16). 상한을 건 뒤에도 DuckDB는 16GiB에서 OOM으로 끝났다(F-19, 측정 43).
+  - 직렬화: 무거운 작업 잠금 때문에 에이전트 판정 도구를 실제 데이터로 미리 돌리지 못했다(F-23).
+  - 이미지: 엔진이 이미지 하나에 모두 들어 있다(결정 30 D3).
+  - 권한: 레포 전체를 쓰기로 마운트해 F-22가 났다.
+- LocalExecutor에서는 작업이 스케줄러 프로세스의 자식이다(Airflow 3.3 Architecture Overview). 그래서 standalone만 쪼개서는 계산이 스케줄러 컨테이너를 떠나지 않는다.
+- 선택지:
+  - A. 그대로(결정 101 A). 장점: 일이 없다. 단점: 위 문제가 그대로 남는다.
+  - B. standalone 해체만. 장점: API 서버와 DAG 처리기가 보호된다. 단점: 계산은 여전히 스케줄러 컨테이너 안이다.
+  - C. standalone 해체 + DockerOperator로 작업마다 계산 컨테이너.
+    - 장점: 계산이 자기 cgroup에서 돈다. 이미지와 권한이 분리된다. LocalExecutor와 pool `heavy`를 그대로 쓴다. k8s 때 KubernetesPodOperator로 1:1 바뀐다.
+    - 단점: Docker 소켓 권한(프록시로 제한한다), 컨테이너 시작 지연, `flock` 잠금을 옮겨야 한다.
+  - D. Celery 큐 워커(무거운 작업 전용 상주 워커).
+    - 장점: 공식 compose 구성이다.
+    - 단점: Redis와 executor 변경이 필요하다. 상주 워커라 비정상 종료 찌꺼기(F-20)가 남는다. k8s 때 다시 설계해야 한다.
+- 결정과 이유 (2026-11-14 사용자 결정): **C.** Docker Compose에서 흔히 쓰는 방식이고, 지금 구조를 살리면서 같은 설계가 k8s 이식(대기 중)으로 이어진다.
+  - 범위: Spark(생활이동 적재와 실행기, 리니지 추출)와 DuckDB(측정 도구).
+  - dbt는 Airflow 이미지에 남긴다. wh_load, `agent/sandbox.py`, 측정 도구가 `dbt-venv`를 쓰고, 계산은 주로 PostgreSQL 쪽이다. dbt 프로세스 RSS는 스케줄러 상한 근거로만 잰다.
+  - SQL 에이전트 컨테이너는 이번 범위 밖이다.
+  - 진행은 `docs/handoff_airflow_split.md`를 따른다.
+- 검증: [미검증]
+  1. 계산 컨테이너를 일부러 OOM 내는 동안 스케줄러 하트비트 공백, 같이 돈 DAG의 성공 여부, 종료 코드 137이 찍힌 컨테이너를 본다.
+  2. 생활이동 전체 실행 뒤 상품 sha256이 분리 전과 같은지 본다.
+  3. Airflow 이미지 크기와 빌드 시간을 전후로 잰다.
+- 결과와 남은 것: 진행 전. k8s 이식은 대기(사용자, 2026-11-14).
+
+## 결정 110. DuckDB OOM은 배치 단위 처리로 푼다: (target_ym, collected_date)마다 돌리고, 배치를 넘는 계산만 마지막에 (F-19, 측정 43)
+- 상황: 같은 관문 SQL에서 Spark는 흘리면서 끝났지만(측정 42, oom_kill 0), DuckDB는 16GiB 상한에서 threads 12와 4 모두 `OutOfMemoryException`으로 끝났다(측정 43).
+  - F-19의 가장 유력한 원인은 한 문장 안 큰 연산자 여럿이 동시에 메모리를 잡는 것(H3)이다. DuckDB 문서(How to Tune Workloads, Out of Memory Errors)도 blocking operator가 여럿인 쿼리는 OOM이 날 수 있다고 적는다.
+  - 어느 연산자가 메모리를 못 놓는지는 실패한 문장의 프로파일이 없어 모른다.
+  - 생활이동 SQL의 무거운 묶기와 조인 키(`20_clean`, `21_quarantine`, `22_batch_status`의 q·p)는 모두 `target_ym, collected_date`를 포함한다. 배치를 넘는 계산은 `22_batch_status`의 `lag`(배치별 집계 위) 하나뿐이다.
+  - 한 달(202607, 1억 4,118만 행) 키 8개 묶기는 2GiB 상한에서 17.5초에 끝났다(F-19 H2).
+- 선택지:
+  - A. 배치 단위 처리.
+    - 장점: 묶기 키가 배치 키를 포함해 결과가 구조상 같다. 한 번에 잡는 메모리가 배치 크기로 준다. 설계 원칙 2(파티션 단위 처리, 실패하면 그 단위만)와 맞다.
+    - 단점: 실행기에 반복이 생긴다. 배치마다 원본을 스캔하는 비용이 든다(DuckDB iceberg 읽기에서 파티션 걸러내기가 되는지 확인 필요).
+  - B. 문장 쪼개기(`checked`, `clean`을 임시 표로).
+    - 장점: DuckDB 문서가 권하는 방법이고, 중간 결과가 어디서 커지는지 보인다.
+    - 단점: 14억 행 중간 표를 임시 공간에 쓴다.
+  - C. 설정 조정(threads, memory_limit, preserve_insertion_order): 측정 39·43과 F-19 H1에서 이미 실패했다.
+  - D. 예산 늘리기: J-15와 충돌한다.
+- 결정과 이유 (2026-11-14 사용자 결정): **A.**
+  - 그 전에 `duckdb_memory()`를 옆 연결에서 주기적으로 기록하며 지금 SQL을 한 번 돌려, 어느 태그가 커지는지 남긴다(측정 43의 [확인 필요]).
+  - SQL 파일은 고치지 않고 원천 뷰를 배치로 거르는 방식으로 한다. 두 엔진이 같은 SQL을 돈다는 결정 94의 조건을 지키기 위해서다.
+- 검증: [미검증] 16GiB 안에서 완주하는지, 배치별 시간과 메모리 최대, Spark 결과 표와 두 방향 `EXCEPT ALL`이 0행인지 본다.
+- 결과와 남은 것: 진행 전. 같은 배치 처리를 Spark에 대 보고 흘림이 줄어드는지는 그다음 후보(Spark 깊이 파기)다.
