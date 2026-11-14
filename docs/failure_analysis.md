@@ -580,3 +580,10 @@
 - 처방: (1) 기록을 손으로 되살렸다: `.git/worktrees/new_proj_ui/`에 `HEAD`(`ref: refs/heads/ui`), `commondir`, `gitdir`를 쓰고, UI 폴더에서 `git reset -q`(작업 파일은 건드리지 않고 index만 HEAD로 다시 만듦). 뒤에 `git status`가 사고 전과 같은 변경(수정 2, 새 파일 6묶음)을 보였다. 사고 전에 stage해 둔 것이 있었다면 그 stage 상태는 잃었다(작업 파일은 남음). (2) `agent/run.py`는 `prune` 대신 `/scratch` 아래를 가리키는 기록만 지운다(`forget_scratch_worktrees`).
 - 재발 방지: 컨테이너 안에서 저장소 전체에 걸리는 git 정리 명령(`worktree prune`, `gc`)을 돌리지 않는다. 한계: 컨테이너에서 `git commit`이 자동 `gc`를 부르면 `gc.worktreePruneExpire`(기본 3개월)보다 오래된 호스트 worktree 기록은 같은 이유로 지워질 수 있다 [미측정]. UI worktree를 3개월 넘게 두면 다시 본다.
 - 상태: **처방함.**
+
+## F-23. SQL 에이전트 첫 실행에서 드러난 도구·판정 버그 3개 (측정 45, 2026-11-14)
+- ① 보고가 사라짐: `no_fix`일 때 빈 브랜치를 지우는데, 그 브랜치가 아직 worktree에 체크아웃돼 있어 `git branch -D`가 실패했다. 보고 출력이 그 뒤에 있어 신호와 에이전트 답이 남지 않았다. 처방: 보고를 `finally`에서 항상 출력하고(예외는 다시 올림), 빈 브랜치는 worktree를 지운 뒤 지운다.
+- ② 에이전트가 바뀐 데이터를 못 봄: 원본 표본 도구가 운영 `raw.congestion`을 읽었다. 기준선은 변이 뷰 `raw_sbx_base`로 빌드했으므로 에이전트가 본 데이터와 신호를 만든 데이터가 달랐다. 에이전트는 추측하지 않고 "확인하지 못함"으로 멈췄다(바른 동작). 같은 실행에서 상대 경로(`Grep warehouse`)가 worktree가 아니라 프로세스 작업 폴더 기준으로 해석돼 거절됐다. 처방: 표본은 기준선이 읽은 `raw_sbx_<라벨>`과 `stg_dbt_sbx_<라벨>.*_rows`(거절 배치는 격리 표에 안 들어가므로)에서, 경로는 worktree 기준으로 푼다. selftest에 상대 경로 사례를 더했다.
+- ③ G2 거짓 실패: `batch_status_*.checked_at`, `*_quarantine.quarantined_at`은 빌드마다 `now()`라 같은 코드의 두 빌드도 모든 행이 다르다. 차이 수가 행 수의 정확히 2배(1,352 → 2,704, 2 → 4, 11 → 22)라 알아봤다. 처방: 비교에서 `checked_at`, `quarantined_at`, `loaded_at`을 뺀다(`agent/sandbox.py` `VOLATILE`).
+- 공통 원인: 판정 도구를 실제 데이터로 한 번도 돌리지 않고 에이전트와 함께 처음 돌렸다(F-9 실행으로 heavy 잠금이 잡혀 있었음). 재발 방지: 새 판정 코드는 에이전트 없이 사람 브랜치(`--cand-branch`)로 먼저 돌린다. 같은 코드 두 빌드의 G2·G5가 0인지 보는 대조(같은 브랜치를 기준선·후보로)를 다음 평가 전에 한 번 돌린다.
+- 상태: **처방함.** 대조 실행은 아직.

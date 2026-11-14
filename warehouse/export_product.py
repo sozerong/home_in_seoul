@@ -42,11 +42,12 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def actual_schema(conn):
-    """{표: [[컬럼, 타입]]}. 타입은 format_type이라 char(6), numeric(10,1)처럼 길이까지 나온다."""
+def actual_schema(conn, schema="mart"):
+    """{표: [[컬럼, 타입]]}. 타입은 format_type이라 char(6), numeric(10,1)처럼 길이까지 나온다.
+    schema: 격리 빌드(agent/sandbox.py G4)는 mart_sbx_<라벨>을 넘긴다."""
     return {name: [list(r) for r in conn.execute(
         "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
-        "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum", [f"mart.{name}"])]
+        "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum", [f"{schema}.{name}"])]
         for name in TABLES}
 
 

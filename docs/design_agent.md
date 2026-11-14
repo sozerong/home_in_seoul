@@ -159,7 +159,7 @@
 | 원천 값 속 문장을 지시로 따름 | 원본 표본은 데이터로만 전달하고 Bash가 없다. 고칠 수 있는 경로가 SQL 모델로 묶여 있다 |
 | 비용 폭주 | 신호 한 건에 실행 하나, 같은 신호 중복 처리 안 함, 턴·시간 상한. 실행마다 토큰과 비용을 `ops.agent_run`에 남김 |
 | 자원 고갈(F-16, F-20 재발) | heavy pool과 잠금, `/scratch` 작업 공간, 끝날 때 스키마·worktree 정리 |
-| 비밀 노출 | API 키, GitHub 토큰, Slack 주소는 `.env`에만 둔다(CLAUDE.md 5절) |
+| 비밀 노출 | Max 구독 토큰(`CLAUDE_CODE_OAUTH_TOKEN`, 결정 108 인증), GitHub 토큰, Slack 주소는 `.env`에만 둔다(CLAUDE.md 5절). 에이전트는 worktree 밖을 읽지 못해 `.env`를 볼 수 없다 |
 
 ---
 

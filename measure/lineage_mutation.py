@@ -1,4 +1,5 @@
-# 8절 은퇴 뒤 재현 불가(옛 표 stg.living_migration·옛 정제 코드 필요, 결정 105로 지움). 재현하려면 커밋 3efb02f를 체크아웃한다.
+# M5는 8절 은퇴 뒤 재현 불가(옛 표 stg.living_migration, 결정 105로 지움)라 뺐다. 측정 31의 M5는 커밋 3efb02f에서 재현한다.
+# 뷰 만들기와 비교는 agent/sandbox.py와 함께 쓴다(결정 108 D4).
 """변이 시험 (P4-6, 결정 49, 59). 리니지 지도가 말하는 영향을 실제 실행으로 확인한다.
 
 변이 하나마다:
@@ -26,16 +27,10 @@ import time
 import psycopg
 
 from common import read_env
-from lineage.product import product_tables
+from agent.sandbox import diff, make_views, mutation_params, predicted
 
 DBT = ["/opt/airflow/dbt-venv/bin/dbt"]
 DBT_DIR = "/opt/project/warehouse/dbt"
-SOURCES = {"stg": ["sgis_dong", "parcel", "station_master", "living_migration"],
-           "raw": ["congestion", "rent", "sbiz_store"]}
-KEYS = {"dong_profile": ["dong_id"], "commute_od": ["origin_dong_id", "dest_dong_id"],
-        "dong_mois_map": ["mois_dong_cd"], "rent_listing": []}  # rent_listing은 거래 고유 키가 없다
-
-
 def set_key(key, value, when):
     """raw jsonb의 키 하나를 조건에 맞는 행만 바꾸는 식. 원천 값은 모두 문자열이라 문자열로 넣는다."""
     return f"CASE WHEN {when} THEN jsonb_set(raw, ARRAY['{key}'], to_jsonb(({value})::text)) ELSE raw END"
@@ -58,8 +53,6 @@ MUTATIONS = {
     "M4": ({"raw.rent": {"raw": set_key("monthlyRent", "'0'",
                                         "btrim(raw ->> 'monthlyRent') NOT IN ('0', '') AND item_no % 10 = 0")}},
            "dong_profile.monthly_*, jeonse_*", [("raw.rent", "raw.monthlyRent")]),
-    "M5": ({"stg.living_migration": {"age": "CASE WHEN age = '25' THEN '26' ELSE age END"}},
-           "commute_od.avg_minutes_age20_34, population_age20_34, basis, avg_minutes", [("stg.living_migration", "age")]),
     "M6": ({"raw.sbiz_store": {"raw": set_key("상권업종소분류코드", "'Z99999'",
                                               "raw ->> '상권업종소분류코드' = 'G20405' AND row_no % 2 = 0")}},
            "dong_profile.convenience_store*", [("raw.sbiz_store", "raw.상권업종소분류코드")]),
@@ -68,27 +61,8 @@ MUTATIONS = {
 }
 
 
-def columns(conn, schema, table):
-    return [r[0] for r in conn.execute("SELECT column_name FROM information_schema.columns WHERE table_schema = %s "
-                                       "AND table_name = %s ORDER BY ordinal_position", [schema, table])]
-
-
 def make_mut(conn, changes, params):
-    for schema, tables in SOURCES.items():
-        conn.execute(f"DROP SCHEMA IF EXISTS {schema}_mut CASCADE; CREATE SCHEMA {schema}_mut")
-        for table in tables:
-            name = f"{schema}.{table}"
-            exprs = changes.get(name, {})
-            cols = columns(conn, schema, table)
-            assert set(exprs) <= set(cols), (name, exprs)
-            select = ", ".join(f"({exprs[c]})::{typ(conn, name, c)} AS {c}" if c in exprs else c for c in cols)
-            conn.execute(f"CREATE VIEW {schema}_mut.{table} AS SELECT {select} FROM {name}".replace(
-                "%(station)s", f"'{params['station']}'"))
-
-
-def typ(conn, table, column):
-    return conn.execute("SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = %s::regclass "
-                        "AND attname = %s", [table, column]).fetchone()[0]
+    make_views(conn, "_mut", changes, params)
 
 
 def dbt(suffix):
@@ -98,36 +72,6 @@ def dbt(suffix):
                              cwd=DBT_DIR, capture_output=True, text=True)
         if out.returncode != 0:
             raise SystemExit(f"dbt {cmd[0]} 실패 ({suffix}):\n{out.stdout[-3000:]}")
-
-
-def diff(conn, left, right):
-    """상품 표마다 (행 수 차이, 값이 바뀐 컬럼)."""
-    result = {}
-    for table in product_tables():
-        key = KEYS[table]
-        rows = [conn.execute(f"SELECT count(*) FROM {s}.{table}").fetchone()[0] for s in (left, right)]
-        changed = []
-        for c in columns(conn, right, table):
-            if c in key:
-                continue
-            pick = ", ".join(key + [c])
-            n = conn.execute(f"SELECT count(*) FROM ((SELECT {pick} FROM {left}.{table} EXCEPT ALL "
-                             f"SELECT {pick} FROM {right}.{table}) UNION ALL (SELECT {pick} FROM {right}.{table} "
-                             f"EXCEPT ALL SELECT {pick} FROM {left}.{table})) d").fetchone()[0]
-            if n:
-                changed.append(c)
-        result[table] = {"rows": rows, "changed": changed}
-    return result
-
-
-def predicted(conn, pairs):
-    """지도: 바꾼 원천 (표, 컬럼)에서 닿는 상품 컬럼."""
-    found = set()
-    for t, c in pairs:
-        found |= {(r[0].removeprefix("product."), r[1]) for r in conn.execute(
-            "SELECT to_table, to_column FROM lineage.downstream WHERE from_table = %s AND from_column = %s "
-            "AND is_product", [t, c])}
-    return found
 
 
 def drop_all(conn):
@@ -141,10 +85,8 @@ def main():
         run = conn.execute("SELECT run_id, git_commit FROM lineage.run WHERE status = 'success' "
                            "ORDER BY run_id DESC LIMIT 1").fetchone()
         print(f"지도: lineage 회차 {run[0]} (git {str(run[1])[:7]})")
-        # M3: 동 하나(가장 작은 dong_id)의 가장 가까운 역을 옮긴다. 그 동의 결과는 반드시 바뀐다
-        station = conn.execute("SELECT s.bldn_id FROM mart.dong_profile p JOIN stg.station_master s "
-                               "ON s.bldn_nm = p.nearest_station_nm ORDER BY p.dong_id, s.bldn_id LIMIT 1").fetchone()[0]
-        params = {"station": station}
+        params = mutation_params(conn)  # M3: 동 하나의 가장 가까운 역
+        station = params["station"]
         try:
             started = time.perf_counter()
             make_mut(conn, {}, params)
