@@ -1164,3 +1164,31 @@
   - 넘친 것은 배치의 크기가 아니라 **쌓이는 누적 표**다. `clean_all`은 배치마다 약 1억 4천만 행(키 9개 + 값)이 더해지는 임시 표이고, DuckDB는 임시 표도 같은 버퍼 풀(16GiB)에서 관리한다. 배치가 지날수록 `IN_MEMORY_TABLE`이 해시 집계와 메모리를 다퉈, 4번째 배치에서 해시 집계가 넘쳤다(측정 49의 `ALLOCATOR`와 다른 원인).
   - 선택지 B는 이 상황에서 도리어 `IN_MEMORY_TABLE`을 더 키웠고(`checked` 임시 표), DuckDB 계산 밖 할당을 더하자 컨테이너 상한(18GiB = 16GiB + 2GiB 여유)을 먼저 넘었다. 컨테이너 상한은 H5 규칙(18.04 → 18g)으로 정했고 J-15로 예산을 늘리지 않았다.
   - 고칠 길(재지 않음): 누적을 DuckDB 임시 표가 아니라 배치마다 파일(Parquet)로 내보내 버퍼 풀에서 빼기, `clean`을 배치 안에서 끝까지 줄여 누적량 줄이기(30_commute가 쓰는 열·행만), `preserve_insertion_order=false`. 모두 결정 110 범위 밖의 새 선택이라 하지 않았다.
+
+## 측정 51. DuckDB 배치마다 새 프로세스 + Parquet 넘김, 생활이동 전체 완주 (결정 111 D3·D4, 2026-11-15 00:47~01:09)
+- 조건: Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. 계산 컨테이너 `seoul-duckdb-job:2.0.0`(DuckDB 2.0.0), 컨테이너 상한 18GiB·스왑 금지·cpus 12(결정 109 H5). DuckDB `memory_limit` 16GiB, threads 12(넘치면 그 단계만 4), 임시 상한 `temp_budget()`(약 515GiB), `--memwatch 5`. 입력 Iceberg 10달 1,405,791,964행, 스냅샷 `00017-e1460eea...metadata.json`(모든 자식이 같은 스냅샷). 명령 `docker compose run --rm duckdb-job python -u -m measure.duckdb_sql spark_sql/living --per-batch-proc --memory-limit 16GiB --threads 12 --memwatch 5 --compare`. SQL 파일 그대로(결정 94). 1회.
+- 작은 시험(D3, 배치 202510·202511, `--memory-limit 4GiB`): 207.4초, 배치 98.6·79.4초, Spark 표를 같은 두 배치로 거른 두 방향 `EXCEPT ALL` 세 표 모두 0.
+- 결과(D4): **완주, 658.8초.** Spark 결과 세 표와 두 방향 `EXCEPT ALL` **모두 0행**: `stg.living_commute` 13,782,826행, `stg.living_batch_status` 10행, `stg.living_quarantine` 31,935,758행. 배치 Parquet 합 8.51GB(`/scratch`, 실행 끝에 잠금이 비움). 요약 `logs/duckdb_batches/duckdb-fb7f4804559b.json`, 출력 `logs/d4.log`.
+
+| 단계 | 자식 수 | 시간(초) | 자식 최대 RSS | `duckdb_memory` 최대 | 임시 최대 |
+|---|---|---|---|---|---|
+| list | 1 | 6.7 | 0.34GiB | 0 | 0 |
+| batch(checked → clean, quarantine) | 10 (+1 재시도) | 배치당 48.9~61.5, 202601은 7.9(실패) + 83.8(threads 4) | 17.09~17.30GiB | 16.00GiB | 6.79~8.85GiB |
+| status(22_batch_status + 테스트 2개) | 1 | 4.1 | 0.38GiB | 0 | 0 |
+| commute(배치마다) | 10 | 2.0~2.4 | 2.66~2.96GiB | 0(5초 간격보다 짧음) | 0 |
+| compare(세 표 두 방향) | 1 | 26.5 | 8.42GiB | 5.77GiB | 0 |
+
+  - 배치마다 태그 최대: `HASH_TABLE` 14.84~15.23GiB, `IN_MEMORY_TABLE`(그 배치의 `clean` 임시 표) 13.79~14.53GiB(두 값은 다른 시각의 최대). 측정 49의 흘리지 않는 `ALLOCATOR` 누적, 측정 50의 배치 사이 누적은 모두 없다(프로세스가 배치마다 끝남).
+  - 컨테이너 메모리(호스트 docker stats 5초, `logs/job_stats/20261115-005553_d4.tsv`) 최대 17.62GiB / 18GiB(01:03:46). OOM 없음. 자식 최대 RSS 17.30GiB로 상한까지 여유 0.7GiB.
+  - 202601만 threads 12에서 8초 안에 DuckDB 메모리 오류(F-31). 넘침 규칙대로 그 배치만 threads 4로 다시 돌아 성공. 같은 배치를 혼자 다시 돌려도 같다(threads 12 8.3초 실패, threads 4 80.9초 성공, `logs/d4_202601.log`).
+- Spark와 나란히 (같은 SQL·입력. Spark 시간은 `ops.engine_run`·이벤트 로그):
+
+| run | 엔진·위치 | Iceberg 적재 | 계산(관문·정제·통근) | PostgreSQL 교체 | 합 | 메모리 최대 | 디스크 흘림 |
+|---|---|---|---|---|---|---|---|
+| 측정 42 | Spark local[*], Airflow 컨테이너 22GiB | 272.8초 | 2,419초(cache quarantine 1,522 + cache batch_status 897). 이어 `_new` 표 쓰기 453초(337 + 116) | 448.6초 | 3,601.7초 | JVM 힙 8.33GB | 178.4GB |
+| 측정 46 | Spark, spark-job 컨테이너 20GiB | 286.1초 | [이벤트 로그 없음] | 427.6초 | 3,991.5초 | 컨테이너 10.25GiB | 178.9GB |
+| 이번 | DuckDB, 배치마다 새 프로세스, duckdb-job 18GiB | 해당 없음(Iceberg를 바로 읽음) | **658.8초**(Parquet 쓰기와 세 표 비교 포함) | 하지 않음 | 658.8초 | 컨테이너 17.62GiB | 배치당 최대 8.85GiB(합은 재지 않음) |
+
+  - 같은 계산 범위(Iceberg 적재와 PostgreSQL 쓰기·교체를 뺀 계산)로 보면 DuckDB 658.8초 대 Spark 2,419초(측정 42)로 **약 3.7배 빠르다.** Spark의 `_new` 표 쓰기(453초)까지 넣으면 2,872초다. 1회씩이고 조건이 다르다: DuckDB 쪽은 Parquet 쓰기와 compare 26.5초를 포함하고 PostgreSQL에 쓰지 않는다. Spark 쪽은 셔플 122.7GB·흘림 1.58TB(메모리)를 거쳤다.
+  - 메모리는 반대다. DuckDB는 컨테이너 상한 18GiB에 0.4GiB 남기고 돌았고, Spark는 같은 일을 10.25GiB(측정 46)로 했다. DuckDB는 받은 메모리를 다 쓰고 넘치면 실패하고, Spark는 흘리며 느려진다.
+- 한계: 1회. 배치 경계를 결정 110이 SQL 밖에서 정했다(원천 뷰를 배치로 거름). 그래서 "같은 SQL"은 파일이 같다는 뜻이고, 계획은 배치마다 따로 세워진다. 202601이 threads 12에서만 넘치는 원인은 확정하지 못했다(F-31).

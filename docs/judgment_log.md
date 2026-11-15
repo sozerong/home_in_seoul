@@ -218,3 +218,5 @@
 - 판단 112. dag-processor 상한은 H1 값(309MiB → 512m)이 아니라 H4 재측정까지 본 최대(442MiB → 768m)로 정했다. 같은 규칙(x 1.5, 256MiB 올림)에 더 긴 관측을 넣은 것이다.
 - 판단 113. D2 넘침 규칙("그 배치 안에서만 B")을 `--batch-checked`(전체 B)로 처음부터 다시 돌리는 대신, `clean`이 메모리 오류를 내면 그 배치만 B로 다시 계산하게 했다. 누적 표에 넣기 전이라 중복이 없다. `--batch-checked`는 "처음부터 모두 B"로 남겼다.
 - 판단 114. 재부팅 뒤 metabase·pgadmin은 `up --dry-run`이 Recreate로 보여(바뀐 것 없음) `docker start`로만 켰다. 다시 만들어도 데이터는 볼륨·DB에 있지만, 필요 없는 재생성을 피했다(F-25와 같은 현상).
+- 판단 115. D3 첫 시도에서 `compare()`가 DuckDB 2.0의 `con.execute(...).columns`로 실패했다(2.0은 execute가 연결을 돌려줌). 이 경로는 측정 50까지 끝까지 간 적이 없어 드러나지 않았다. `con.sql(...).columns`로 고쳤다.
+- 판단 116. `--only-batch`는 실행 안에서만 뜻이 있다. heavy 잠금이 시작·끝에 `/scratch`를 비우므로 실행을 넘어 앞 배치 Parquet를 이어 쓰지 않는다. 이어 돌리기가 필요해지면 배치 Parquet를 `/scratch` 밖에 둔다.
