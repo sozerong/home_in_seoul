@@ -25,20 +25,20 @@ SCHEMAS = ("stg_dbt_s6b", "wh_s6b", "mart_s6b")
 
 def main():
     with tempfile.TemporaryDirectory() as tmp, psycopg.connect(read_env("DATABASE_URL"), autocommit=True) as conn:
-        copy = Path(tmp) / "dbt"
-        shutil.copytree(PROJECT, copy, ignore=shutil.ignore_patterns("target", "logs"))
+        copy, base = Path(tmp) / "dbt", Path(tmp) / "base" / "dbt"
+        for d in (copy, base):  # F-14: 두 쪽 범위를 같게(target/, logs/ 뺌). 원본 쪽에만 남은 컴파일 결과와 새 파일이 짝지어지지 않게
+            shutil.copytree(PROJECT, d, ignore=shutil.ignore_patterns("target", "logs"))
         text = (copy / "models/mart/commute_od.sql").read_text(encoding="utf-8")
         assert text.count(OLD) == 1
         (copy / "models/mart/commute_od_evening.sql").write_text(
             "-- 저녁 귀가(평일 18~20시 도착, 주간상주지 -> 야간상주지 WH). commute_od와 같은 계산 (S6b)\n" + text.replace(OLD, NEW),
             encoding="utf-8")
-        changed = subprocess.run(["git", "diff", "--no-index", "--numstat", "--ignore-cr-at-eol", str(PROJECT), str(copy)],
+        changed = subprocess.run(["git", "diff", "--no-index", "--numstat", "--ignore-cr-at-eol", str(base), str(copy)],
                                  capture_output=True, text=True).stdout
         print("고친 파일(더한 줄, 지운 줄):")
         for line in changed.splitlines():
             added, removed, name = line.split("\t")
-            if "/target/" not in name and "/logs/" not in name:
-                print(f"  +{added} -{removed}  {name.split('/dbt/')[-1].rstrip('}')}")
+            print(f"  +{added} -{removed}  {name.split('/dbt/')[-1].rstrip('}')}")
         for s in SCHEMAS:
             conn.execute(f"DROP SCHEMA IF EXISTS {s} CASCADE")
         started = time.perf_counter()

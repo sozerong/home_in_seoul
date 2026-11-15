@@ -3,22 +3,39 @@
 24시간대 전체 행을 원본 글자 그대로 10개 열로 나눠 담는다. 형 변환과 검증(rules.md 4절)은 다음 단계(stg)가 한다:
 격리 표에 원래 값을 남겨야 해서, 여기서 숫자로 바꾸다 깨진 값을 잃으면 안 된다.
 처리 단위는 대상연월 파티션 하나. 다시 돌리면 그 파티션만 새 스냅샷으로 바뀐다(멱등). 예전 내용은 과거 스냅샷으로 남는다.
-row_no는 CSV 안의 줄 번호(머리글 = 1)로, 지금 stg.living_migration의 row_no와 같은 뜻이다.
-사용법: /opt/airflow/spark-venv/bin/python -m transform.living_iceberg 수집일YYYY-MM-DD 대상연월YYYYMM
+row_no는 CSV 안의 줄 번호(머리글 = 1)로, stg.living_quarantine의 row_no와 같은 뜻이다.
+사용법: docker compose run --rm spark-job python -m transform.living_iceberg 수집일YYYY-MM-DD 대상연월YYYYMM
 """
 import argparse
 import datetime
+import os
 import shutil
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 import zipfile
 
+from common import ROOT, SCRATCH, heavy_lock
 from transform.iceberg import spark_session
-from transform.living_migration import HEADER, LAKE
 
+# 옛 transform/living_migration.py에서 옮김(결정 105). 정제·검증 규칙은 spark_sql/living/*.sql에 있다.
+HEADER = ["대상연월", "요일", "도착시간", "출발 행정동 코드", "도착 행정동 코드", "성별", "나이", "이동유형",
+          "평균 이동 시간(분)", "이동인구(합)"]  # F1
+LAKE = ROOT / "lake" / "seoul_living_migration"
+SHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 TABLE = "lh.living.migration_rows"
 COLUMNS = ["target_ym_raw", "weekday", "arrive_hour_raw", "origin_cd", "dest_cd", "sex", "age", "move_type",
            "avg_minutes_raw", "population_raw"]  # HEADER 순서. _raw는 다음 단계에서 숫자로 바꿀 열
+
+
+def load_codes():
+    """가장 최근 코드표 xlsx의 읍면동 열(C열)에서 코드 집합을 만든다 (V4)."""
+    path = sorted(LAKE.glob("collected_date=*/서울생활이동데이터_행정동코드_*.xlsx"))[-1]
+    with zipfile.ZipFile(path) as zf:
+        sheet = ET.fromstring(zf.read("xl/worksheets/sheet1.xml"))
+    # 코드 칸은 숫자 칸(t 속성 없음)이고 머리글 칸은 문자열 칸(t="s")이라 저절로 빠진다
+    return {c.find(f"{SHEET_NS}v").text for c in sheet.iter(f"{SHEET_NS}c")
+            if c.get("r").startswith("C") and c.get("t") is None}
 
 
 def extract(path, folder):
@@ -50,8 +67,11 @@ def main():
     if not path.exists():
         raise SystemExit(f"레이크에 파일이 없습니다: {path}")
 
+    lock = heavy_lock()  # noqa: F841  Spark가 작업 공간을 쓰므로 잠금을 잡고, 잡으면 작업 공간을 비운다(결정 107 S5)
     started = time.perf_counter()
-    with tempfile.TemporaryDirectory(prefix="living_") as folder:  # 컨테이너 /tmp. 끝나면 지운다
+    os.makedirs(f"{SCRATCH}/unzip", exist_ok=True)
+    # 압축 푼 CSV(한 달 약 6GB)도 작업 공간이다. 끝나면 지우고, 죽어도 다음 잠금 때 비워진다
+    with tempfile.TemporaryDirectory(prefix="living_", dir=f"{SCRATCH}/unzip") as folder:
         names = extract(path, folder)
         unzipped = time.perf_counter()
 

@@ -1,0 +1,596 @@
+# 파이프라인 정의(손으로 쓴 메타데이터). 화면의 목록, 흐름 레인, 정의 폼과 JSON 보기, 관련 측정, 오류 번호가 여기서 온다.
+# 원본 화면: Claude outputs/ui_reference/Pipelines.dc.html. 이 파일로 DAG를 만들지는 않는다(docs/handoff_ui.md 2절).
+#
+# 규칙
+# - dags: DAG 하나 = dag_id와 일정. 일정은 cron 문자열, "manual"(schedule=None), "asset"(Asset 트리거) 중 하나.
+#   tests/test_ui_pipelines.py가 dags/*.py의 실제 DAG와 같은지 본다(어긋남 시험). 운영 DAG 9개가 모두 한 번씩 나와야 한다(손으로만 도는 시험 DAG `test_*.py`는 뺀다).
+# - 지금 상태를 뜻하는 숫자(행 수, 실행 횟수, 회차, 마지막 실행 시각, 다음 실행)는 적지 않는다. 화면이 DB와 Airflow API에서 읽는다.
+# - proofs의 숫자는 과거 측정 기록이라 측정 번호와 함께 둔다(docs/measurements.md가 원본).
+# - batch_sources: stg_dbt.batch_status.source 값, ops_sources: ops.quality·ops.freshness의 source 값(한글). 상세 화면이 이 값으로 거른다.
+# - records: 상세 화면에 붙일 실행 기록 쿼리 이름(ui/queries.sql). 빌드는 build_runs, 엔진 지표는 engine_runs, 리니지 회차는 lineage_runs.
+# - failures는 F 번호만. 제목과 상태는 docs/failure_analysis.md에서 읽는다.
+# - yaml이 아니라 toml인 이유: CI(requirements.txt)에 PyYAML이 없고, tomllib은 표준 라이브러리다(판단 U-8).
+
+[[pipeline]]
+id = "seoul_api"
+kind = "source"
+title = "혼잡도 · 역사마스터"
+dags = { seoul_api = "30 13 * * 1" }
+batch_sources = ["congestion"]
+ops_sources = ["혼잡도", "역사마스터"]
+trigger = "매주"
+chain = "API → Python 파싱 → PostgreSQL jsonb → dbt"
+engines = ["Python", "PostgreSQL", "dbt"]
+summary = "서울 열린데이터광장 API에서 지하철 혼잡도와 역사마스터를 받는다. 혼잡도는 파싱만 해 jsonb 원본에 담고 정제는 dbt SQL이 한다. 역사마스터는 Python 정제를 유지한다(결정 93)."
+meta = [["처리 단위", "수집일"], ["재시도", "0 (영구 오류는 바로 실패)"], ["끝나면", "raw.congestion · stg.station_master Asset → wh_load"]]
+flow_note = "받기는 원천 모양 그대로, 꺼내기는 SQL"
+failures = []
+scenario = "S1 쓰는 필드 이름이 바뀜"
+proofs = [
+  ["동등 (Python → dbt)", "옛 stg.congestion과 두 방향 EXCEPT ALL 0, 컬럼 이름·순서·타입 같음, 교체 뒤 상품 sha256 같음", "측정 23"],
+  ["멱등", "같은 수집일을 다시 넣어도 1,671행", "측정 23"],
+  ["원천 이름 변경(S1)", "고칠 곳 5개 파일 → SQL 2줄, 옛 수집일도 함께 처리", "측정 13 → 23"],
+]
+[[pipeline.lane]]
+name = "원천"
+engine = "API"
+items = [["subwConfusion", "서울교통공사 혼잡도 · 분기"], ["역사마스터", "역 좌표 · 수시"]]
+[[pipeline.lane]]
+name = "받기"
+engine = "Python"
+items = [["ingestion.seoul_api", "수집 → lake/"], ["congestion_raw.py", "파싱만, 필드 검사 없음"], ["station_master.py", "Python 정제 유지"]]
+[[pipeline.lane]]
+name = "원본 층"
+engine = "PostgreSQL"
+items = [["raw.congestion", "jsonb 원본"], ["stg.station_master", "역 좌표 표"]]
+[[pipeline.lane]]
+name = "관문"
+engine = "dbt"
+items = [["batch_status_congestion", "배치 = 수집일. 쓰는 키 · 급감 10% · 칸 중복 · 격리 5%"]]
+[[pipeline.lane]]
+name = "정제"
+engine = "dbt SQL"
+items = [["congestion_rows", "뷰 · 행 펼치기"], ["congestion_cells", "뷰 · 30분 칸"], ["stg_dbt.congestion", "표"], ["congestion_quarantine", "격리 표"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "Asset"
+items = [["wh_load 깨움", "fact_congestion · dong_profile"]]
+[pipeline.form.source]
+service = "subwConfusion, 역사마스터"
+collect = "python -m ingestion.seoul_api <service> --collected-date $D"
+lake = "lake/seoul_subway_congestion/collected_date=YYYY-MM-DD/"
+[pipeline.form.parse]
+module = "transform.congestion_raw"
+rule = "파싱만. 쓰는 필드를 고르지 않는다"
+key = "(collected_date, source_file, row_no)"
+[pipeline.form.gate]
+batch_key = "collected_date"
+checks = "keys_present, raw_shrink(10%), cell_unique, quarantine_ratio(5%)"
+warn_only = "raw_unknown_keys"
+on_reject = "그 배치만 빠지고 직전 승인 배치 사용"
+[pipeline.form.clean]
+models = "congestion_rows, congestion_cells, congestion, congestion_quarantine"
+key_alias = "이름 대응은 매크로 키 목록 + coalesce (결정 64)"
+rebuild = "매번 전체 (결정 62)"
+[pipeline.form.output]
+assets = "raw.congestion, stg.station_master"
+next = "wh_load"
+
+[[pipeline]]
+id = "molit_rent"
+kind = "source"
+title = "전월세 실거래"
+dags = { molit_rent = "0 13 * * 1" }
+batch_sources = ["rent"]
+ops_sources = ["전월세"]
+trigger = "매주"
+chain = "API → Python 파싱 → PostgreSQL jsonb → dbt"
+engines = ["Python", "PostgreSQL", "dbt"]
+summary = "국토교통부 오피스텔·연립다세대 전월세 API를 구와 계약월로 나눠 받는다. 신고가 늦게 들어오므로 매주 최근 3개월을 다시 받는다. 받은 단위는 jsonb 원본에 담고 정제는 dbt SQL이 한다."
+meta = [["처리 단위", "최근 3개월 × 25개 구 × 2종"], ["재시도", "0"], ["끝나면", "raw.rent Asset → wh_load"]]
+flow_note = "처리 단위마다 작업 하나 (동적 매핑)"
+failures = ["F-2", "F-12"]
+scenario = "S2 쓰지 않는 필드가 늘어남, S3 해석 규칙을 정정함"
+proofs = [
+  ["동등 (Python → dbt)", "첫 대조에서 54행 차이(전각 공백) → py_strip 매크로 → 차이 0, 상품 sha256 같음", "측정 24, F-12"],
+  ["무해한 필드 추가(S2)", "실패 0행 → 통과 207행, 경고 1개만", "측정 12 → 24"],
+  ["규칙 정정(S3)", "바뀐 단위 58 / 1,352를 쿼리 한 번으로, 빌드 기록에 남음", "측정 14 → 24, 30"],
+  ["관문", "9.95%를 깨뜨린 배치만 거절, 다른 출처와 상품은 갱신", "측정 25"],
+]
+[[pipeline.lane]]
+name = "원천"
+engine = "API"
+items = [["오피스텔 전월세", "국토교통부 · 지역코드 + 계약년월"], ["연립다세대 전월세", "같은 단위"]]
+[[pipeline.lane]]
+name = "받기"
+engine = "Python"
+items = [["ingestion.molit_rent", "페이지마다 파일 → lake/"], ["rent_raw.py", "파싱만, 모든 태그를 jsonb로"]]
+[[pipeline.lane]]
+name = "원본 층"
+engine = "PostgreSQL"
+items = [["raw.rent", "jsonb 원본 · 처리 단위별"]]
+[[pipeline.lane]]
+name = "관문"
+engine = "dbt"
+items = [["batch_status_rent", "배치 = (종류, 수집일, 구, 계약년월). 쓰는 키 · 격리 5%"]]
+[[pipeline.lane]]
+name = "정제"
+engine = "dbt SQL"
+items = [["rent_rows", "뷰 · 규칙 C·V"], ["bjd_code", "법정동 코드표 (상가 원본에서)"], ["stg_dbt.rent", "표"], ["rent_quarantine", "격리 표"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "Asset"
+items = [["wh_load 깨움", "fact_rent · rent_listing · dong_profile"]]
+[pipeline.form.source]
+api = "오피스텔·연립다세대 전월세 실거래"
+plan = "Variable rent_recent_months=3, 서울 25개 구, offi·rh"
+lake = "lake/molit_rent_*/collected_date=YYYY-MM-DD/{구}_{계약년월}_p{n}.xml"
+[pipeline.form.parse]
+module = "transform.rent_raw"
+rule = "파싱만. 새 필드도 jsonb에 남김 (결정 60)"
+key = "(source_type, collected_date, source_file, item_no)"
+[pipeline.form.gate]
+batch_key = "(source_type, collected_date, sgg_cd, deal_ymd)"
+checks = "keys_present, quarantine_ratio(5%)"
+warn_only = "raw_unknown_keys"
+on_reject = "그 처리 단위만 빠짐"
+[pipeline.form.clean]
+models = "rent_rows, bjd_code, rent, rent_quarantine"
+strip = "py_strip 매크로 (Python과 같은 공백 29글자)"
+rebuild = "매번 전체 (결정 62)"
+[pipeline.form.output]
+assets = "raw.rent"
+next = "wh_load"
+
+[[pipeline]]
+id = "sbiz_store"
+kind = "source"
+title = "상가정보"
+dags = { file_sbiz_store = "manual" }
+batch_sources = ["store"]
+ops_sources = ["상가정보"]
+trigger = "파일 도착"
+chain = "파일 → Python 파싱 → PostgreSQL jsonb → dbt"
+engines = ["Python", "PostgreSQL", "dbt", "PostGIS"]
+summary = "사람이 받은 zip을 inbox에 넣으면 센서가 알아채고 서울 전체 업소를 모든 컬럼째 jsonb 원본에 담는다. 편의 업종 범위는 정제가 아니라 마트의 seed가 정한다(결정 78, 79)."
+meta = [["센서", "inbox, 최대 600초"], ["처리 단위", "(수집일, 원천 파일)"], ["재시도", "0"], ["끝나면", "raw.sbiz_store Asset → wh_load"]]
+flow_note = "업종 범위는 마트에서 고른다"
+failures = ["F-3", "F-4"]
+scenario = "S6a 편의 업종 하나 추가"
+note = "2026-10-21 Airflow 실행은 센서가 10분 기다린 끝에 실패했다(파일을 손으로 등록). 같은 명령은 손으로 돌려 확인했다."
+proofs = [
+  ["동등 (6코드 부분)", "옛 stg.sbiz_store 30,394행과 차이 0, bjd_code 466행 차이 0", "측정 27"],
+  ["의도한 변경", "다수결을 전체 업소로 → dong_mois_map 427행의 stores·share 바뀜(기록)", "측정 27"],
+  ["업종 추가(S6a)", "seed 1줄 + 마트 2개, dong_mois_map 차이 0", "측정 17 → 28"],
+]
+[[pipeline.lane]]
+name = "원천"
+engine = "파일"
+items = [["상가(상권)정보 zip", "소상공인시장진흥공단 · 분기"]]
+[[pipeline.lane]]
+name = "받기"
+engine = "Python"
+items = [["lake/_inbox/sbiz_store", "센서가 기다림"], ["sbiz_store_raw.py", "파싱만, 서울 전체 모든 컬럼"]]
+[[pipeline.lane]]
+name = "원본 층"
+engine = "PostgreSQL"
+items = [["raw.sbiz_store", "jsonb 원본"]]
+[[pipeline.lane]]
+name = "관문"
+engine = "dbt"
+items = [["store_batch_checks", "배치 검사"], ["batch_status_store", "쓰는 키 · 급감 · 격리 5%"]]
+[[pipeline.lane]]
+name = "정제"
+engine = "dbt SQL"
+items = [["store_rows", "뷰 · MF 규칙"], ["stg_dbt.store", "표"], ["store_quarantine", "격리 표"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "Asset"
+items = [["wh_load 깨움", "fact_store · map_dong_mois · dong_amenity"]]
+[pipeline.form.source]
+file = "상가(상권)정보 서울 CSV zip"
+inbox = "lake/_inbox/sbiz_store/"
+sensor = "poke 30초, 최대 600초, reschedule"
+[pipeline.form.parse]
+module = "transform.sbiz_store_raw"
+rule = "서울 전체 행, 모든 컬럼을 jsonb로 (결정 78)"
+[pipeline.form.gate]
+batch_key = "(collected_date, source_file)"
+checks = "keys_present, raw_shrink, quarantine_ratio(5%)"
+on_reject = "그 배치만 빠짐"
+[pipeline.form.clean]
+models = "store_rows, store, store_quarantine"
+scope = "업종 목록은 seed wh.amenity_category (마트에서 고름)"
+majority = "행안부 코드 다수결은 전체 업소 (결정 79)"
+[pipeline.form.output]
+assets = "raw.sbiz_store"
+next = "wh_load"
+
+[[pipeline]]
+id = "living_migration"
+kind = "source"
+title = "생활이동"
+dags = { file_living_migration = "0 13 21 * *" }
+batch_sources = ["living"]
+ops_sources = ["생활이동"]
+records = "engine_runs"
+trigger = "매월 + 파일"
+chain = "파일 → Spark 파싱 → Iceberg → Spark SQL → PostgreSQL"
+engines = ["Spark", "Iceberg", "Spark SQL", "PostgreSQL"]
+summary = "매달 21일부터 inbox에 들어온 행정동 zip을 Spark로 풀어 Iceberg 원본에 담는다(24시간 전체). 관문과 정제, 집계는 Spark SQL 파일 묶음이 하고, 결과(경계 표)만 PostgreSQL로 보낸다."
+meta = [["센서", "최대 7일, reschedule"], ["pool", "heavy (한 번에 하나)"], ["끝나면", "stg.living_commute Asset → wh_load"]]
+flow_note = "무거운 일은 Spark, 고르는 일은 dbt"
+failures = ["F-8", "F-9", "F-13", "F-16", "F-19", "F-20"]
+scenario = "S6b 저녁 귀가 시간대 추가"
+note = "DAG와 같은 인자로 손으로 1회 성공했다(측정 38). 실행기 1회가 호스트 디스크를 크게 쓰므로 정기 실행 전에 작업 공간 준비가 필요하다(F-20)."
+proofs = [
+  ["실제 실행", "실행기 3,201초, 10개 달 모두 승인, 경계·판정·격리 표를 한 트랜잭션으로 교체(333.9초)", "측정 38"],
+  ["동등 (Python → Spark SQL)", "경계 표에서 다시 만든 commute_od가 옛 표와 같음", "측정 33"],
+  ["저녁 귀가 추가(S6b)", "새 마트 파일 1개, Spark 재실행 없음, 기존 상품 차이 0", "측정 18 → 34"],
+  ["엔진 비교 (DuckDB)", "자원 상한(16GiB, 임시 공간) 안에서 3회 모두 오류로 끝남. VM은 멈추지 않음", "측정 39"],
+]
+[[pipeline.lane]]
+name = "원천"
+engine = "파일"
+items = [["생활이동_행정동_YYYYMM.zip", "서울 열린데이터 · 월"]]
+[[pipeline.lane]]
+name = "받기"
+engine = "Spark"
+items = [["living_iceberg.py", "파싱만, 대상연월 파티션 덮어쓰기"]]
+[[pipeline.lane]]
+name = "원본 층"
+engine = "Iceberg"
+items = [["lh.living.migration_rows", "대상연월 파티션"]]
+[[pipeline.lane]]
+name = "관문"
+engine = "Spark SQL"
+items = [["22_batch_status", "배치 = (수집일, 대상연월). 급감 · 격리 5%"], ["stg.living_batch_status", "판정을 PostgreSQL에"]]
+[[pipeline.lane]]
+name = "정제"
+engine = "Spark SQL"
+items = [["10_checked · 20_clean", "검증 규칙 V3~V8"], ["21_quarantine", "격리"], ["30_commute", "집계 (grain f)"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "JDBC"
+items = [["stg.living_commute", "경계 표"], ["wh_load 깨움", "fact_commute · commute_od"]]
+[pipeline.form.source]
+file = "생활이동_행정동_YYYYMM.zip"
+sensor = "최대 7일, reschedule"
+pool = "heavy"
+[pipeline.form.parse]
+module = "transform.living_iceberg (spark-job)"
+table = "lh.living.migration_rows, 파티션 target_ym"
+[pipeline.form.gate]
+batch_key = "(collected_date, target_ym)"
+checks = "shrink(직전 대상연월 대비), quarantine_ratio(5%)"
+on_reject = "그 달만 경계 표에서 뺌 (결정 100)"
+warn_only = "warn_month_approved"
+[pipeline.form.clean]
+runner = "transform.spark_sql_runner spark_sql/living"
+files = "10_checked, 20_clean, 21_quarantine, 22_batch_status, 30_commute"
+tests = "test_population_exact"
+grain = "대상연월 × 출발 × 도착 × 평일/주말 × 시간 묶음 × HW·WH × 나이 2구간 (결정 96)"
+[pipeline.form.output]
+table = "stg.living_commute (JDBC, 비우고 복사 교체)"
+save = "stg.living_batch_status, stg.living_quarantine"
+next = "wh_load"
+
+[[pipeline]]
+id = "boundary"
+kind = "source"
+title = "행정동 경계 · 연속지적도"
+dags = { file_sgis_boundary = "manual", file_parcel_boundary = "manual" }
+ops_sources = ["행정동 경계", "연속지적도"]
+trigger = "파일 도착"
+chain = "파일 → Python 정제 → PostGIS"
+engines = ["Python", "PostGIS"]
+summary = "도형 출처는 jsonb 원본 모양과 맞지 않고 PostGIS 공간 조인이 정제의 본체라 Python 정제를 유지한다(결정 93). 바뀔 요구사항 시나리오도 걸려 있지 않다."
+meta = [["센서", "inbox"], ["처리 단위", "수집일"], ["정제", "transform/boundary.py"], ["끝나면", "stg.sgis_dong · stg.parcel Asset → wh_load"]]
+flow_note = "옮기지 않기로 한 출처"
+failures = []
+scenario = "걸린 시나리오 없음"
+note = "정제 명령은 손으로 돌려 확인했다."
+proofs = []
+[[pipeline.lane]]
+name = "원천"
+engine = "파일"
+items = [["SGIS 통계지역경계", "EPSG:5179 · 2025년"], ["연속지적도", "필지 도형"]]
+[[pipeline.lane]]
+name = "받기·정제"
+engine = "Python"
+items = [["boundary.py sgis_dong", "shp → PostGIS"], ["boundary.py parcel", "shp → PostGIS"]]
+[[pipeline.lane]]
+name = "결과"
+engine = "PostGIS"
+items = [["stg.sgis_dong", "행정동 경계"], ["stg.parcel", "필지"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "Asset"
+items = [["wh_load 깨움", "dim_dong · dim_parcel"]]
+[pipeline.form.source]
+files = "SGIS 통계지역경계(읍면동), 연속지적도 shp"
+inbox = "lake/_inbox/sgis_boundary, parcel_boundary"
+[pipeline.form.clean]
+module = "transform.boundary sgis_dong | parcel"
+why_python = "도형, PostGIS 공간 연산 (결정 93)"
+[pipeline.form.output]
+assets = "stg.sgis_dong, stg.parcel"
+next = "wh_load"
+
+[[pipeline]]
+id = "wh_load"
+kind = "build"
+title = "웨어하우스 · 마트 · 상품"
+dags = { wh_load = "asset", agent_triage = "*/30 * * * *" }  # agent_triage: 관문 거절·dbt 실패 신호의 1차 대응(결정 112)
+records = "build_runs"
+trigger = "Asset"
+chain = "원본·stg 갱신 → dbt build → 교체 → 내보내기"
+engines = ["dbt", "PostgreSQL", "PostGIS"]
+summary = "어느 출처든 원본이나 stg가 갱신되면 돈다. 빌드용 스키마에 전부 다시 만들고, 테스트를 모두 통과하면 stg_dbt·wh·mart를 한 트랜잭션에서 바꾼 뒤 계약을 검사하고 상품을 내보낸다."
+meta = [["트리거", "raw.congestion · raw.rent · raw.sbiz_store · stg.* 중 하나"], ["pool", "heavy + advisory lock"], ["재시도", "0"], ["끝나면", "wh.built Asset → lineage"]]
+flow_note = "전부 되거나 전부 안 된다"
+failures = ["F-4", "F-6"]
+scenario = "모든 시나리오의 마지막 단계"
+proofs = [
+  ["원자성", "둘째 스키마를 빼고 실패 주입 → 첫째 교체도 취소", "결정 32, 61"],
+  ["결정적 출력", "정렬 키를 모든 독립 컬럼으로, 같은 데이터면 상품 sha256 같음", "측정 8, 결정 33"],
+  ["빌드 시간", "dbt 전체 131.8초 → 상가정보 전체로 넓힌 뒤 339.7초 → 경계 인덱스 뒤 95.4초 (fact_store 140.5초 → 5.41초)", "측정 25, 27, 40"],
+  ["0행 검사", "상품 표가 0행이면 내보내지 않음. 유도 시험 rc=1, 상품 폴더 그대로", "guarantees 3절"],
+]
+[[pipeline.lane]]
+name = "입력"
+engine = "Asset"
+items = [["raw.* · stg.*", "출처 파이프라인이 갱신"]]
+[[pipeline.lane]]
+name = "빌드"
+engine = "dbt"
+items = [["drop_build_schemas", "지난 실패 흔적 지움"], ["dbt build", "*_build 스키마에 전체 · 테스트 포함"]]
+[[pipeline.lane]]
+name = "기록"
+engine = "Python"
+items = [["build_record", "ops.build_run (SQL 해시, 커밋), ops.build_diff"]]
+[[pipeline.lane]]
+name = "교체"
+engine = "dbt 매크로"
+items = [["swap_schemas", "stg_dbt · wh · mart 한 트랜잭션"]]
+[[pipeline.lane]]
+name = "내보내기"
+engine = "Python"
+items = [["export_product", "계약 스키마와 비교, 다르면 실패"], ["product/v날짜", "csv · parquet + manifest"]]
+[[pipeline.lane]]
+name = "출력"
+engine = "Asset"
+items = [["wh.built", "lineage 깨움"]]
+[pipeline.form.trigger]
+assets = "AssetAny(raw.congestion, raw.rent, raw.sbiz_store, stg.*)"
+pool = "heavy, advisory lock(python -m common lock)"
+[pipeline.form.build]
+command = "dbt run-operation drop_build_schemas && dbt build"
+target = "stg_dbt_build, wh_build, mart_build"
+[pipeline.form.record]
+module = "warehouse.build_record"
+writes = "ops.build_run, ops.build_diff (결정 81)"
+[pipeline.form.swap]
+macro = "swap_schemas([stg_dbt, wh, mart])"
+atomic = "한 트랜잭션, 실패 시 모두 취소"
+[pipeline.form.export]
+module = "warehouse.export_product"
+contract = "계약 파일과 컬럼·타입 비교, 깨는 변경은 실패 (결정 83)"
+next = "wh.built → lineage"
+
+[[pipeline]]
+id = "lineage"
+kind = "build"
+title = "컬럼 리니지"
+dags = { lineage = "asset" }
+records = "lineage_runs"
+trigger = "Asset"
+chain = "컴파일 SQL → sqlglot (Spark 병렬) → PostgreSQL → MCP"
+engines = ["Spark", "sqlglot", "PostgreSQL", "MCP"]
+summary = "상품을 내보낸 뒤 돈다. dbt가 컴파일한 SQL과 Spark SQL 묶음을 DB 없이 파싱해 컬럼 간선(값·행·행 집합)을 뽑고 회차로 저장한다. MCP로 영향 범위를 묻는다."
+meta = [["트리거", "wh.built (상품 내보내기 뒤)"], ["pool", "heavy"], ["저장", "lineage.run · lineage.edge_raw + 뷰"], ["조회", "MCP stdio, lineage_reader 역할"]]
+flow_note = "실패해도 상품은 막지 않는다 (결정 50)"
+failures = ["F-5", "F-7", "F-10", "F-11"]
+scenario = "S4 값 표기가 바뀌면 어디가 영향받나 (데이터 지도에서 직접)"
+proofs = [
+  ["정답 대조", "정답을 파서보다 먼저 커밋, DIRECT 78/0/0 · INDIRECT 218/0/0", "측정 19"],
+  ["변이 시험", "raw 변이 7개 놓침 0", "측정 31"],
+  ["정밀도 개선", "출처별 관문 분리 뒤 M1 10% → 80%, M7 45% → 90%", "측정 35, F-7"],
+]
+[[pipeline.lane]]
+name = "입력"
+engine = "dbt target"
+items = [["manifest · compiled", "SQL 모델"], ["spark_sql/living", "Spark SQL 묶음"]]
+[[pipeline.lane]]
+name = "스키마 추론"
+engine = "Python"
+items = [["schema.py", "DDL + seed + 의존 순서대로 qualify"]]
+[[pipeline.lane]]
+name = "간선 추출"
+engine = "Spark"
+items = [["edges.py", "모델마다 병렬 (parallelize)"], ["spark_sql.py · product.py", "묶음 · 상품 층"]]
+[[pipeline.lane]]
+name = "저장"
+engine = "PostgreSQL"
+items = [["lineage.edge_raw", "회차별 간선"]]
+[[pipeline.lane]]
+name = "조회"
+engine = "MCP"
+items = [["downstream · upstream", "값·행·행 집합 경로"], ["run_diff", "회차 간 지도 변화"]]
+[pipeline.form.trigger]
+asset = "wh.built (file:///opt/project/product)"
+pool = "heavy"
+[pipeline.form.extract]
+parser = "sqlglot 30.31.0"
+schema = "DB 없이 추론 (결정 53)"
+kinds = "DIRECT, INDIRECT, ROWSET (결정 46, 80)"
+[pipeline.form.store]
+tables = "lineage.run, lineage.edge_raw"
+views = "table_edge, downstream, upstream, run_diff"
+stale = "SQL 해시와 작업 트리 깨끗 여부 (결정 81)"
+[pipeline.form.serve]
+mcp = "stdio, 도구 5개, lineage_reader"
+
+# 데이터 지도(U4). 표 배치와 이름표는 손으로 쓴 메타데이터다(원본 화면: Claude outputs/ui_reference/Main.dc.html).
+# 간선과 영향 범위는 DB(lineage.edge, lineage.downstream/upstream)에서 읽는다. 여기 없는 표가 지도에 나타나면 화면이 '분류 안 됨'으로 드러낸다.
+[map]
+layers = ["원본·기준", "정제 중간", "관문", "정제 결과", "웨어하우스", "마트", "상품"]
+# 표 이름 = [층 번호, 이름표, 엔진]
+[map.tables]
+"raw.congestion" = [0, "혼잡도 원본", "PostgreSQL jsonb"]
+"stg.station_master" = [0, "역사마스터", "Python 정제"]
+"wh.congestion_station_manual" = [0, "혼잡도 역 수동 대응", "seed"]
+"raw.rent" = [0, "전월세 원본", "PostgreSQL jsonb"]
+"stg.parcel" = [0, "연속지적도", "Python, PostGIS"]
+"raw.sbiz_store" = [0, "상가정보 원본", "PostgreSQL jsonb"]
+"stg.sgis_dong" = [0, "행정동 경계", "Python, PostGIS"]
+"wh.amenity_category" = [0, "편의 업종 목록", "seed"]
+"lh.living.migration_rows" = [0, "생활이동 원본", "Iceberg"]
+"lake.seoul_living_migration.code_table" = [0, "생활이동 코드표", "레이크 파일"]
+"wh.map_dong_2021_manual" = [0, "2021 행정동 수동 대응", "seed"]
+"stg_dbt.congestion_rows" = [1, "혼잡도 행 펼치기", "dbt 뷰"]
+"stg_dbt.congestion_cells" = [1, "혼잡도 칸", "dbt 뷰"]
+"stg_dbt.rent_rows" = [1, "전월세 행 해석", "dbt 뷰"]
+"stg_dbt.bjd_code" = [1, "법정동 코드표", "dbt"]
+"stg_dbt.store_rows" = [1, "상가 행 해석", "dbt 뷰"]
+"stg_dbt.store_batch_checks" = [1, "상가 배치 검사", "dbt"]
+"stg_dbt.raw_shape" = [1, "원본 키 이력", "dbt"]
+"stg_dbt.batch_status_congestion" = [2, "혼잡도 관문", "dbt"]
+"stg_dbt.batch_status_rent" = [2, "전월세 관문", "dbt"]
+"stg_dbt.batch_status_store" = [2, "상가 관문", "dbt"]
+"stg.living_batch_status" = [2, "생활이동 관문 판정", "Spark SQL"]
+"stg_dbt.batch_status_living" = [2, "생활이동 관문", "dbt"]
+"stg_dbt.batch_status" = [2, "관문 합집합(운영용)", "dbt"]
+"stg_dbt.congestion" = [3, "혼잡도 정제", "dbt"]
+"stg_dbt.congestion_quarantine" = [3, "혼잡도 격리", "dbt"]
+"stg_dbt.rent" = [3, "전월세 정제", "dbt"]
+"stg_dbt.rent_quarantine" = [3, "전월세 격리", "dbt"]
+"stg_dbt.store" = [3, "상가 정제", "dbt"]
+"stg_dbt.store_quarantine" = [3, "상가 격리", "dbt"]
+"stg.living_commute" = [3, "생활이동 경계 표", "Spark SQL"]
+"wh.dim_station" = [4, "역 차원", "dbt"]
+"wh.map_congestion_station" = [4, "혼잡도 역 대응", "dbt"]
+"wh.fact_congestion" = [4, "혼잡도 팩트", "dbt"]
+"wh.fact_rent" = [4, "전월세 팩트", "dbt"]
+"wh.dim_parcel" = [4, "필지 차원", "dbt"]
+"wh.fact_store" = [4, "상가 팩트", "dbt"]
+"wh.dim_dong" = [4, "행정동 차원", "dbt"]
+"wh.map_dong_mois" = [4, "행안부 코드 대응", "dbt"]
+"wh.fact_commute" = [4, "출퇴근 팩트", "dbt"]
+"wh.map_dong_2021" = [4, "2021 행정동 대응", "dbt"]
+"mart.dong_station" = [5, "동별 역", "dbt"]
+"mart.dong_rent_summary" = [5, "동별 시세", "dbt"]
+"mart.rent_listing" = [5, "매물 목록", "dbt"]
+"mart.dong_amenity" = [5, "동별 편의", "dbt"]
+"mart.dong_profile" = [5, "동네 요약", "dbt"]
+"mart.dong_mois_map" = [5, "행안부 코드 대응", "dbt"]
+"mart.commute_od" = [5, "출퇴근 시간", "dbt"]
+"product.dong_profile" = [6, "상품 파일", "csv, parquet"]
+"product.rent_listing" = [6, "상품 파일", "csv, parquet"]
+"product.dong_mois_map" = [6, "상품 파일", "csv, parquet"]
+"product.commute_od" = [6, "상품 파일", "csv, parquet"]
+
+# 실행으로 확인한 실제 영향(변이 시험, 측정 31·35). "표|컬럼" = [변이 번호, 결과]. 과거 측정이라 숫자를 둔다(판단 U-7).
+[map.mutations]
+"raw.congestion|raw.DOW_SE" = ["M1", "요일 표기를 평일에서 주중으로 바꿔 dbt를 다시 돌렸더니 실제로 바뀐 상품 컬럼은 4개였다(am_peak_congestion, 가장 가까운 혼잡도 역 3개). 측정 31, 35."]
+"raw.rent|raw.monthlyRent" = ["M4", "월세 10건 중 1건을 0으로 바꿨더니 실제로 바뀐 상품 컬럼은 7개였다(dong_profile 시세 5, rent_listing 2). 측정 31, 35."]
+"raw.rent|raw.contractType" = ["M7", "계약 구분 신규 10건 중 1건을 신규계약으로 바꿨더니 18개 컬럼이 바뀌었고, 격리 비율 5%를 넘은 배치가 관문에서 거절되어 rent_listing이 0행이 됐다. 측정 31."]
+"raw.sbiz_store|raw.상권업종소분류코드" = ["M6", "편의점 코드 절반을 다른 코드로 바꿨더니 실제로 바뀐 상품 컬럼은 2개였다(convenience_store, _per_km2). 측정 31."]
+"stg.station_master|lat" = ["M3", "역 하나의 좌표를 옮겼더니 실제로 바뀐 상품 컬럼은 7개였다. 측정 31."]
+"stg.station_master|lot" = ["M3", "역 하나의 좌표를 옮겼더니 실제로 바뀐 상품 컬럼은 7개였다. 측정 31."]
+
+# 변경 시나리오(U5). 정적이다(docs/handoff_ui.md 3절). 원본 화면: Claude outputs/ui_reference/Scenarios.dc.html.
+# 숫자는 측정 결과(측정 번호와 함께)와 옛 구조의 사실만 둔다. 지금 구조 칸의 현재 행 수는 뺐다(판단 U-7).
+[scenarios]
+rows = [["c", "혼잡도"], ["r", "전월세"], ["s", "상가정보"], ["l", "생활이동"]]
+layers_after = [["src", "원천"], ["parse", "받기 (파싱만)"], ["raw", "원본 층"], ["gate", "관문"], ["clean", "정제 (SQL)"], ["wh", "웨어하우스"], ["mart", "마트·상품"]]
+layers_before = [["src", "원천"], ["lake", "레이크"], ["py", "정제 (Python)"], ["wh", "웨어하우스"], ["mart", "마트·상품"]]
+# 칸 = [제목, 설명]. "b."로 시작하면 옮기기 전 구조에서만 쓰는 칸.
+cells = { "c.src" = ["혼잡도", "서울교통공사 · 분기"], "r.src" = ["전월세 실거래", "국토교통부 API · 매주"], "s.src" = ["상가정보", "소상공인시장진흥공단 · 분기"], "l.src" = ["생활이동", "서울 열린데이터 · 월"], "c.parse" = ["congestion_raw.py", "Python"], "r.parse" = ["rent_raw.py", "Python"], "s.parse" = ["sbiz_store_raw.py", "Python"], "l.parse" = ["living_iceberg.py", "Spark"], "c.raw" = ["raw.congestion", "jsonb"], "r.raw" = ["raw.rent", "jsonb · item 단위"], "s.raw" = ["raw.sbiz_store", "jsonb · 서울 전체"], "l.raw" = ["migration_rows", "Iceberg · 24시간"], "c.gate" = ["batch_status_congestion", "dbt"], "r.gate" = ["batch_status_rent", "dbt · 처리 단위별"], "s.gate" = ["batch_status_store", "dbt"], "l.gate" = ["22_batch_status", "Spark SQL"], "c.clean" = ["stg_dbt.congestion", "dbt"], "r.clean" = ["stg_dbt.rent", "dbt"], "s.clean" = ["stg_dbt.store", "dbt"], "l.clean" = ["stg.living_commute", "Spark SQL · 경계 표"], "c.wh" = ["wh.fact_congestion", "dbt"], "r.wh" = ["wh.fact_rent", "dbt"], "s.wh" = ["fact_store · map_dong_mois", "다수결은 전체 업소"], "l.wh" = ["wh.fact_commute", "dbt"], "c.mart" = ["dong_profile", "am_peak_congestion 등"], "r.mart" = ["rent_listing · dong_profile", "dbt"], "s.mart" = ["dong_amenity · dong_mois_map", "업종 목록은 seed"], "l.mart" = ["commute_od", "dbt"], "c.lake" = ["lake/ 혼잡도", "XML 원본"], "r.lake" = ["lake/ 전월세", "XML 원본"], "s.lake" = ["lake/ 상가정보", "zip 원본"], "l.lake" = ["lake/ → Iceberg", "zip · 24시간"], "c.py" = ["transform/congestion.py", "필드 목록 고정 → stg.congestion"], "r.py" = ["transform/rent.py", "EXPECTED_FIELDS 고정 → stg.rent"], "s.py" = ["transform/sbiz_store.py", "6코드만 → stg.sbiz_store 30,394행"], "l.py" = ["living_migration.py", "HW · 07~09시만 → stg 4,038만 행"], "b.s.wh" = ["fact_store · map_dong_mois", "다수결 = 편의 6업종"], "b.l.wh" = ["wh.fact_commute", "범위 C를 가정"] }
+# 표시 = [이름, 배경, 글자, 테두리, 뜻]
+tags = { "origin" = ["원천 변화", "#15181D", "#FFFFFF", "#15181D", "원천 쪽에서 일어난 일"], "req" = ["요구", "#15181D", "#FFFFFF", "#15181D", "바뀐 요구사항"], "edit" = ["고침", "#2F5BEA", "#FFFFFF", "#2F5BEA", "사람이 파일을 고친 곳"], "stop" = ["멈춤", "#B04A08", "#FFFFFF", "#B04A08", "처리가 멈추거나 거절된 곳"], "warn" = ["경고", "#FFE7C2", "#6E3A00", "#B5650F", "멈추지 않고 알리기만 한 곳"], "rebuild" = ["다시 만듦", "#DDE3EC", "#24324A", "#7E8BA0", "다시 계산되는 곳"], "spill" = ["번짐", "#F4ECFC", "#45216B", "#7A3FB8", "요구와 무관한데 바뀌는 곳"], "trace" = ["영향 경로", "#EEF2FF", "#1C2B66", "#2F5BEA", "찾아낸 영향 경로"], "ok" = ["그대로", "#EEF0F3", "#3D4350", "#C9CED8", "영향 없음"] }
+
+[[scenarios.item]]
+id = "S1"
+group = "원천이 바뀔 때"
+title = "쓰는 필드 이름이 바뀜"
+sub = "혼잡도의 역 이름 키 DPTRE_STTN → STTN_NM (가정한 변경)"
+before = { "c.src" = ["origin", "역 이름 키 개명"], "c.lake" = ["ok", "파일은 그대로 저장"], "c.py" = ["stop", "CF1 스키마 변경으로 실패 → 정제 코드·시험·문서 5개 파일을 고침"], "c.wh" = ["stop", "혼잡도 갱신 멈춤"], "c.mart" = ["stop", "혼잡도 값 갱신 멈춤"] }
+after = { "c.src" = ["origin", "역 이름 키 개명"], "c.parse" = ["ok", "필드 검사 없이 jsonb로 그대로 담음"], "c.raw" = ["warn", "모르는 새 키 STTN_NM을 경고로 알림"], "c.gate" = ["stop", "쓰는 키가 없어 이 수집일 배치만 거절 (1,671행)"], "c.clean" = ["edit", "매크로 별칭 1줄 + coalesce 1줄"], "c.wh" = ["ok", "직전 승인 배치로 계속"], "c.mart" = ["ok", "다른 출처와 상품은 계속 갱신"] }
+steps_before = ["정제가 CF1(필드 집합이 다름)로 멈춘다.", "사람이 메시지의 사라진 이름과 새 이름을 보고 개명인지 판단한다.", "정제 코드 2곳, 시험 2곳, 문서 3개를 고친다.", "실패한 수집일을 다시 돌린다. 이때부터 개명 전 수집일은 다시 돌릴 수 없다."]
+steps_after = ["받기는 새 키도 jsonb에 그대로 담는다. 원본은 고치지 않는다.", "관문이 쓰는 키가 없는 그 수집일 배치만 거절한다. 다른 출처와 상품은 직전 승인본으로 계속 간다.", "경고가 모르는 새 키 이름을 알려 준다.", "SQL 두 줄(키 별칭, coalesce)을 고치면 개명 전·후 수집일이 함께 처리된다."]
+compare = [["고칠 곳", "코드 1 · 시험 1 · 문서 3 (5개 파일)", "매크로 1줄 + 모델 1줄"], ["고친 뒤 옛 수집일", "다시 돌릴 수 없음", "새 수집일과 함께 처리됨"], ["멈추는 범위", "그 출처 정제 전체", "그 수집일 배치 하나"], ["사람이 받는 정보", "사라진 이름·새 이름 한 줄", "쓰는 키 없는 행 수(거절) + 모르는 새 키(경고)"]]
+evidence = "측정 13 (옮기기 전), 측정 23 (지금), 관문 동작은 측정 25"
+signal = "관문 거절(쓰는 키 없음) + 경고(모르는 새 키)"
+action = "사라진 키와 새 키를 짝지어 별칭 1줄을 제안하고, 옛 결과와 두 방향 EXCEPT ALL 차이 0인지 돌려 결과를 붙인다. 사람은 합칠지만 정한다."
+
+[[scenarios.item]]
+id = "S2"
+group = "원천이 바뀔 때"
+title = "쓰지 않는 필드가 늘어남"
+sub = "전월세 item마다 newField 추가"
+before = { "r.src" = ["origin", "필드 1개 추가"], "r.lake" = ["ok", "파일은 그대로 저장"], "r.py" = ["stop", "F1 스키마 변경으로 처리 단위 실패, 0행 → EXPECTED_FIELDS에 이름 추가"], "r.wh" = ["stop", "그 처리 단위 반영 안 됨"], "r.mart" = ["stop", "그 처리 단위 반영 안 됨"] }
+after = { "r.src" = ["origin", "필드 1개 추가"], "r.parse" = ["ok", "모든 태그를 jsonb로"], "r.raw" = ["warn", "새 키 집합을 이력으로 남김 (raw_shape)"], "r.gate" = ["warn", "통과, 모르는 키 경고 1"], "r.clean" = ["ok", "207행 그대로"], "r.wh" = ["ok", "그대로"], "r.mart" = ["ok", "그대로"] }
+steps_before = ["처리 단위가 0행으로 실패한다.", "사람이 새 필드가 무해한지 판단한다.", "EXPECTED_FIELDS에 이름을 넣는다.", "다시 돌린다."]
+steps_after = ["받기는 새 필드도 jsonb에 담는다.", "정제는 쓰는 키만 꺼내므로 결과가 그대로다(207행, 원본과 차이 0).", "모르는 키 경고 1개와, 수집일별 키 집합 이력이 남는다.", "필요해지면 그때 SQL에서 꺼내 쓴다."]
+compare = [["처리 단위 결과", "실패, 0행", "통과, 207행 (차이 0)"], ["사람이 하는 일", "알아차림 → 확인 → 코드 고침 → 다시 돌림", "경고 확인. 고칠 것 없음"], ["언제부터 바뀌었나", "남지 않음", "수집일 · 키 집합 해시로 남음"]]
+evidence = "측정 12 (옮기기 전), 측정 24, 30 (지금)"
+signal = "경고만 (모르는 새 키)"
+action = "새 키가 무엇이고 어느 수집일부터인지 요약해 남긴다. SQL은 고치지 않는다."
+
+[[scenarios.item]]
+id = "S3"
+group = "원천이 바뀔 때"
+title = "해석 규칙을 정정함"
+sub = "전월세 C6: 산 지번 처리"
+before = { "r.py" = ["edit", "규칙 2곳 고침"], "r.lake" = ["ok", "원본은 그대로"], "r.wh" = ["rebuild", "어느 단위를 다시 만들지 고를 수 없음"], "r.mart" = ["rebuild", "전부 다시 또는 추론"] }
+after = { "r.raw" = ["ok", "원본 그대로"], "r.gate" = ["ok", "그대로"], "r.clean" = ["edit", "SQL 2줄 고침"], "r.wh" = ["rebuild", "다음 빌드가 모든 수집일에 새 규칙 적용"], "r.mart" = ["rebuild", "바뀐 단위와 행 수가 빌드 기록에 남음"] }
+steps_before = ["규칙 2곳을 고친다.", "stg에 규칙 버전도 적재 시각도 없어 바뀔 처리 단위를 데이터로 고를 수 없다.", "전부(1,202단위, 그중 1,151개는 결과가 같음) 다시 돌리거나, 규칙을 아는 사람이 추론한다(정답 51단위)."]
+steps_after = ["SQL 두 줄을 고친다.", "다음 빌드가 모든 수집일에 새 규칙을 적용한다(매번 전체 재빌드).", "교체 직전 새 결과와 지금 결과를 처리 단위별로 비교해 바뀐 행 수를 빌드 기록에 남긴다."]
+compare = [["다시 만들 범위 고르기", "불가 (규칙 버전 없음)", "고를 필요 없음 (전체 재빌드)"], ["무엇이 바뀌었나", "알 수 없음 (정답 51 / 1,202단위는 측정용으로만)", "바뀐 단위 58 / 1,352, item 116 (쿼리 한 번)"], ["빌드 기록", "없음", "모델별 SQL 해시 + 바뀐 단위 (ops.build_diff)"]]
+evidence = "측정 14 (11-12 데이터), 측정 24, 30 (11-13 데이터, 단위 수가 늘어 숫자가 다름)"
+signal = "사람이 규칙을 고친 변경"
+action = "빌드 기록으로 바뀐 단위·행 수를 변경에 붙인다."
+
+[[scenarios.item]]
+id = "S6a"
+group = "요구가 바뀔 때"
+title = "편의 업종 하나 추가"
+sub = "헬스장 R10307"
+before = { "s.lake" = ["rebuild", "레이크 zip부터 다시 정제"], "s.py" = ["edit", "ESSENTIAL 1곳 + 고정값 시험 깨짐"], "s.wh" = ["spill", "dong_mois_map 427행 중 417행 값이 흔들림 (다수결 표본 = 편의 업종)"], "s.mart" = ["req", "마트 2개 3줄 + 업종 추가 요구"] }
+after = { "s.raw" = ["ok", "서울 전체 업소가 이미 있음"], "s.gate" = ["ok", "그대로"], "s.clean" = ["ok", "그대로"], "s.wh" = ["ok", "다수결은 전체 업소: 차이 0"], "s.mart" = ["req", "seed 1줄 + 마트 2개(3줄)"] }
+steps_before = ["정제 코드의 업종 목록(ESSENTIAL)을 고친다.", "정제가 6코드만 남기므로 레이크 zip부터 다시 정제한다.", "고정값 시험이 깨진다.", "업종 범위가 행안부 코드 다수결의 표본이기도 해서, 요구와 무관한 상품 dong_mois_map이 바뀐다."]
+steps_after = ["seed(업종 목록)에 한 줄 더한다.", "마트 두 파일에 컬럼을 더한다(3줄).", "dbt 빌드만 다시 돈다. 원본 다시 적재 없음.", "다수결은 전체 업소로 계산하므로 dong_mois_map은 그대로다."]
+compare = [["동작이 바뀌는 곳", "Python 1곳 + 마트 SQL 2개", "seed 1줄 + 마트 SQL 2개"], ["다시 만드는 범위", "레이크 zip부터 재정제 + dbt", "dbt 빌드만"], ["깨진 시험", "1개 (AssertionError)", "0 (dbt 116개 통과)"], ["요구와 무관한 상품", "dong_mois_map 417행 값 변함", "차이 0"]]
+evidence = "측정 17 (옮기기 전), 측정 28 (지금), 다수결 분리는 결정 79"
+signal = "요구 문장 (\"헬스장도 보고 싶다\")"
+action = "seed 1줄과 마트 컬럼 2개를 제안하고, 다른 상품 4개가 두 방향 차이 0인지 확인해 붙인다."
+
+[[scenarios.item]]
+id = "S6b"
+group = "요구가 바뀔 때"
+title = "저녁 귀가 시간대 추가"
+sub = "이동유형 WH · 도착 18~20시"
+before = { "l.lake" = ["ok", "24시간이 Iceberg에 있음"], "l.py" = ["edit", "정제 4곳 이상 + stg 표 PK 변경 → Iceberg부터 다시 정제"], "l.wh" = ["spill", "범위를 가정하고 있어 저녁 행이 출근 평균에 조용히 섞일 수 있음"], "l.mart" = ["req", "마트 조건 + 새 마트"] }
+after = { "l.raw" = ["ok", "24시간 그대로"], "l.gate" = ["ok", "그대로"], "l.clean" = ["ok", "경계 표 그대로 (Spark 재실행 없음)"], "l.wh" = ["ok", "그대로"], "l.mart" = ["req", "새 마트 파일 1개 (범위 조건 1줄만 다름)"] }
+steps_before = ["정제가 출근 범위(HW, 07~09시)만 남기므로 정제 코드 4곳 이상을 고친다.", "stg 표에 방향 열을 더하고 PK를 바꾼다(이미 4천만 행이 있는 표).", "Iceberg부터 다시 정제한다(한 달 약 101초).", "wh와 마트는 범위를 가정하고 있어, 정제만 고치면 출근 평균에 귀가가 조용히 섞이는 경로가 생긴다."]
+steps_after = ["경계 표에 이동유형과 시간대 묶음이 이미 열로 있다.", "commute_od를 복사한 새 마트에서 범위 조건 한 줄만 바꾼다.", "Spark는 다시 돌지 않는다.", "기존 상품 4개는 두 방향 차이 0이다."]
+compare = [["고친 곳", "정제 Python 4곳+, stg DDL(PK), wh, 마트, 시험, 문서", "새 마트 파일 1개 (조건 1줄)"], ["다시 만드는 곳", "Iceberg부터 재정제", "경계 표부터. Spark 재실행 없음"], ["기존 상품 영향", "출근 평균에 귀가가 섞일 수 있음", "4개 상품 차이 0"]]
+evidence = "측정 18 (옮기기 전), 측정 34 (지금), grain은 결정 96"
+signal = "요구 문장 (\"저녁 귀가도 보고 싶다\")"
+action = "마트 파일 사본에서 범위 조건 1줄을 바꾼 새 모델을 제안하고, 기존 상품 차이 0을 확인해 붙인다."
+
+[[scenarios.item]]
+id = "S4"
+group = "영향 찾기"
+title = "값 표기가 바뀌면 어디가 영향받나"
+sub = "혼잡도 요일 표기 평일 → 주중"
+map = ["raw.congestion", "raw.DOW_SE"]  # 데이터 지도에서 직접 보기
+before = { "c.src" = ["origin", "요일 표기 변경"], "c.py" = ["trace", "하류 표 4개를 따라감 (테이블 의존)"], "c.wh" = ["trace", "후보 표"], "c.mart" = ["spill", "상품 후보 컬럼 28개 → 사람이 SQL을 읽어 27개를 걸러냄"] }
+after = { "c.src" = ["origin", "요일 표기 변경"], "c.raw" = ["trace", "raw.DOW_SE에서 출발"], "c.gate" = ["trace", "행 경로"], "c.clean" = ["trace", "값·행 경로"], "c.wh" = ["trace", "필터를 거치는 행 경로까지"], "c.mart" = ["trace", "지도 예측 5개 · 실제 4개 · 놓침 0"] }
+steps_before = ["dbt manifest의 의존을 따라 하류 모델 4개를 찾는다.", "상품으로 나가는 dong_profile의 컬럼 28개가 모두 후보가 된다.", "사람이 SQL 6개 파일을 읽어 실제 영향 1개를 골라낸다. 그 1개는 값이 아니라 필터(행 관계)로 이어진다."]
+steps_after = ["컬럼 리니지가 SQL을 파싱해 값·행·행 집합 경로를 모두 잡는다.", "원천 키 raw.DOW_SE에서 상품 컬럼 5개를 예측한다.", "실제로 값을 바꿔 돌려 보면 4개가 바뀐다. 놓친 것은 0이다.", "데이터 지도 화면에서 직접 골라 볼 수 있다."]
+compare = [["찾는 방법", "테이블 의존(dbt 그래프) + 사람이 SQL 읽기", "컬럼 리니지 (SQL 파싱)"], ["후보 대 실제", "후보 28개 중 실제 1개 (stg 기준)", "예측 5개, 실제 4개 (원천 키 기준)"], ["놓친 것", "사람 판단에 달림", "변이 7개 모두 0"]]
+evidence = "측정 15 (옮기기 전), 측정 31, 35 (지금). 기준 컬럼이 달라(stg.dow / raw.DOW_SE) 실제 개수가 다르다"
+signal = "변경이 들어올 때마다"
+action = "리니지 조회로 영향받는 상품 컬럼 목록을 변경에 붙인다."

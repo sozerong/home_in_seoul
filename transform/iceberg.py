@@ -1,15 +1,15 @@
 """Iceberg 표를 다루는 Spark 세션 (고도화 4단계, 결정 35).
 
 카탈로그 lh: 어느 파일이 지금 표인지의 기록은 PostgreSQL iceberg DB(JDBC 카탈로그)에,
-데이터·메타데이터 파일은 프로젝트의 lakehouse/ 폴더에 둔다. Airflow 컨테이너 안 spark-venv에서 실행한다.
-사용법: /opt/airflow/spark-venv/bin/python -m transform.iceberg --selftest
+데이터·메타데이터 파일은 프로젝트의 lakehouse/ 폴더에 둔다. 계산 컨테이너(seoul-spark-job, 결정 109)에서 실행한다.
+사용법: docker compose run --rm spark-job python -m common lock -- python -m transform.iceberg --selftest
 """
 import glob
 import sys
 
-from common import ROOT, read_env
+from common import ROOT, SCRATCH, read_env
 
-SPARK_LOCAL = "/tmp/spark-local"  # 컨테이너 안. 호스트 C:에서 늘어나는 가상 디스크 위다(F-16)
+SPARK_LOCAL = f"{SCRATCH}/spark"  # 작업 공간 전용 볼륨(결정 107 S4, J-5). 여전히 호스트 C:에서 늘어나는 가상 디스크 위다(F-16, F-20)
 
 
 def spark_session(app, conf=None):

@@ -2,7 +2,7 @@
 
 G3 한 행 = 대상연월 × 출발 × 도착 × 평일/주말 × 도착시간 × 이동유형 × 나이. Iceberg 원본 전체(정제 전, 열 수가 맞는 행)로 센다.
 그룹 수가 40,382,008(지금 stg.living_migration)을 넘으면 결정 89에 따라 차원을 줄여야 한다. 이 스크립트는 재기만 하고 쓰지 않는다.
-실행(Airflow 컨테이너): /opt/airflow/spark-venv/bin/python -m measure.living_g3 [options]
+실행(계산 컨테이너): docker compose run --rm spark-job python -m measure.living_g3 [options]
   options [a b ...]: 기준을 넘었을 때 차원 줄이기 후보(OPTIONS)마다 그룹 수만 잰다. 글자를 주면 그 후보만
 """
 import sys

@@ -42,11 +42,12 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def actual_schema(conn):
-    """{표: [[컬럼, 타입]]}. 타입은 format_type이라 char(6), numeric(10,1)처럼 길이까지 나온다."""
+def actual_schema(conn, schema="mart"):
+    """{표: [[컬럼, 타입]]}. 타입은 format_type이라 char(6), numeric(10,1)처럼 길이까지 나온다.
+    schema: 격리 빌드(agent/sandbox.py G4)는 mart_sbx_<라벨>을 넘긴다."""
     return {name: [list(r) for r in conn.execute(
         "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute "
-        "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum", [f"mart.{name}"])]
+        "WHERE attrelid = %s::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum", [f"{schema}.{name}"])]
         for name in TABLES}
 
 
@@ -78,7 +79,10 @@ def record_product(conn, manifest):
 
 def main():
     version = datetime.date.today().strftime("v%Y.%m.%d")
-    with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 폴더를 지우기 전에 계약부터 본다
+    with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 폴더를 지우기 전에 0행과 계약부터 본다
+        empty = [n for n in TABLES if not conn.execute(f"SELECT EXISTS (SELECT 1 FROM mart.{n})").fetchone()[0]]
+        if empty:  # 설계 원칙 4: 0건은 실패 (guarantees.md 3절)
+            raise SystemExit(f"상품 표가 0행이라 내보내지 않습니다: {', '.join(empty)}")
         schema = actual_schema(conn)
     contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
     if schema != contract:

@@ -15,7 +15,7 @@ import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, AssetAny, task
 
-from alerting import notify_failure, wh_load_report
+from alerting import notify_failure, wh_load_dbt_failed, wh_load_report
 from assets import RAW_RENT, WH_BUILT, WH_INPUTS
 
 with DAG(
@@ -29,9 +29,10 @@ with DAG(
 ):
     in_dbt = "set -euo pipefail; cd /opt/project/warehouse/dbt; "
     dbt = "/opt/airflow/dbt-venv/bin/dbt"  # dbt 전용 가상환경 (결정 30 D3)
-    # 전체 빌드는 무거운 작업이라 pool heavy와 잠금 파일로 한 번에 하나(resource_guard.md L5, common.heavy_lock과 같은 파일)
-    build = BashOperator(task_id="dbt_build", pool="heavy",
-                         bash_command=in_dbt + f"flock -n /tmp/heavy.lock sh -c '{dbt} run-operation drop_build_schemas && {dbt} build'")
+    # 전체 빌드는 무거운 작업이라 pool heavy와 heavy 잠금(PostgreSQL advisory lock, common.heavy_lock)으로 한 번에 하나(resource_guard.md L5)
+    build = BashOperator(task_id="dbt_build", pool="heavy", on_failure_callback=wh_load_dbt_failed,  # dbt 실패는 에이전트 신호(A2)
+                         bash_command="set -euo pipefail; cd /opt/project; python -m common lock -- "
+                                      f"sh -c 'cd warehouse/dbt && {dbt} run-operation drop_build_schemas && {dbt} build'")
     # ponytail: 교체가 실패하면 마지막 build_run은 교체되지 않은 빌드다. 그 실패는 알림으로 따로 드러난다
     record = BashOperator(task_id="record_build",
                           bash_command="set -euo pipefail; cd /opt/project; python -m warehouse.build_record")
@@ -41,7 +42,7 @@ with DAG(
                           outlets=[WH_BUILT])  # 상품까지 나간 뒤에 리니지 DAG를 깨운다(결정 57)
 
     @task(task_id="report")
-    def report():
-        return wh_load_report()
+    def report(dag_run=None):
+        return wh_load_report(f"wh_load/{dag_run.run_id}")
 
     build >> record >> swap >> export >> report()

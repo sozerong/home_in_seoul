@@ -101,9 +101,6 @@ WITH src (source, good, quarantined) AS (
 )
 SELECT source, good, quarantined, round(100.0 * quarantined / nullif(good + quarantined, 0), 3) AS quarantined_pct FROM src;
 
--- 생활이동 최신 대상연월과 달별 행 수를 표 전체를 훑지 않고 얻는다 (ops.freshness가 12.5초 걸렸다).
-CREATE INDEX IF NOT EXISTS living_migration_target_ym_idx ON stg.living_migration (target_ym);
-
 -- 엔진 실행 한 번 x 단계(stage) 하나 = 한 행 (결정 94-1, design_remaining_work.md 3.3). transform/spark_sql_runner.py가
 -- 실행이 끝나면(실패해도) Spark 이벤트 로그에서 읽어 쓴다. 3.10 엔진 분석의 지표. 시간은 ms, 크기는 byte.
 CREATE TABLE IF NOT EXISTS ops.engine_run (

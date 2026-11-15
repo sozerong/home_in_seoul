@@ -1,3 +1,4 @@
+# 8절 은퇴 뒤 재현 불가(옛 표 stg.living_migration·옛 정제 코드 필요, 결정 105로 지움). 재현하려면 커밋 3efb02f를 체크아웃한다.
 """변경 시나리오(change_resilience_plan.md 7절)를 실제 레이크·DB를 건드리지 않고 재현해 변경 비용을 잰다.
 
 P0에서 기준값을 재고, 각 작업 뒤 같은 명령으로 다시 재서 전후를 비교한다.
@@ -11,9 +12,9 @@ P0에서 기준값을 재고, 각 작업 뒤 같은 명령으로 다시 재서 �
       예: python -m measure.change_cost unit offi 2026-11-03 11680 202610
   s6a 요구사항 변경(편의 업종 추가): 실제 레이크 상가정보 zip을 transform.sbiz_store.main()으로 돌린다.
       대조군은 지금 6코드, 변경은 ESSENTIAL에 S6A_CODE를 더한 7코드(레포 파일은 고치지 않는다).
-  s6b 요구사항 변경(저녁 귀가 18~20시): Airflow 컨테이너 spark-venv에서 Iceberg 한 달을 transform.living_migration으로 돌린다.
+  s6b 요구사항 변경(저녁 귀가 18~20시): 계산 컨테이너(spark-job)에서 Iceberg 한 달을 transform.living_migration으로 돌린다.
       대조군은 지금 코드(HW, 07~09시), 변경은 흔한 고침 사본(WH, 18~20시. 레포 파일은 고치지 않는다). DB는 막는다.
-      예: docker compose run --rm --no-deps airflow bash -c "cd /opt/project && /opt/airflow/spark-venv/bin/python -m measure.change_cost s6b"
+      예: docker compose run --rm spark-job python -m measure.change_cost s6b
   s6a-map 업종을 더하면 wh.map_dong_mois(업소 다수결, 상품 dong_mois_map)가 바뀌는지 본다. 더할 업종 행을
       배열 파라미터로 넘겨(읽기 전용 트랜잭션, 임시 표도 만들지 않음) wh/map_dong_mois.sql과 같은 다수결을 다시 내 지금 표와 비교한다.
       대조: wh.fact_store만으로 다시 낸 다수결이 지금 표와 같아야 이 재현을 믿는다. 실제 표에는 쓰지 않는다.
@@ -174,7 +175,7 @@ def s1():
 
 
 def peak_mb():
-    import psutil  # Windows .venv에만 있다(s6b가 도는 컨테이너 spark-venv에는 없음)
+    import psutil  # Windows .venv에만 있다(s6b가 도는 spark-job 이미지에는 없음)
     return psutil.Process().memory_info().peak_wset / 2**20  # Windows 최대 작업 집합(프로세스가 쓴 물리 메모리의 최댓값)
 
 

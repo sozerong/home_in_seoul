@@ -7,8 +7,8 @@ test_*.sql은 위반 행을 돌려주는 SQL이다. warn_*.sql도 같지만 위�
 옮기기 = 비우고 복사(F-13 처방 A). 표를 지우고 이름을 바꾸면 그 표를 읽는 dbt 뷰(wh.fact_commute) 때문에 거절된다.
 --save 뷰=표: 마지막 뷰 말고도 PostgreSQL에 남길 뷰(관문 판정, 격리 행. 판단 64). 같은 트랜잭션에서 옮긴다.
 Spark 이벤트 로그를 켜고, 끝나면(실패해도) 단계별 지표를 ops.engine_run에 남긴다. 한 행 = 실행 x 단계.
-실행(Airflow 컨테이너):
-  /opt/airflow/spark-venv/bin/python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status
+실행(계산 컨테이너, 결정 109. Airflow에서는 file_living_migration DAG의 compute 태스크가 DockerOperator로 같은 명령을 돌린다):
+  docker compose run --rm spark-job python -m transform.spark_sql_runner spark_sql/living stg.living_commute --show batch_status
       --save batch_status=stg.living_batch_status quarantine=stg.living_quarantine
   --show 뷰: 먼저 계산해 캐시하고 출력한다(작은 뷰. 테스트가 여러 번 읽어도 한 번만 계산)
   --driver-memory, --shuffle-partitions, --aqe: 엔진 분석(3.10)에서 바꾼다. --no-write: 쓰지 않고 지표만 남긴다
@@ -27,9 +27,9 @@ import psycopg
 
 from common import ROOT, heavy_lock, read_env, temp_budget
 from transform.iceberg import spark_session
-from transform.living_migration import load_codes
+from transform.living_iceberg import load_codes
 
-EVENT_DIR = "/tmp/spark-events"
+EVENT_DIR = str(ROOT / "logs" / "spark-events")  # 레포 logs/(git 제외)를 계산 컨테이너에 쓰기로 붙인다. 성공한 컨테이너가 지워져도 남는다(결정 109 S1)
 
 
 def sql_files(folder):
@@ -97,11 +97,13 @@ def swap(conn, tables):
         n = conn.execute(f"SELECT count(*) FROM {table}_new").fetchone()[0]
         if i == 0 and n == 0:
             raise SystemExit(f"{table}_new가 0행입니다. 옮기지 않습니다")
-        # ponytail: 1,378만 행을 한 번 더 복사한다(시간 [미측정]). 느리면 F-13 선택지 C(이름 바꾸고 뷰 다시 만들기)
+        # ponytail: 한 번 더 복사한다. 측정 38: 경계 표 1,378만 행 72초, 격리 3,194만 행 258초, 트랜잭션 334초 동안 읽기가 잠긴다.
+        # 잠금이 문제가 되면 F-13 선택지 C(이름 바꾸고 뷰 다시 만들기)
+        t = time.time()
         conn.execute(f"TRUNCATE {table}")
         conn.execute(f"INSERT INTO {table} SELECT * FROM {table}_new")
         conn.execute(f"DROP TABLE {table}_new")
-        print(f"{table} 교체: {n:,}행")
+        print(f"{table} 교체: {n:,}행, {time.time() - t:.1f}초(커밋 전)")
 
 
 def run(spark, args, views, tests):
@@ -151,8 +153,10 @@ def write(spark, saves):
          .jdbc("jdbc:postgresql://db:5432/seoul?reWriteBatchedInserts=true", new,
                properties={"user": "seoul", "password": read_env("POSTGRES_PASSWORD"), "driver": "org.postgresql.Driver",
                            "batchsize": "10000"}))
+    t = time.time()
     with psycopg.connect(read_env("DATABASE_URL")) as conn:  # 블록이 정상으로 끝나면 커밋: 모든 표 교체가 한 트랜잭션
         swap(conn, [table for _, table in saves])
+    print(f"교체 트랜잭션(커밋 포함): {time.time() - t:.1f}초")
 
 
 def main():
@@ -166,7 +170,10 @@ def main():
     parser.add_argument("--aqe", default="true")
     parser.add_argument("--no-write", action="store_true")
     parser.add_argument("--explain", action="store_true")
-    parser.add_argument("--min-temp-gb", type=int, default=200,  # 측정 32: 셔플 쓰기 143GB + 디스크 spill 57GB
+    # 문턱 = 같은 작업의 실측 최대 C: 사용 x 1.2 (J-7, 결정 107 S6). temp_budget()이 남길 몫 50GiB를 이미 빼므로 여기에는 더하지 않는다.
+    # 생활이동 F-9 처방 전: 측정 38 C: 여유 641.24 → 313.00GB = 328.24GB x 1.2 = 393.9 → 394. 호스트 C: 여유로는 약 447.7GB가 있어야 시작한다.
+    # ponytail: 측정 1회 x 1.2(측정 37 메모리 예산과 같은 방식). F-9 처방 뒤 다시 잰 최대로 바꾼다.
+    parser.add_argument("--min-temp-gb", type=int, default=394,
                         help="임시 공간이 이보다 적으면 시작하지 않는다(Spark에는 임시 폴더 상한이 없다, L3·L4)")
     args = parser.parse_args()
     lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때까지 잡는다(L5)

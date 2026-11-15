@@ -24,7 +24,7 @@ flowchart LR
         S1[rent]
         S2[station_master]
         S3[congestion]
-        S4[living_migration]
+        S4[living_commute<br>+ living_batch_status, living_quarantine]
         S5[sbiz_store]
         S6[sgis_dong]
         S7[parcel]
@@ -53,7 +53,7 @@ flowchart LR
     L1 -->|transform/station_master.py| S2
     L1 -->|transform/congestion_raw.py 파싱만 → raw.congestion jsonb → dbt stg_dbt 정제 (결정 42)| S3
     L2 -->|transform/living_iceberg.py, Spark| IC[(Iceberg lh.living.migration_rows<br>24시간대 전체 행)]
-    IC -->|transform/living_migration.py| S4
+    IC -->|transform/spark_sql_runner.py + spark_sql/living, Spark SQL (2026-11-13부터, 결정 88~90, 96)| S4
     L2 -->|transform/sbiz_store.py| S5
     L2 -->|transform/boundary.py| S6 & S7
     STG -->|dbt models/wh| WH
@@ -134,6 +134,8 @@ stg.rent: source_type=offi | sgg_cd=11680 | deal_ymd=202609 | deal_date=2026-09-
 바뀐 것: 쉼표 숫자 → 정수, 연·월·일 세 칸 → 날짜 하나, 법정동 이름 + 지번 → PNU, 출처 추적 칸(수집일, 파일, 순번) 추가.
 
 ### 생활이동 (zip 안 CSV, CP949 → `stg.living_migration`)
+
+2026-11-13부터는 아래 옛 정제 대신 Spark SQL 실행기가 Iceberg 전체에서 경계 표 `stg.living_commute`(13,782,826행), 판정 `stg.living_batch_status`, 격리 `stg.living_quarantine`을 만든다(측정 38). 아래 예시는 옛 경로 기준이다.
 ```
 생활이동_행정동_2026.07_08시.csv
 대상연월,요일,도착시간,출발 행정동 코드,도착 행정동 코드,성별,나이,이동유형,평균 이동 시간(분),이동인구(합)

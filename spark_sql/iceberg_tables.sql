@@ -8,5 +8,5 @@ CREATE TABLE lh.living.migration_rows (
     move_type string, avg_minutes_raw string, population_raw string, line string
 ) USING iceberg PARTITIONED BY (target_ym);
 
--- 생활이동 코드표(V4). 실행기가 레이크의 서울생활이동데이터_행정동코드_*.xlsx C열에서 임시 뷰 codes로 만든다(transform/living_migration.load_codes)
+-- 생활이동 코드표(V4). 실행기가 레이크의 서울생활이동데이터_행정동코드_*.xlsx C열에서 임시 뷰 codes로 만든다(transform/living_iceberg.load_codes)
 CREATE TABLE lake.seoul_living_migration.code_table (code string);

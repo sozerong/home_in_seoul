@@ -95,3 +95,137 @@
 85. **(L2) 상한은 컨테이너를 다시 만들지 않고 `docker update`로 걸었다.** `docker-compose.yml`에 같은 값을 적어(다음에 만들 때의 기준) 두고, 지금 컨테이너에는 `docker update --memory --memory-swap [--cpus]`. 사용자 지시(재생성 금지)를 지키면서 바로 적용된다. 이웃 상한은 최대 x 1.2를 올림한 값이라 resource_guard.md 2절의 "최대 x 1.2" 합(6.11GiB)보다 큰 6.5GiB로 계산했다(보수적).
 86. **(유도 시험) 메모리 넘침은 Airflow 컨테이너가 아니라 같은 이미지의 일회용 컨테이너로 일으켰다.** Airflow 컨테이너를 넘치게 하면 스케줄러가 죽고, 그것은 결정 101 A가 이미 받아들인 단점이라 새로 알 것이 없다. 보려는 것은 "cgroup 상한이 VM 전체 멈춤을 그 컨테이너 하나의 OOM으로 바꾸는가"다. 1회차는 PostgreSQL 탐침이 OOM 1분 전에 끝나 덮지 못해, 탐침을 컨테이너가 끝날 때까지 돌게 고쳐 다시 했다. 손으로 한 두 번(스크래치 스크립트)과 레포 스크립트 한 번 모두 같은 결과다.
 87. **(L5) 잠금 파일은 컨테이너 안 `/tmp/heavy.lock`, 기다리지 않고 바로 실패.** 생활이동 DAG 태스크는 bash 전체를 `flock`으로 감싸지 않았다. 안의 실행기가 같은 파일을 다시 잡으려다 스스로 막히기 때문이다. 그래서 그 태스크 안의 Iceberg 적재·옛 정제(Spark 두 번)는 pool로만 줄 세운다(손으로 돌린 측정과는 겹칠 수 있음, ponytail 한계).
+
+## 2026-11-14 handoff_decisions.md 진행 (판단 기준: handoff_judgments.md J-1~J-18)
+
+### 판단 88. 줄바꿈: 정규화 커밋은 `.gitattributes` 하나뿐이고, 작업 트리는 바이트 단위로 LF로 바꿨다
+- 상황: handoff_decisions.md 1절. `git diff --stat`이 줄바꿈 때문에 실제 변경보다 훨씬 크게 나왔다.
+- 따른 기준: J-1(`.gitattributes`로 고정, `git add --renormalize .`, 정규화와 내용 커밋을 나눔, 레포에 있는 바이너리 확장자만).
+- 근거:
+  - 숫자 (`git -c core.autocrlf=false diff --stat` / 같은 것에 `--ignore-cr-at-eol`, 15개 파일):
+    | 시점 | 줄바꿈 포함 | 줄바꿈 무시 |
+    |---|---|---|
+    | 시작(2026-11-14, 0절 기록 전) | +4,269 / -3,962 | +357 / -50 |
+    | 0절 기록 뒤, 정규화 전 | +2,852 / -2,504 | +398 / -50 |
+    | 작업 트리 LF로 바꾼 뒤 | +398 / -50 | +398 / -50 |
+  - 원인: Git for Windows 시스템 설정 `core.autocrlf=true`(`C:/Program Files/Git/etc/gitconfig`)로 체크아웃 때 파일이 CRLF로 쓰였다(작업 트리 CRLF 99개, CR 섞임 7개). 더해서 내가 밤사이 문서를 고친 스크립트가 Windows Python `Path.write_text` 기본값(줄바꿈을 `\r\n`으로 씀)이라 고친 파일을 다시 CRLF로 썼다. 이제 `newline="\n"`으로 쓴다.
+  - 인덱스는 이미 모두 LF였다(`git ls-files --eol`: `i/lf` 203개, 바이너리 `docs/architecture.png` 1개, 빈 파일 1개). Windows의 `git diff`는 `autocrlf`가 비교 때 CR을 빼서 357줄로 보였고, 다른 도구(`autocrlf` 없이)에서는 4천 줄로 보였다.
+  - `git add --renormalize .`는 내용이 바뀐 15개 말고 아무 파일도 스테이지하지 않았다. 즉 HEAD를 고칠 정규화는 없다.
+  - 레포에 있는 바이너리 확장자는 `png` 하나(`git ls-files` 확장자 집계: sql 91, py 62, md 25, csv 10, yml 8, json 3, txt 1, svg 1, png 1).
+- 결과:
+  - `.gitattributes`: `* text=auto eol=lf`, `*.png binary`. J-1 예시의 zip, parquet, xlsx, shp 등은 레포에 없어 넣지 않았다(레이크·상품 폴더는 `.gitignore`).
+  - 작업 트리 104개 파일의 `\r\n`을 `\n`으로 바이트 치환했다(내용 그대로). CR이 섞여 있던 7개(`.gitignore`, `tests/lineage_truth/*.csv` 5개, `tests/test_living_migration.py`)는 바꾼 뒤 HEAD와 바이트가 같다(`cmp`).
+  - 커밋 셋으로 나눈다(J-1, J-2): ① 정규화(`.gitattributes`만) ② handoff_finish.md 남은 작업(밤사이 변경 15개 파일) ③ 0절 결정 기록(결정 103~107, F 상태, 이 판단 기록, 지시서 3개). 정규화 커밋에 바뀌는 파일이 없으므로 `git log -p`에서 실제 변경이 그대로 보인다.
+
+### 판단 89. 결정 106(UI 형태)의 선택지는 지어내지 않았다
+- 상황: 0절 표는 결정 106의 결정과 범위 설명만 주고, 비교한 선택지는 레포 어디에도 없다(handoff_ui.md, resource_guard.md, decisions.md 검색).
+- 따른 기준: CLAUDE.md 2절 "확인 안 된 것은 지어내지 말고 [확인 필요]".
+- 근거: `grep 선택지 docs/handoff_ui.md`는 "필요하면 멈추고 선택지를 보인다" 같은 진행 규칙만 나온다.
+- 결과: 결정 106의 선택지 칸에 "[확인 필요: 사용자가 비교한 다른 형태와 장단점]"을 적었다. 사용자가 알려 주면 채운다.
+
+### 판단 90. 옛 생활이동 표는 덤프 없이 지웠다
+- 상황: handoff_decisions.md 2절, 결정 105(사용자가 1~5 지우기를 정함). 지시서 공통 규칙은 지우기 전 사용자 확인인데, 이번 대상은 결정 105가 이름까지 정한 목록이라 그 결정을 확인으로 보았다. 목록 밖은 지우지 않았다.
+- 따른 기준: J-3(쓰는 곳 0 → 복구 방법 → 지우기 → 다시 확인).
+- 근거: 쓰는 곳 0은 지우기 직전 `pg_depend` 0, 리니지 회차 36 옛 표 간선 0. 복구는 레이크 zip(지우지 않음) → `transform.living_iceberg`(남음) → 커밋 3efb02f의 `transform/living_migration.py`로 다시 만들 수 있다. 같음 증명 기록은 측정 33, 옛 마트 결과는 `keep.commute_od_before_3_5`에 남는다. 8,972MB 덤프는 그 자체가 지금 C: 여유(F-20)를 줄인다.
+- 결과: 덤프 없이 `DROP TABLE` 두 개를 한 트랜잭션으로. DB 20GB → 11GB. 지운 뒤 상품 sha256 같음, 리니지 간선 0.
+
+### 판단 91. 커밋하지 않고 다음 절로 넘어간다
+- 상황: 지시서 1·2절은 절마다 커밋하라고 하지만, 사용자가 2026-11-14 "커밋은 내가 할게 명령어 달라고할떄만 주고 작업 하자"고 했다.
+- 따른 기준: 사용자 지시(J-2보다 우선).
+- 근거: 사용자 메시지.
+- 결과: 커밋하지 않는다. 절마다 바뀐 파일은 progress 문서와 이 기록에 남겨, 요청이 오면 절 단위로 나눈 커밋 명령을 준다. `git rm`으로 지운 파일 3개와 `.gitattributes`는 스테이지에 올라가 있다.
+
+### 판단 92. S1(작업 공간 정리)은 지울 것이 없어 하지 않았고, 74.6GB의 정체를 정정했다
+- 상황: handoff_decisions.md 2.5절 S0·S1. 지시서는 측정 38 실행 전 `/tmp` 74.6GB를 죽은 실행의 셔플·spill로 보고 지울 목록을 만들게 했다.
+- 따른 기준: J-4(다섯 종류로 나누고, 첫 종류만 지울 후보). 지시서 전제(74.6GB가 `/tmp` 안에 있음)와 실측이 어긋났으나, 지울 것이 0이라 고를 선택지가 없어 멈추지 않고 기록했다.
+- 근거: `du -sh /tmp` 166M, `blockmgr-*`·DuckDB 임시 파일 0, `/tmp/spark-local` 빈 폴더, 쓰기 층 340MB(`docker ps -s`). `df / /tmp`가 같은 overlay(65G 사용)이고 `vm_watch.py`가 `shutil.disk_usage("/tmp")`를 쓴다. 유휴 vm_watch(2026-11-13 21:30)도 74.8GB였다.
+- 결과: 지우지 않았다. F-21(측정 해석 오류)을 새로 적고, F-20·측정 38/39·resource_guard.md 7.2·7.3에 정정을 덧붙이고, `vm_watch.py` 설명을 고쳤다. 작업 공간 최대는 J-7대로 호스트 C: 실측(328GB)을 쓰고, VM 안 몫은 259.0GB(정정값)로 함께 적는다. S7 관측은 `disk_usage`가 아니라 `du`로 `/scratch` 크기를 잰다.
+
+### 판단 93. Airflow 컨테이너를 다시 만들기 전에 DB 4개를 덤프하고, 컨테이너 안에만 있던 파일을 밖으로 옮겼다
+- 상황: handoff_decisions.md 2.5절 S4. 볼륨을 붙이려면 Airflow 컨테이너를 다시 만들어야 한다. db 컨테이너는 그대로지만 공통 규칙은 "다시 만들면 `pg_dump` 먼저"다.
+- 따른 기준: handoff_finish.md 0절, J-5. 컨테이너 쓰기 층에만 있던 것을 J-4 분류로 다시 봤다.
+- 근거:
+  - 덤프: `pg_dump -Fc` seoul 620,666,588B, metabase 1,373,915B, airflow 587,387B, iceberg 3,461B, `pg_dumpall --globals-only` 1,439B. 100초. `pg_restore --list`의 TABLE DATA: seoul 64, airflow 71, metabase 177, iceberg 2. `SHA256SUMS` 함께 둠. 위치 `C:\Users\dudfo\pg_backup_20261114\`(레포 밖, `globals.sql`에 비밀번호 해시가 있음).
+  - 쓰기 층에만 있던 것: `/tmp/duckdb_pkg`(DuckDB 2.0.0, 판단 71의 임시 설치), `~/.duckdb`(iceberg·avro 확장), `/tmp/spark-events`(이벤트 로그 5개), `/tmp/duckdb-profiles`. 다시 만들면 사라진다.
+- 결과: 넷을 `logs/airflow_tmp_20261114/`(git 제외)에 `docker cp`로 복사했고, 다시 만든 뒤 DuckDB 둘은 같은 자리로 되돌려 `airflow` 소유로 바꿨다(`import duckdb` 2.0.0, `LOAD iceberg` 성공). 이벤트 로그와 프로파일은 기록이라 `logs/`에만 둔다. DuckDB를 이미지에 넣을지(판단 71)는 여전히 정하지 않았다: 넣지 않으면 컨테이너를 다시 만들 때마다 이 복사가 필요하다.
+
+### 판단 94. 볼륨 쓰기 권한은 이미지의 마운트 지점으로 맞췄다
+- 상황: 새 이름 볼륨은 root 소유로 붙어 `airflow` 사용자(uid 50000)가 쓰지 못할 수 있다.
+- 따른 기준: J-5(전용 볼륨). 기준에 권한 방법은 없다. 선택지는 (1) Dockerfile에 마운트 지점을 만들어 소유자를 물려받게 (2) 다시 만든 뒤 root로 한 번 `chown`. (2)는 README대로 처음부터 만들 때 빠지기 쉬워, 같은 결과가 나는 (1)을 골랐다. 설계 선택이 아니라 구현 방법이라 멈추지 않았다.
+- 근거: 빈 이름 볼륨은 처음 붙을 때 이미지의 그 경로 내용과 소유자를 복사한다(Docker 볼륨 동작). 다시 만든 뒤 `ls -ld /scratch` → `airflow root`, 쓰기 성공.
+- 결과: `Dockerfile`에 `RUN mkdir -p /scratch && chown airflow:root /scratch`(root 단계). 이미지 다시 빌드는 마지막 층만(25.6초).
+
+### 판단 95. 호스트 C: 여유가 141GB에서 277.5GB로 늘어난 이유를 모른다
+- 상황: 덤프 직전(2026-11-14 10:53) C: 여유가 277.5GB였다. 지시서는 10시에 141GB라고 적었다. 그 사이 나는 표 2개(9.5GB)를 지웠지만, VHDX는 압축 없이는 줄지 않는다(F-20).
+- 따른 기준: CLAUDE.md 2절(모르는 것은 [확인 필요]).
+- 근거: 측정값뿐이다. 원인은 확인하지 않았다 [확인 필요: 사용자가 그 사이 공간 회수(S2)를 했는지, 다른 파일을 지웠는지].
+- 결과: 사용자에게 묻는다. S2를 이미 했다면 측정 44의 "회수 전후"는 그 값으로 적어야 한다.
+- 덧붙임 (2026-11-14 12시): S2는 그 뒤(11:14~11:59)에 했다. 회수 전 VHDX가 563.8GB로 측정 36 직후(80.2GB)보다 컸으므로 141 → 277.5GB 증가는 VHDX 압축 때문이 아니다. Hugging Face 캐시(209GB)는 11:14 조사 때 아직 있었으므로 그 삭제도 원인이 아니다. 원인은 여전히 모른다 [확인 필요: 사용자가 10~11시 사이 다른 파일을 지웠는지].
+
+### 판단 96. 작업 공간을 쓰는 Spark는 잠금을 잡게 했다(`living_iceberg`), 압축 해제도 작업 공간으로
+- 상황: S5(J-6)는 "잠금을 잡은 쪽만 비운다"가 안전의 근거다. 그런데 `transform/living_iceberg.py`는 Spark로 `/scratch/spark`를 쓰면서 잠금을 잡지 않았다(판단 87: DAG 태스크는 pool로만 줄 세움). 그러면 손으로 돌린 실행기가 잠금을 잡고 비울 때 돌던 적재의 셔플을 지울 수 있다. 또 이 적재는 zip을 컨테이너 쓰기 층 `/tmp`에 풀었다(한 달 약 6GB, 죽으면 남음).
+- 따른 기준: J-6(잠금을 잡은 쪽이 정리 주체), J-5(작업 공간은 전용 볼륨).
+- 근거: `grep spark_session(`과 `heavy_lock` 대조. DAG에서 적재와 실행기는 같은 bash 안에서 차례로 도는 별개 프로세스라, 둘이 각각 잠금을 잡았다 놓아도 서로 막지 않는다.
+- 결과: `living_iceberg.main()`이 `heavy_lock()`을 잡는다. 압축 해제 폴더를 `/scratch/unzip/living_*`(`tempfile`, 끝나면 지움)로. 리니지 추출(`dags/column_lineage.py`)은 bash `flock`이 잠금을 잡고 Python이 Spark를 쓰는 구조라 Python에서 다시 잠금을 잡으면 스스로 막힌다. 그래서 그대로 두고, 그 찌꺼기는 다음 잠금 때 비워지는 것으로 한계에 적었다(guarantees 2.4). 측정 도구 중 오래된 것(`living_g3`, `stage8_compare`, `living_boundary_gap`)도 잠금이 없다(손으로만 돌림).
+
+### 판단 97. 실행기 시작 문턱은 394GB(호스트 C: 여유 약 448GB)로 바꿨다
+- 상황: handoff_decisions.md 2.5절 S6. 실행기는 `temp_budget()`(C: 여유 − 50GiB)이 `--min-temp-gb`(200)보다 작으면 시작하지 않는다. 200은 측정 32의 셔플 쓰기 143GB + 디스크 spill 57GB였다.
+- 따른 기준: J-7(문턱 = 같은 작업의 실측 최대 C: 사용 x 1.2 + `RESERVE_BYTES`).
+- 근거: 측정 38 호스트 C: 여유 641.24 → 313.00GB, 사용 328.24GB(VHDX는 줄지 않으므로 끝난 뒤 값이 최대). 328.24 x 1.2 = 393.9 → 394. `RESERVE_BYTES`는 `temp_budget()`이 이미 빼므로 코드 문턱에는 더하지 않는다. 호스트 쪽으로 보면 394 + 53.7(50GiB) = 447.7GB로 J-7의 "약 447GB"와 같다. 지시서 S6의 "작업 공간 최대 333.6GB"는 VM 디스크 전체 사용량이었다(F-21). VM 안 증가분(259.0GB)이 아니라 호스트 C: 실측을 쓴 것은 상한이 호스트 디스크이기 때문이다.
+- 결과: `transform/spark_sql_runner.py` 기본값 394와 계산식 주석. 지금(C: 여유 280.5GB)은 시작하지 않는다(rc 1, 작업 공간 0개). 생활이동 실행(3.2절)은 공간 회수(S2) 뒤에야 가능하다. F-9 처방 뒤 새 최대로 바꾼다. 1.2는 제안값이다.
+
+### 판단 98. S3 상한을 J-8대로 계산했지만 걸자고 하지 않고 사용자에게 돌렸다
+- 상황: handoff_decisions.md 2.5절 8. J-8 계산값 500.41GB(466.0GiB)는 호스트 조건(≤ 925.82GB)을 통과한다. 그런데 이 상한 아래에서 `temp_budget()`은 VM 여유를 보게 되어 373.7GB가 되고, J-7 실행기 문턱 394GB보다 작다.
+- 따른 기준: J-8(넘으면 멈추고 보고), CLAUDE.md 1절 규칙 4(선택지가 둘 이상이면 사용자가 고른다).
+- 근거: 측정 44. J-8은 작업 공간을 실측 최대(× 1.0)로, J-7은 × 1.2 + 50GiB로 잡아 두 기준이 서로 다른 여유를 쓴다. 또 Docker 문서는 이 설정의 WSL2 지원과 줄일 때 디스크를 다시 만드는지를 적지 않는다(설정 페이지는 Mac, Linux, Windows Hyper-V만 적음). 이 PC에서는 `DiskSizeMiB`(1TiB)가 VM `df` 크기와 맞아 적용은 된다.
+- 결과: 선택지 표로 보고하고 기다린다. 어느 값이든 바꾸기 전에 `pg_dump`를 다시 한다(handoff_finish.md 0절, 줄일 때 디스크를 다시 만들 가능성).
+
+### 판단 99. A는 숫자 min/max가 아니라 글자 쌍의 64비트 해시 min/max로 했다
+- 상황: J-9는 "충돌 검사를 숫자 min/max로" 바꾸되 판정이 옛 글자 비교와 같아야 한다고 한다. 숫자 min/max만으로는 "05"/"5", "3.50"/"3.5", " 5"/"5"를 같다고 봐 옛 판정(다름)과 어긋난다. 이를 잡으려면 열을 더 세야 하는데 고정 길이 값으로 글자 같음을 정확히 보는 방법이 없다.
+- 따른 기준: J-9(판정이 옛 코드와 같아야 함, 정답 먼저), F-9 원인 2(가변 길이 집계 버퍼 → SortAggregate).
+- 근거: `xxhash64(avg_minutes_raw, population_raw)`는 64비트 고정 길이라 HashAggregate가 된다. 글자 쌍이 모두 같으면 해시도 같으므로 "충돌 없음"은 정확하고, 다를 때 놓치는 경우는 해시가 우연히 같을 때뿐이다(쌍마다 2^-64). 경계 사례 11개 시험이 옛 SQL과 같은 답을 냈다(`tests/check_living_conflict.py`).
+- 결과: `spark_sql/living/20_clean.sql`. 한계는 파일 주석(`ponytail:`)과 측정 42의 처방 전후 두 방향 EXCEPT ALL로 확인한다. DuckDB에 `xxhash64`가 없으면 4절에서 방언 표에 더한다.
+
+### 판단 100. C는 관문이 격리 뷰를 그대로 세게 했다(원본 행 수는 격리 + 충돌 없는 키의 행)
+- 상황: J-10은 관문의 셈을 `checked` 한 번 읽기로 모으고, V8 셈은 `21_quarantine`과 같은 정의를 쓰라고 한다.
+- 따른 기준: J-10.
+- 근거: 원본 한 행은 (행 단위 위반 또는 V8) 격리이거나 충돌 없는 키의 통과 행이다. 그래서 원본 행 수 = 격리 수 + 충돌 없는 키의 `rows` 합이고, 원본을 따로 셀 필요가 없다. 격리 수는 격리 뷰를 그대로 세므로 V8 정의가 하나뿐이다. `pop_inexact`는 `clean`이 키마다 센다. 실행기는 `--save` 뷰를 `--show` 뷰보다 먼저 캐시하므로(`spark_sql_runner.run`) 실제 실행에서 관문은 `clean`만 새로 계산한다. `checked`와 `clean`을 따로 세는 안(원본 2번, 격리 뷰와 무관)보다 1번 적다.
+- 결과: `spark_sql/living/22_batch_status.sql`. 열 이름·순서는 그대로(`stg.living_batch_status`). 같은 값인지는 측정 42의 두 방향 EXCEPT ALL로 본다. 한계: `--explain`에서는 캐시가 없어 관문 안에 격리 뷰가 펼쳐 보인다(측정 41).
+
+### 판단 101. D는 SQL 힌트로, 코드표 크기를 재고 했다
+- 상황: J-11(SQL 파일에 힌트를 먼저, 코드표 크기를 judgment_log에).
+- 따른 기준: J-11, 결정 88(SQL 밖 동적 로직을 늘리지 않음).
+- 근거: `load_codes()` 1,152개, 8,036바이트. `autoBroadcastJoinThreshold` 기본 10MB보다 1,000배 이상 작다.
+- 결과: `10_checked.sql`에 `/*+ BROADCAST(o, d) */`. 측정 41에서 코드표 조인이 BroadcastHashJoin으로 바뀌었다.
+
+### 판단 102. 보관본 세 표는 크기를 재고 바로 복사했다
+- 상황: handoff_decisions.md 3.2절 2번은 `keep` 복사 전에 크기를 먼저 보고하라고 한다. 사용자는 "오늘 안에 다 테스트해서 마무리"를 지시했다(2026-11-14).
+- 따른 기준: handoff_finish.md 0절(지우는 일만 확인을 먼저 받음), J-13(전후 비교용 보관).
+- 근거: 세 표 합 9.8GB(`stg.living_commute` 2,672MB, `stg.living_quarantine` 6,684MB, `stg.living_batch_status` 32kB)로 호스트 C: 여유(약 928GB)의 1%다. 복사는 지우는 일이 아니고 되돌리기 쉽다.
+- 결과: `keep.living_commute_pre_f9`(13,782,826행), `keep.living_batch_status_pre_f9`(10행), `keep.living_quarantine_pre_f9`(31,935,758행), 한 트랜잭션 25.6초. 지우는 것은 측정 42 뒤 사용자 승인으로.
+- 덧붙임 (2026-11-14 14:18): 측정 42 비교(세 표 두 방향 0) 뒤 사용자 승인("keep 지워도 돼")으로 `keep.living_*_pre_f9` 세 표를 한 트랜잭션에서 지웠다. `keep.commute_od_before_3_5`(이전 작업 보관본)는 이번 승인 대상이 아니라 남겼다.
+
+## 결정 109·110 지시서(handoff_airflow_split.md) 진행 중 판단 (2026-11-14, 규칙 3 한 줄)
+- 판단 103. Dockerfile은 파일 하나에 target 네 개(job-base, spark-job, duckdb-job, airflow)로 나눴다. requirements.txt와 jar 버전을 한곳에서 본다.
+- 판단 104. 잠금 래퍼를 `python -m common lock -- <명령>`으로 `common.py`의 `__main__`에 뒀다. bash 태스크와 계산 컨테이너가 같은 잠금을 부를 문이 필요하고, 새 파일을 만들 만큼 길지 않다.
+- 판단 105. standalone이 만든 fernet 키를 `.env`로 옮겼다(암호화된 Variable `rent_recent_months`를 그대로 읽기 위해). JWT 비밀은 새로 만들었다.
+- 판단 106. 생활이동 DAG의 계산을 `register`(Airflow, inbox 등록) → `compute`(DockerOperator, 적재 + 실행기) → `cleanup_inbox`(Airflow, `outlets`)로 나눴다. 코드가 읽기 전용인 계산 컨테이너가 inbox를 지우지 않게 하고, Asset 갱신은 Airflow 태스크가 낸다.
+- 판단 107. DockerOperator의 `cpus`가 `cpu_shares`만 넣어서 `JobOperator`가 `nano_cpus`와 `memswap_limit`을 더하게 했다(지시서 4절 "cpus 12, 스왑 금지"를 실제로 걸기 위해).
+- 판단 108. 실패한 계산 컨테이너는 남기고 성공한 것만 지운다(`auto_remove="never"` + 직접 삭제, F-28).
+- 판단 109. 계산 컨테이너 메모리는 호스트에서 `measure/job_stats.py`(docker stats 5초)로 잰다. 계산 컨테이너는 코드가 읽기 전용이라 vm_watch를 그 안에서 돌릴 수 없다.
+- 판단 110. 기록 문서 성격의 설계 문서(`docs/design_change_resilience.md`, `change_resilience_plan.md`)의 spark-venv 언급은 당시 설계 서술이라 그대로 뒀다(지시서 1절 2번 "기록 문서의 과거 서술은 그대로").
+- 판단 111. F-29는 프록시 설정을 덮어쓰는 대신 계산 명령에 1분 heartbeat를 넣었다(한 줄, 태스크 로그에서 살아 있음이 보임). 한계는 dags/jobs.py 주석.
+- 판단 112. dag-processor 상한은 H1 값(309MiB → 512m)이 아니라 H4 재측정까지 본 최대(442MiB → 768m)로 정했다. 같은 규칙(x 1.5, 256MiB 올림)에 더 긴 관측을 넣은 것이다.
+- 판단 113. D2 넘침 규칙("그 배치 안에서만 B")을 `--batch-checked`(전체 B)로 처음부터 다시 돌리는 대신, `clean`이 메모리 오류를 내면 그 배치만 B로 다시 계산하게 했다. 누적 표에 넣기 전이라 중복이 없다. `--batch-checked`는 "처음부터 모두 B"로 남겼다.
+- 판단 114. 재부팅 뒤 metabase·pgadmin은 `up --dry-run`이 Recreate로 보여(바뀐 것 없음) `docker start`로만 켰다. 다시 만들어도 데이터는 볼륨·DB에 있지만, 필요 없는 재생성을 피했다(F-25와 같은 현상).
+- 판단 115. D3 첫 시도에서 `compare()`가 DuckDB 2.0의 `con.execute(...).columns`로 실패했다(2.0은 execute가 연결을 돌려줌). 이 경로는 측정 50까지 끝까지 간 적이 없어 드러나지 않았다. `con.sql(...).columns`로 고쳤다.
+- 판단 116. `--only-batch`는 실행 안에서만 뜻이 있다. heavy 잠금이 시작·끝에 `/scratch`를 비우므로 실행을 넘어 앞 배치 Parquet를 이어 쓰지 않는다. 이어 돌리기가 필요해지면 배치 Parquet를 `/scratch` 밖에 둔다.
+- 판단 117. A1.5 에이전트 컨테이너 상한: 지시서 규칙(첫 실행 최대 x 1.5)과 resource_guard 단위(256MiB 올림)를 그대로 적용해 4g(잠정) → 512m. 0.28GiB는 작아 보이지만 dbt 계산은 DB가 한다. A6 반복에서 넘치면 F 번호로 남기고 올린다(측정 53).
+- 판단 118. A2 시험(`tests/check_agent_signal.py`)의 기대 배치 수를 정답표의 "5개"에서 "지금 혼잡도 모든 수집일 수"로 바꿈. 정답표를 쓴 2026-11-14 뒤 수집일 2026-11-14가 늘어 6개가 거절됐다. 정답표의 뜻(평일 행이 1/3이라 모든 배치가 거절)은 그대로이고, 정답표 파일은 결과를 본 뒤 바꾸지 않는다.
+- 판단 119. A6 채점에서 S1 수정 3회가 모두 정답표 `fix_files` 밖 `congestion_quarantine.sql`(CV5 격리 원문 JSON의 역 이름 키)도 고쳤다. 정답표 규칙("이 밖을 고치면 오답")대로 고칠 파일 준수 0/3으로 적는다. 그 수정은 격리 기록의 원문 키 이름을 살리는 것이라 틀렸다고 보기 어렵고 상품은 M0과 같았지만, 정답표는 결과를 본 뒤 바꾸지 않는다(결정 49). 정답표가 좁았는지는 사용자가 정한다. **2026-11-15 handoff_agent_finish.md 2.1: 사용자 미결정(표시 없음), 지시서 규칙대로 A(v1 유지). 고칠 파일 준수 6/9 확정.** 선택지 B(v2 정답표를 따로 두고 두 점수 나란히)는 사용자가 고르면 기존 `branch.patch`로 다시 채점만 하면 된다.
+- 판단 120. M7 수정 3회가 판정(G3)에서 실행기 오류로 끝났다(F-34). 에이전트를 다시 돌리지 않고, 에이전트가 낸 `branch.patch` 3개를 그대로 `--cand-patch`로 판정만 다시 했다. 판정은 같은 patch와 같은 데이터면 결정적이고, 에이전트 비용(회당 약 0.6 USD 계산값과 11분)을 다시 쓰지 않는다. 에이전트 지표(원인, 턴, 시간)는 처음 실행 것을 쓴다.
+- 판단 121. F-34 처방 둘: (1) 기준선 상품 표가 없으면(상류 테스트 실패로 skip) 운영 mart와 비교, (2) 후보 빌드에 실패 노드가 있으면 G1만으로 바로 fail(뒤 관문은 skip된 표를 읽다 오류가 난다). (2)는 G2~G5 진단 정보를 잃지만 판정은 같다(G1 실패면 어차피 fail).
+- 판단 122. S3(사람이 고친 해석 규칙)는 정답표 기대 needs_decision과 달리 fail이 나왔다. 정답표를 쓴 측정 24 뒤 생긴 단위 테스트 `rent_rows_rules`가 산 지번 규칙을 고정해 G1에서 걸렸다. 거짓 통과는 아니다(더 보수적). 정답표 점수는 그대로 "불일치"로 적고, G5 경로를 따로 보려고 단위 테스트 기대값도 같이 바꾼 보충 사례 S3b(`logs/agent/s3b_rule_and_test.patch`, 사람이 규칙을 바꿀 때 테스트도 함께 바꾸는 현실적인 브랜치)를 1회 판정했다. S3b는 정답표 밖 보충이라 지표 합계에 넣지 않는다.
+- 판단 123. F-35 처방에서 운영 DAG 코드(`dags/jobs.py`가 DAG를 읽을 때 `.env`와 환경 변수를 읽는 것)는 바꾸지 않고 시험 쪽 가짜 모듈과 환경 값만 늘렸다. 시험이 보는 것은 dag_id와 일정뿐이고, DAG 처리기 동작을 바꾸면 다시 Airflow에서 확인해야 해서다. `agent_triage`는 새 파이프라인 절 대신 wh_load 절의 dags에 넣었다(UI 정의 필드를 새로 쓰지 않아도 되고, 신호가 wh_load에서 나온다). 손으로만 도는 `test_scheduler_kill`은 시험에서 뺐다.
+- 판단 124. R1 요약의 근거 번호를 지시서 문구가 아니라 원문에서 다시 찾았다. "영향 후보 28 → 1, 0.24초"는 측정 20(컬럼 리니지 재측정)에 있고 측정 31은 변이 7건 놓침 0이다. 서류(`노영래_플랫폼용.txt` 프로젝트 1)의 수치(5개 파일, SQL 2줄, 28→1, 0.24초, 7건 0, OOM 3회·6.4초, 656초, 658.8초, 2,419초)와 README 숫자는 같다. 요약은 질문 인용 바로 아래에 두어 "이 질문에 답할 수 있도록" 문단이 요약 뒤로 밀렸다.
+- 판단 125. O1 셋째 시도에서 훅 `guard_edit`이 받은 경로는 `..`이 이미 풀린 `.../models/mart/dong_station.sql`이었다. 모델이 풀었는지 CLI가 풀었는지 기록으로 구분할 수 없어 [확인 필요]로 두고, 풀리지 않은 모양(`stg_dbt/../mart/...`, `../../../../dags/jobs.py`)은 selftest 경로 표로 막히는 것을 확인하는 것으로 갈음했다. 첫 문구에서 다섯 시도가 모두 일어나 지시서 4절 4의 "문구를 바꿔 1회 더"는 하지 않았다.

@@ -15,6 +15,10 @@ CREATE TABLE IF NOT EXISTS stg.sgis_dong (
     PRIMARY KEY (collected_date, adm_cd)  -- BF3의 안전망
 );
 
+-- 공간 조인(fact_store: 업소 점이 어느 경계 안인지)이 경계마다 ST_Contains를 다 부르지 않게 (F-4 처방 B, 결정 102).
+-- 없으면 업소 55만 x 경계 426 비교로 137초, 있으면 4.6초(측정 40).
+CREATE INDEX IF NOT EXISTS sgis_dong_geom_gist ON stg.sgis_dong USING gist (geom);
+
 CREATE TABLE IF NOT EXISTS stg.sgis_dong_quarantine (
     collected_date date        NOT NULL,
     source_file    text        NOT NULL,
