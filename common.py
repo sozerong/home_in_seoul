@@ -82,12 +82,34 @@ def clear_scratch():
             pass
 
 
+def stop_orphan_jobs(docker_url="tcp://socket-proxy:2375"):
+    """스케줄러가 시작할 때 부른다(S2): 아직 도는 계산 컨테이너(라벨 seoul.job=1)를 멈춘다. 지우지는 않고 목록을 찍는다.
+    LocalExecutor라 태스크 프로세스는 스케줄러 컨테이너 안에 있다. 그래서 스케줄러가 새로 뜨는 순간 도는 계산 컨테이너는
+    주인(태스크 프로세스)이 없다. 그대로 두면 heavy 잠금을 쥔 채 끝까지 돌고, 약 5분 뒤 Airflow가 고아로 재설정한 새 시도가 같은
+    작업을 다시 돈다(F-32 첫 시험: 300초 작업이 두 번 돎. 작업이 5분보다 길면 새 시도는 잠금에 막혀 실패할 것으로 추론).
+    먼저 멈추면 잠금이 풀려 새 시도 하나만 처음부터 돈다(계산은 멱등, F-32 처방 뒤 시험). 멈춘 컨테이너는 원인 조사용으로 남는다.
+    ponytail: LocalExecutor 전제. Celery·k8s로 가면 태스크 상태와 라벨을 대조하는 정리로 바꾼다."""
+    import docker
+    cli = docker.DockerClient(base_url=docker_url)
+    stopped = []
+    for c in cli.containers.list(filters={"label": "seoul.job=1", "status": "running"}):
+        c.stop(timeout=10)
+        stopped.append((c.short_id, c.labels.get("seoul.dag_id"), c.labels.get("seoul.run_id"), c.labels.get("seoul.task_id"),
+                        c.labels.get("seoul.try")))
+    print(f"주인 없는 계산 컨테이너 {len(stopped)}개 멈춤: {stopped}")
+    return stopped
+
+
 if __name__ == "__main__":
     # 셸 명령을 잠금 안에서 돌린다: python -m common lock -- <명령...>. DAG의 dbt 전체 빌드와 리니지 추출이 쓴다(옛 flock -n 자리).
     # 명령의 종료 코드를 그대로 돌려준다(설계 원칙 4). 잠금을 못 잡으면 명령을 돌리지 않고 실패한다.
+    # python -m common stop-orphan-jobs: 스케줄러 시작 때 주인 없는 계산 컨테이너를 멈춘다(S2, docker-compose.yml airflow-scheduler)
     import subprocess
     import sys
+    if sys.argv[1:2] == ["stop-orphan-jobs"]:
+        stop_orphan_jobs()
+        raise SystemExit(0)
     if sys.argv[1:3] != ["lock", "--"] or len(sys.argv) < 4:
-        raise SystemExit("사용법: python -m common lock -- <명령...>")
+        raise SystemExit("사용법: python -m common lock -- <명령...> | python -m common stop-orphan-jobs")
     heavy_lock()
     raise SystemExit(subprocess.run(sys.argv[3:]).returncode)  # 끝 비우기는 heavy_lock이 건 atexit이 한다

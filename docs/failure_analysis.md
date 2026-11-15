@@ -603,7 +603,13 @@
 - 가설: db의 서비스 정의는 이번 diff에 없다. 결정 101 때 상한을 `docker update`로 먼저 걸고 compose 파일에 `mem_limit`을 나중에 적었다면, 그 컨테이너의 compose 설정 해시 라벨이 파일과 달라 다음 전체 `up`에서 다시 만들어진다 [확인 필요: 옛 컨테이너의 라벨을 보지 못하고 지나감].
 - 영향: 데이터 손실 없음. PostgreSQL 재시작으로 연결이 한 번 끊겼다.
 - 재발 방지: 컨테이너를 다시 만들 수 있는 `up`은 서비스 이름을 적어 돌리고, 전에 `docker compose up -d --dry-run`으로 Recreate 대상을 본다. 덤프(H0)를 먼저 뜨는 규칙은 지켰다.
-- 상태: **기록(원인 확정 못 함).**
+- 상태: **원인 확정(2026-11-15, S3).**
+- 확인 (2026-11-15, Docker Compose 5.4.0, 컨테이너를 다시 만들지 않고):
+  - `docker compose config --hash <서비스>`(지금 파일이 기대하는 값)와 컨테이너 라벨 `com.docker.compose.config-hash`를 비교: db, ui, airflow-scheduler, airflow-apiserver, socket-proxy는 같고 **metabase, pgadmin만 다르다**. 둘 다 재부팅 뒤 `up --dry-run`이 Recreate로 보였던 서비스다(판단 114).
+  - 두 컨테이너는 상한이 compose에 들어간 커밋(5d05f47, 2026-11-13 22:32)보다 먼저 만들어졌다(metabase 2026-11-13 01:09, pgadmin 2026-10-28). 상한은 판단 85대로 `docker update`로 걸었다.
+  - compose 파일에서 metabase·pgadmin의 `mem_limit`, `memswap_limit` 두 줄만 뺀 사본으로 해시를 다시 내면 두 컨테이너의 라벨과 **정확히 같다**. 해시 차이는 그 두 줄뿐이다.
+  - 원인: compose 설정 해시는 `mem_limit`을 포함한다. `docker update`는 컨테이너의 실제 상한만 바꾸고 라벨은 그대로 둔다. 그래서 파일과 라벨이 어긋나 다음 `up`이 "설정이 바뀌었다"며 다시 만든다. H1의 db 재생성도 같은 경로다(db는 H1에서 다시 만들어져 지금은 해시가 같다. 옛 라벨은 못 봤으므로 db는 같은 기전으로 추정).
+- 처방: 상한을 바꿀 때 `docker update`는 급할 때만 쓰고, 쓰면 "다음 `up`에서 그 서비스가 한 번 다시 만들어진다"를 함께 적는다. 계획된 때(덤프 뒤) 서비스 이름을 적어 `docker compose up -d <서비스>`로 다시 만들어 라벨을 맞춘다. metabase·pgadmin은 데이터가 DB와 `pgadmin_data` 볼륨에 있어 다시 만들어도 잃는 것이 없다(P0 덤프 있음).
 
 ## F-26. 잠금 없이 계산 컨테이너에서 Spark를 돌리다 다른 작업의 작업 공간 비우기에 셔플 파일을 잃음 (결정 109 H2, 2026-11-14 20:40)
 - 증상: spark-job에서 Iceberg 한 달 `count(*)`가 `FileNotFoundException: /scratch/spark/blockmgr-.../temp_shuffle_...`로 실패했다.
@@ -658,3 +664,26 @@
 - 처방과 결과: 결정 111의 넘침 규칙(그 배치만 threads 4로 한 번 더)이 이 경우를 잡아 D4가 완주했다. 근본 원인은 확정하지 못했다. 다음 후보(재지 않음): 202601의 키 분포(그룹 수, 키 순서)를 다른 달과 비교, threads 8에서의 경계.
 - 재발 방지: 배치 처리의 넘침 규칙은 "같은 배치를 더 적은 스레드로"를 기본으로 둔다(결정 111). 새 달이 들어올 때 같은 일이 나면 rc 75 다음 시도가 로그에 남는다.
 - 상태: **우회함(넘침 규칙), 원인 [확인 필요].**
+
+## F-32. 스케줄러가 갑자기 죽으면 계산 컨테이너가 주인 없이 끝까지 돌고, 약 5분 뒤 Airflow가 같은 작업을 새 시도로 다시 돌린다 (결정 109 S2, 2026-11-15 02:08~02:30)
+- 태그: 오케스트레이션, 중복 실행, 자원(잠금)
+- 증상 [유도]: 시험 DAG `test_scheduler_kill`(spark-job 컨테이너에서 heavy 잠금을 잡고 300초 잠)을 돌리는 중 `docker kill new_proj-airflow-scheduler-1`(02:08:56), 14초 뒤 `docker start`.
+  - 옛 계산 컨테이너(`admiring_williams`, 라벨 try=1)는 계속 돌아 300초를 다 자고 종료 코드 0으로 끝났다(02:13:46). 그동안 잠금을 쥐고 있었다.
+  - 태스크는 계속 running으로 보였고, 02:14:16에 스케줄러가 "Reset the following 1 orphaned TaskInstances"를 찍은 뒤 시도 2(`fervent_satoshi`)가 처음부터 다시 돌아 02:19:17에 success. **같은 작업이 두 번 돌았다.** 옛 컨테이너는 Exited로 남았다(지우는 주인이 없음).
+  - 기록: `logs/s2/timeline1.txt`(15초 간격 컨테이너·태스크·잠금), 스케줄러 로그.
+- 원인(Airflow 3.3.2, LocalExecutor):
+  - 태스크 프로세스(DockerOperator가 로그를 읽고 끝나기를 기다리는 쪽)는 스케줄러 컨테이너 안에 있어 스케줄러와 함께 죽는다. `on_kill`이 불리지 않아 계산 컨테이너를 멈출 사람이 없다. 계산 컨테이너는 호스트 Docker의 독립 컨테이너라 계속 돈다.
+  - 새 스케줄러는 "고아 태스크 입양 또는 재설정"을 시작할 때와 그 뒤 5분마다 한다(로그 17:09:16, 17:14:16). 시작 때(죽은 지 20초)에는 옛 스케줄러 작업이 아직 죽은 것으로 판정되지 않아 넘어갔고, 다음 주기에 재설정했다. 재설정은 재시도 횟수를 쓰지 않으므로 `retries=0`이어도 시도 2가 생긴다.
+  - 이번에는 옛 작업(300초)이 재설정(약 320초 뒤)보다 먼저 끝나 잠금이 풀려 있었고, 그래서 두 번째가 잠금을 잡고 다시 돌았다. 작업이 5분보다 길면(생활이동 compute 약 50분) 시도 2는 옛 컨테이너가 쥔 잠금에 막혀 바로 실패하고(재시도 0이라 태스크 failed), 계산은 주인 없는 컨테이너가 끝까지 하지만 Airflow는 실패로 기록하고 하류(asset → wh_load)가 돌지 않는다 [이 경우는 재현하지 않음, 위 동작에서 추론].
+- 처방 선택지:
+  - A. 스케줄러 시작 때 라벨 `seoul.job=1`인 실행 중 계산 컨테이너를 모두 멈춘다(지우지 않음). LocalExecutor라 스케줄러가 새로 뜨는 순간 도는 계산 컨테이너는 모두 주인이 없다. 잠금이 풀려 시도 2가 처음부터 정상으로 돈다(계산은 파티션 덮어쓰기라 멱등). 대가: 옛 계산의 진행분을 버린다.
+  - B. 옛 컨테이너에 다시 붙기(입양). provider에 그런 기능이 없고 코드가 커진다.
+  - C. 그대로 두고 사람이 정리. 생활이동처럼 긴 작업에서 "계산은 됐는데 실패" 상태가 된다.
+- 처방: A. `JobOperator.execute`가 계산 컨테이너에 `seoul.job`, `seoul.dag_id`, `seoul.run_id`, `seoul.task_id`, `seoul.try` 라벨을 단다. `common.stop_orphan_jobs()`(socket-proxy 경유)가 라벨 컨테이너를 멈추고 목록을 찍는다. `docker-compose.yml` airflow-scheduler의 command가 이것을 먼저 부르고 `exec airflow scheduler`(정리 실패해도 스케줄러는 뜨고 실패를 로그에 남김).
+- 처방 뒤 같은 시험(02:20:04 kill, 1초 뒤 start, `logs/s2/timeline2.txt`, `logs/s2/scheduler2.txt`): 스케줄러 시작 로그 "주인 없는 계산 컨테이너 1개 멈춤: [('e30c6145e24c', 'test_scheduler_kill', ..., 'hold_lock', '1')]", 옛 컨테이너 `flamboyant_northcutt`는 종료 코드 143(SIGTERM)으로 멈춤, 02:20:11 기록에 잠금 0. 17:25:10 고아 재설정 뒤 시도 2(`wizardly_jepsen`)가 잠금을 잡고 처음부터 돌아 success(02:30:11). **동시에 두 개가 돈 때가 없고, 계산을 끝까지 한 것은 시도 2 하나다.**
+- 재발 방지와 한계:
+  - 멈춘 컨테이너는 원인 조사용으로 남는다(지우지 않음). 쌓이면 사람이 지운다.
+  - 시도 2는 재설정 주기(5분)만큼 늦게 시작한다. 그동안 태스크는 running으로 보인다.
+  - 계산 컨테이너에 compose 라벨(`com.docker.compose.service=spark-job`)이 함께 붙어 있다(이미지 라벨이 상속됨). `docker compose down --remove-orphans` 같은 명령이 이 컨테이너를 compose 것으로 다룰 수 있다 [확인 필요].
+  - CeleryExecutor나 k8s로 가면 태스크 프로세스가 스케줄러 밖에 있어 이 처방(시작 때 전부 멈춤)은 틀린 처방이 된다. 그때는 TI 상태와 라벨을 대조해야 한다.
+- 상태: **처방함, 처방 뒤 1회 확인.**

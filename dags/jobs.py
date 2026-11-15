@@ -24,6 +24,13 @@ class JobOperator(DockerOperator):
     - CPU 상한: provider의 cpus는 cpu_shares(경합할 때의 비중)로만 들어가 상한이 아니다(H4 docker inspect NanoCpus=0). compose cpus와 같은 nano_cpus를 준다
     """
 
+    def execute(self, context):
+        # 어느 태스크 시도의 컨테이너인지 라벨로 남긴다. 스케줄러가 죽으면 주인 없는 컨테이너를 이 라벨로 찾는다(S2, common.stop_orphan_jobs)
+        ti = context["ti"]
+        self.labels = {"seoul.job": "1", "seoul.dag_id": ti.dag_id, "seoul.run_id": ti.run_id,
+                       "seoul.task_id": ti.task_id, "seoul.try": str(ti.try_number)}
+        return super().execute(context)
+
     def _run_image_with_mounts(self, target_mounts, add_tmp_variable):
         create_host_config = self.cli.create_host_config
 
@@ -58,6 +65,7 @@ def spark_job(task_id, command, **kw):
         docker_url="tcp://socket-proxy:2375",
         mounts=[Mount("/opt/project", HOST, type="bind", read_only=True),
                 Mount("/opt/project/lakehouse", f"{HOST}/lakehouse", type="bind"),
+                Mount("/opt/project/logs/spark-events", f"{HOST}/logs/spark-events", type="bind"),  # Spark 이벤트 로그(S1)
                 Mount("/scratch", "new_proj_scratch", type="volume")],
         network_mode="new_proj_default",
         mount_tmp_dir=False,

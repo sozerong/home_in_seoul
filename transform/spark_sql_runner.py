@@ -29,7 +29,7 @@ from common import ROOT, heavy_lock, read_env, temp_budget
 from transform.iceberg import spark_session
 from transform.living_iceberg import load_codes
 
-EVENT_DIR = "/tmp/spark-events"
+EVENT_DIR = str(ROOT / "logs" / "spark-events")  # 레포 logs/(git 제외)를 계산 컨테이너에 쓰기로 붙인다. 성공한 컨테이너가 지워져도 남는다(결정 109 S1)
 
 
 def sql_files(folder):

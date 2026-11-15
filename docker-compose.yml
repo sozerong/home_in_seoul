@@ -92,7 +92,9 @@ services:
     mem_limit: 1792m
     memswap_limit: 1792m
     cpus: 12
-    command: scheduler
+    # 시작할 때 주인 없는 계산 컨테이너(라벨 seoul.job=1)를 먼저 멈춘다(S2, guarantees.md 2.9). LocalExecutor라 스케줄러가 새로 뜨면
+    # 도는 계산 컨테이너는 모두 주인이 없다. 정리에 실패해도 스케줄러는 띄우고 실패를 로그에 남긴다(스케줄러가 안 뜨는 쪽이 더 나쁘다).
+    command: ["bash", "-c", "cd /opt/project && python -m common stop-orphan-jobs || echo '주인 없는 계산 컨테이너 정리 실패' >&2; exec airflow scheduler"]
     healthcheck:
       test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
       interval: 30s
@@ -234,6 +236,7 @@ services:
       - ./:/opt/project:ro
       - ./lakehouse:/opt/project/lakehouse
       - scratch:/scratch
+      - ./logs/spark-events:/opt/project/logs/spark-events  # Spark 이벤트 로그(spark_sql_runner EVENT_DIR). 컨테이너가 지워져도 남는다
 
   duckdb-job:
     <<: *job

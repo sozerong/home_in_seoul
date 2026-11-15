@@ -959,6 +959,12 @@
 - 한계: Spark는 local 모드라 네트워크 셔플, 실행기 유실 같은 클러스터 문제는 재현하지 못한다. DuckDB의 단일 프로세스·동시 쓰기 한계는 측정이 아니라 구조로 적는다.
 - 검증: 1의 지표가 실제로 남는지, 3에서 엔진마다 무너지는 지점과 처방 전후 수치가 `docs/measurements.md`에 조건과 함께 남는지.
 
+- 답 갱신 (2026-11-15, 측정 51, 질문 "한 대에서 DuckDB가 Spark보다 나은가"):
+  - 같은 SQL 파일을 그대로 한 번에 돌리면 DuckDB는 16GiB 안에서 끝내지 못한다(측정 43, 49). Spark는 흘리며 끝낸다(측정 42).
+  - 배치(대상연월, 수집일)마다 새 프로세스로 나누고 결과를 Parquet로 넘기면 DuckDB가 완주하고 결과가 같다. 그때 계산은 Spark보다 약 3.0~3.7배 빠르다(658.8초 대 Spark 1,971초(측정 52)~2,419초(측정 42), 1회씩).
+  - 대가: DuckDB는 받은 메모리를 끝까지 쓰고(컨테이너 17.62GiB / 18GiB), 넘치면 느려지는 대신 실패한다. 그래서 실행기 바깥에 배치 나누기, 스레드 줄여 다시 하기 같은 감싸기가 필요하다. Spark는 같은 일을 10.25GiB로 흘리며 했다.
+  - 그래서 답은 "이 데이터 크기(14억 행)와 이 하드웨어에서는, 배치로 나눌 수 있는 계산이면 DuckDB가 빠르다. 나누는 구조를 짜는 비용과 메모리 여유가 거의 없다는 위험을 함께 진다"이다. 운영 실행기는 그대로 Spark다(바꾸는 결정은 하지 않았다).
+
 ## 결정 95. 구현 중 만나는 모든 오류를 원인까지 분석해 기록한다 (결정 94 넓힘)
 - 상황: 결정 94는 스큐, OOM을 예로 들었지만 2026-11-13 사용자가 그것은 예시이고, 엔진과 파이프라인에서 실제로 생기는 여러 오류를 깊게 분석하는 것이 이력서와 포트폴리오의 재료라고 방향을 정했다. 규모와 속도로는 보여 줄 수 없다(결정 94 상황).
 - 결정과 이유 (2026-11-13 사용자 방향): 구현(design_remaining_work.md 1~9절)과 엔진 분석(3.10) 중 만나는 오류를 `docs/failure_analysis.md`에 하나씩 남긴다. 형식은 증상 → 재현 → 여러 가설과 지운 근거 → 엔진·시스템 내부 수준 원인 → 처방 선택지 → 전후 수치 → 재발 방지. 실제로 일어난 것만 적고, 압력을 걸어 일으킨 것은 `[유도]`로 밝힌다. PC 환경 탓인 일과 원인이 자명한 일은 넣지 않는다. 결정 94의 가설(부분 집계, 창 함수, 낮은 병렬도)은 살펴볼 후보일 뿐 범위가 아니다.
@@ -1143,7 +1149,7 @@
   2. 생활이동 전체 실행(측정 46): DockerOperator로 compute 성공, 이어 wh_load·lineage 성공, 상품 데이터 파일 8개 sha256이 분리 전(H0)과 같음. 실행기 3,705.4초로 측정 42보다 11.3% 느림(셔플·흘림 양은 같음, 원인 미확정, 1회).
   3. Airflow 이미지(측정 47): provider 추가 뒤 6.01GB·161초 → 슬림 4.49GB·68초(내용 1.58 → 1.01GB). 계산 이미지 두 개 1.8GB, 768MB가 따로 생겼다.
   - 그 밖: 컨테이너를 넘는 잠금 시험 통과(guarantees 2.9), 중단 시험(실패 표시 → 계산 컨테이너 7.7초 안에 멈춤).
-- 결과와 남은 것: 적용. 구성: `airflow-init`, `airflow-apiserver`(512m), `airflow-scheduler`(1792m), `airflow-dag-processor`(768m), `airflow-triggerer`(768m), `socket-proxy`(128m), 계산 `spark-job`·`duckdb-job`(18g, profiles, 작업마다 컨테이너). 생긴 문제와 처방: F-24(덤프 덮어씀), F-25(db 재생성, 원인 미확정), F-26(잠금 밖 scratch 사용), F-27(프록시 403), F-28(auto_remove), F-29(프록시 유휴 10분 → heartbeat). 남은 것: 스케줄러가 갑자기 죽을 때 계산 컨테이너 정리(on_kill 안 불림, 미시험), 계산 컨테이너의 Spark 이벤트 로그 보존, 속도 차이 원인(반복 측정), 잠금은 자발적(잠금 없는 `docker compose run`은 막지 못함). k8s 이식은 대기(사용자, 2026-11-14). 그때 DockerOperator → KubernetesPodOperator, socket-proxy → 서비스 계정 권한, scratch 볼륨 → emptyDir.
+- 결과와 남은 것: 적용. 구성: `airflow-init`, `airflow-apiserver`(512m), `airflow-scheduler`(1792m), `airflow-dag-processor`(768m), `airflow-triggerer`(768m), `socket-proxy`(128m), 계산 `spark-job`·`duckdb-job`(18g, profiles, 작업마다 컨테이너). 생긴 문제와 처방: F-24(덤프 덮어씀), F-25(db 재생성, 원인 미확정), F-26(잠금 밖 scratch 사용), F-27(프록시 403), F-28(auto_remove), F-29(프록시 유휴 10분 → heartbeat). 남은 것: 스케줄러가 갑자기 죽을 때 계산 컨테이너 정리(on_kill 안 불림, 미시험), 계산 컨테이너의 Spark 이벤트 로그 보존(2026-11-15 S1에서 해결: 레포 `logs/spark-events/`를 붙임, 측정 52), 속도 차이 원인(반복 측정. 측정 52에서 2회째는 오히려 가장 빨라 1회씩으로는 판단 불가), 잠금은 자발적(잠금 없는 `docker compose run`은 막지 못함). k8s 이식은 대기(사용자, 2026-11-14). 그때 DockerOperator → KubernetesPodOperator, socket-proxy → 서비스 계정 권한, scratch 볼륨 → emptyDir.
 
 ## 결정 110. DuckDB OOM은 배치 단위 처리로 푼다: (target_ym, collected_date)마다 돌리고, 배치를 넘는 계산만 마지막에 (F-19, 측정 43)
 - 상황: 같은 관문 SQL에서 Spark는 흘리면서 끝났지만(측정 42, oom_kill 0), DuckDB는 16GiB 상한에서 threads 12와 4 모두 `OutOfMemoryException`으로 끝났다(측정 43).
