@@ -18,6 +18,7 @@ python -m agent.run --data S1 --task-extra agent/o1_task.txt   허용 밖 편집
 """
 import argparse
 import asyncio
+import base64
 import datetime
 import json
 import os
@@ -42,10 +43,10 @@ GATE = ("batch_status", "batch_checks")
 SAMPLE_ROWS = 50
 
 
-def git(*args, cwd=ROOT):
+def git(*args, cwd=ROOT, env=None):
     """컨테이너 안 레포(/opt/project)는 소유자가 달라 safe.directory가 필요하다. `-c`나 GIT_CONFIG_COUNT 환경 변수는 clone이
     띄우는 하위 git(upload-pack)까지 가지 않아(F-33) 이미지의 시스템 설정(Dockerfile agent-job)으로 둔다."""
-    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, env=env)
     if out.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} 실패: {out.stderr.strip()}")
     return out.stdout
@@ -198,20 +199,76 @@ def pr_text(report):
             f"### diff\n```\n{report.get('diff', '')}\n```\n")
 
 
-def publish(report, out):
-    """A5. 준비물(GITHUB_TOKEN, SLACK_WEBHOOK_URL)이 없으면 만들 PR 본문과 Slack 페이로드를 파일로만 남긴다(dry-run).
-    ponytail: 실제 PR·Slack 경로는 준비물이 생기면 붙인다. 지금은 보낼 내용이 맞는지까지만 시험한다."""
+def github_repo(url):
+    """remote URL에서 owner/repo. https와 ssh 모양 둘 다."""
+    m = re.search(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?$", url.strip())
+    if not m:
+        raise SystemExit(f"GitHub 레포가 아닌 remote: {url.strip()}")
+    return m.group(1)
+
+
+def github_auth_env(token):
+    """push 인증을 HTTP 헤더로 넘긴다. remote URL, 명령줄, .git/config에 토큰을 남기지 않는다(git이 GIT_CONFIG_* 환경 변수를 설정으로 읽음)."""
+    basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {**os.environ, "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+            "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {basic}"}
+
+
+def github(method, path, token, **kw):
+    import requests
+    r = requests.request(method, f"https://api.github.com{path}", timeout=20, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}, **kw)
+    if r.status_code >= 400:
+        raise SystemExit(f"GitHub {method} {path} {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+def find_pr(repo, branch, token):
+    """같은 브랜치의 PR이 이미 있으면 그 링크를 돌려준다(다시 돌려도 PR을 두 번 열지 않음). 없으면 None."""
+    prs = github("GET", f"/repos/{repo}/pulls", token, params={"head": f"{repo.split('/')[0]}:{branch}", "state": "all"})
+    return prs[0]["html_url"] if prs else None
+
+
+def publish(report, out, wt=None, send=False):
+    """A5. send이고 GITHUB_TOKEN이 있으면 고친 브랜치를 push하고 PR을 연다(병합은 사람). SLACK_WEBHOOK_URL이 있으면 Slack에 한 건.
+    준비물이 없거나 send가 아니면 보낼 PR 본문과 Slack 페이로드를 파일로만 남긴다(dry-run).
+    send: 실데이터 신호(--data real, agent_triage)이거나 --publish. 평가 사례를 돌릴 때마다 PR이 열리지 않게 한다."""
+    import requests
     verdict = report.get("verdict")
-    body = pr_text(report)
     labels = {"pass": [], "needs_decision": ["needs-decision"], "fail": []}.get(verdict, [])
     pr = {"title": f"[에이전트] {report['data']}: {verdict}", "head": report.get("branch"), "base": "main",
-          "draft": verdict == "fail", "labels": labels, "body": body}
-    slack = {"text": f"[에이전트] {report['data']} 신호 {','.join((report.get('signal') or {}).get('sources', []))}: "
-                     f"판정 {verdict}. PR: (dry-run, {out.relative_to(ROOT)}/pr.json)"}
-    (out / "pr.json").write_text(json.dumps(pr, ensure_ascii=False, indent=1), encoding="utf-8")
-    (out / "slack.json").write_text(json.dumps(slack, ensure_ascii=False), encoding="utf-8")
-    ready = [k for k in ("GITHUB_TOKEN", "SLACK_WEBHOOK_URL") if os.environ.get(k)]
-    return {"mode": "dry_run" if len(ready) < 2 else "ready_not_sent", "files": ["pr.json", "slack.json"], "have": ready}
+          "draft": verdict == "fail", "labels": labels, "body": pr_text(report)}
+    head = f"[에이전트] {report['data']} 신호 {','.join((report.get('signal') or {}).get('sources', []))}: 판정 {verdict}."
+    slack = {"text": f"{head} PR: (dry-run, {out.relative_to(ROOT)}/pr.json)"}
+    token, hook = os.environ.get("GITHUB_TOKEN"), os.environ.get("SLACK_WEBHOOK_URL")
+    result = {"mode": "dry_run", "files": ["pr.json", "slack.json"], "have": [k for k in ("GITHUB_TOKEN", "SLACK_WEBHOOK_URL") if os.environ.get(k)]}
+    try:
+        if not (send and token and pr["head"] and wt):
+            return result
+        t0 = datetime.datetime.now()
+        repo = github_repo(git("remote", "get-url", "origin"))  # 호스트 레포의 origin. 복제본의 origin은 /opt/project다
+        url = find_pr(repo, pr["head"], token)
+        result |= {"mode": "sent", "repo": repo, "pr_existing": bool(url)}
+        if not url:
+            git("push", f"https://github.com/{repo}.git", f"{pr['head']}:refs/heads/{pr['head']}", cwd=wt, env=github_auth_env(token))
+            made = github("POST", f"/repos/{repo}/pulls", token, json={k: pr[k] for k in ("title", "head", "base", "body", "draft")})
+            url = made["html_url"]
+            if labels:
+                github("POST", f"/repos/{repo}/issues/{made['number']}/labels", token, json={"labels": labels})
+        result["pr"] = slack["pr"] = url
+        slack["text"] = f"{head} PR: {url}"
+        if hook:
+            try:
+                result["slack_status"] = requests.post(hook, json={"text": slack["text"]}, timeout=10).status_code
+            except requests.RequestException as e:  # 예외 글에 웹훅 주소가 들어가므로 이름만 남긴다
+                result["slack_status"] = type(e).__name__
+        result["sec"] = round((datetime.datetime.now() - t0).total_seconds(), 1)
+        if hook and result["slack_status"] != 200:
+            raise SystemExit(f"Slack 전송 실패: {result['slack_status']} (PR은 열림: {url})")
+        return result
+    finally:  # 보냈든 안 보냈든 보낸(보낼) 내용을 남긴다
+        (out / "pr.json").write_text(json.dumps(pr, ensure_ascii=False, indent=1), encoding="utf-8")
+        (out / "slack.json").write_text(json.dumps(slack, ensure_ascii=False), encoding="utf-8")
 
 
 def record_run(conn, run_id, a, mode, report, started, sec):
@@ -234,6 +291,7 @@ def main():
     p.add_argument("--diagnose", action="store_true", help="진단만(A3): 에이전트에 Edit를 주지 않고 원인·영향만 받는다")
     p.add_argument("--signal-id", type=int, help="ops.agent_signal의 신호(agent_triage DAG가 넘김)")
     p.add_argument("--task-extra", help="시험 전용: 이 파일(레포 기준 경로)의 글을 작업 지시 끝에 덧붙인다. 예: agent/o1_task.txt")
+    p.add_argument("--publish", action="store_true", help="평가 사례도 실제로 push·PR·Slack(A5 시험). 실데이터(--data real)는 이 인자 없이 보낸다")
     p.add_argument("--selftest", action="store_true")
     a = p.parse_args()
     if a.selftest:
@@ -308,7 +366,7 @@ def main():
                 report["product_vs_operational"] = sandbox.diff(conn, "mart", "mart_sbx_cand")
             out.mkdir(parents=True, exist_ok=True)
             report["sec"] = round((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds(), 1)
-            report["publish"] = publish(report, out)
+            report["publish"] = publish(report, out, cand_wt, send=a.data == "real" or a.publish)
         except BaseException as e:  # 실패해도 그때까지의 보고(신호, 에이전트 답)를 남긴다. 예외는 다시 올린다(설계 원칙 4)
             report["error"] = f"{type(e).__name__}: {e}"
             raise
@@ -342,6 +400,9 @@ def selftest():
     assert sources_of(["warehouse/dbt/models/stg_dbt/rent_rows.sql", "warehouse/dbt/macros/congestion_keys.sql"]) == ["congestion", "rent"]
     body = pr_text({"data": "S1", "verdict": "pass", "signal": {"sources": ["congestion"]}, "gates": {"G1": {"ok": True}, "G5": {"ok": False, "changed_rows": {"rent": 3}}}})
     assert "| G1 | 통과 |" in body and "| G5 | 실패 |" in body and "원본" not in body.split("###")[0]
+    assert github_repo("https://github.com/a/b.git\n") == github_repo("git@github.com:a/b.git") == github_repo("https://github.com/a/b") == "a/b"
+    env = github_auth_env("tok-123")  # 토큰은 base64 헤더로만, 평문으로는 어디에도 없다
+    assert "tok-123" not in json.dumps({k: v for k, v in env.items() if k.startswith("GIT_CONFIG")}) and env["GIT_CONFIG_COUNT"] == "1"
     print("selftest 통과")
 
 
