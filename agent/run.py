@@ -12,6 +12,7 @@ python -m agent.run --data S1                      평가: 변이로 신호를 �
 python -m agent.run --data real                    실제 데이터에 신호가 있으면 대응
 python -m agent.run --data S1 --cand-branch <b>    에이전트 없이 사람이 고친 브랜치를 판정 (토큰 불필요)
 python -m agent.run --selftest                     편집 경로 검사 시험 (DB, SDK 불필요)
+python -m agent.run --data S1 --task-extra agent/o1_task.txt   허용 밖 편집 차단 시험 O1 (시험 전용, DAG에서 쓰지 않음)
 계산 컨테이너 seoul-agent-job에서 돈다(결정 112): docker compose run --rm agent-job python -m agent.run --data S1, Airflow는 agent_triage DAG.
 에이전트 실행은 CLAUDE_CODE_OAUTH_TOKEN(Max 구독, `claude setup-token`)이 필요하다(결정 108 인증).
 """
@@ -88,9 +89,10 @@ SYSTEM = """너는 서울 동네 찾기 데이터 파이프라인의 SQL 1차 �
 """
 
 
-async def fix(wt, signal, base, diagnose=False):
+async def fix(wt, signal, base, diagnose=False, extra=""):
     """에이전트 한 번. 돌려주는 것: 마지막 JSON, 비용, 턴, 거절된 도구 호출.
-    diagnose: 진단만(A3). Edit 도구를 주지 않고 원인과 영향만 보고하게 한다."""
+    diagnose: 진단만(A3). Edit 도구를 주지 않고 원인과 영향만 보고하게 한다.
+    extra: 작업 지시 끝에 덧붙일 시험 문구(--task-extra, 차단 시험 O1 전용. agent_triage DAG는 쓰지 않는다)."""
     from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage,
                                   create_sdk_mcp_server, tool)
     if found := [k for k in BILLED if os.environ.get(k)]:
@@ -152,6 +154,8 @@ async def fix(wt, signal, base, diagnose=False):
     ask = ("원인과 영향 범위만 보고하라. 이번에는 파일을 고치지 않는다(진단만). JSON의 fixed는 false로 둔다." if diagnose
            else "원인을 찾고, 필요하면 SQL을 고쳐라.")
     prompt = "신호(파이프라인이 기준선 빌드에서 뽑음):\n" + json.dumps(signal, ensure_ascii=False, indent=1) + "\n\n" + ask
+    if extra:
+        prompt += "\n\n" + extra
     result = None
     async with ClaudeSDKClient(options=options) as client:
         await client.query(prompt)
@@ -229,6 +233,7 @@ def main():
     p.add_argument("--cand-patch", help="에이전트 대신 이 patch(레포 기준 경로)를 main에 얹어 후보로 판정. 예: agent/s3_rule.patch")
     p.add_argument("--diagnose", action="store_true", help="진단만(A3): 에이전트에 Edit를 주지 않고 원인·영향만 받는다")
     p.add_argument("--signal-id", type=int, help="ops.agent_signal의 신호(agent_triage DAG가 넘김)")
+    p.add_argument("--task-extra", help="시험 전용: 이 파일(레포 기준 경로)의 글을 작업 지시 끝에 덧붙인다. 예: agent/o1_task.txt")
     p.add_argument("--selftest", action="store_true")
     a = p.parse_args()
     if a.selftest:
@@ -269,7 +274,9 @@ def main():
                 git("apply", str(ROOT / a.cand_patch), cwd=cand_wt)
             else:
                 git("worktree", "add", "-B", branch, str(cand_wt), "main", cwd=base_wt)
-                agent = asyncio.run(asyncio.wait_for(fix(cand_wt, shorten(signal), "base", a.diagnose), TIME_LIMIT))
+                extra = (ROOT / a.task_extra).read_text(encoding="utf-8") if a.task_extra else ""
+                report["task_extra"] = a.task_extra
+                agent = asyncio.run(asyncio.wait_for(fix(cand_wt, shorten(signal), "base", a.diagnose, extra), TIME_LIMIT))
                 report["agent"] = agent
                 changed = [l[3:] for l in git("status", "--porcelain", cwd=cand_wt).splitlines()]
                 outside = [f for f in changed if not editable(cand_wt, cand_wt / f)]
@@ -321,7 +328,12 @@ def selftest():
     no = [f"{root}/warehouse/dbt/models/stg_dbt/batch_status_rent.sql", f"{root}/warehouse/dbt/models/stg_dbt/store_batch_checks.sql",
           f"{root}/warehouse/dbt/models/stg_dbt/stg_dbt.yml", f"{root}/warehouse/dbt/tests/rent_pnu_length.sql",
           f"{root}/warehouse/dbt/models/mart/dong_profile.sql", f"{root}/warehouse/dbt/models/stg_dbt/../mart/x.sql",
-          f"{root}/docs/product_contract.json", "/opt/project/warehouse/dbt/models/stg_dbt/congestion_rows.sql"]
+          f"{root}/docs/product_contract.json", "/opt/project/warehouse/dbt/models/stg_dbt/congestion_rows.sql",
+          # O1(agent/o1_task.txt)이 실제 실행에서 시키는 경로들. 상대 경로는 worktree 기준
+          f"{root}/dags/jobs.py", "dags/jobs.py", "warehouse/dbt/models/mart/dong_profile.sql",
+          f"{root}/warehouse/dbt/models/stg_dbt/../mart/dong_station.sql", "warehouse/dbt/models/stg_dbt/../mart/dong_station.sql",
+          f"{root}/warehouse/dbt/models/stg_dbt/x.yml", f"{root}/warehouse/dbt/models/stg_dbt/congestion.sql.bak",
+          f"{root}/warehouse/dbt/models/stg_dbt/../../../../dags/jobs.py"]
     assert all(editable(root, x) for x in ok), [x for x in ok if not editable(root, x)]
     assert not any(editable(root, x) for x in no), [x for x in no if editable(root, x)]
     assert inside(root, f"{root}/docs/x.md") and not inside(root, "/opt/project/.env")

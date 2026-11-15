@@ -2,6 +2,12 @@
 
 > 서울에서 일하게 된 사회초년생이 직장 위치, 예산(보증금·월세 상한), 출퇴근 시간 한도를 넣으면, 어느 동네(행정동)가 주거비·출퇴근·출근길 혼잡·생활 편의 면에서 맞는가?
 
+**요약.** 이 프로젝트에서 한 일 네 가지와 결과다(수치의 조건은 링크한 측정 기록에).
+- **원천 필드 변경 대응:** 정제를 Python에서 dbt SQL로 옮겼다. 쓰는 필드 이름 하나가 바뀌면 코드·시험·문서 5개 파일을 고치고 옛 수집일은 다시 못 돌리던 것([측정 13](docs/measurements.md#측정-13-s1-쓰는-필드-이름-변경혼잡도-기준값-변경에-강한-파이프라인-p0-2026-11-12))이, 매크로 별칭 1줄 + 정제 모델 1줄로 새·옛 수집일을 함께 처리하게 됐다([측정 23](docs/measurements.md#측정-23-혼잡도-정제-sql-이전-같음-증명-지도-변화-s1-재측정-순서-8-결정-42-6064-71-2026-11-13)).
+- **컬럼 리니지:** dbt 컴파일 SQL을 sqlglot으로 파싱해 값 경로와 필터 경로를 나눈 컬럼 단위 리니지를 만들었다. 상류 컬럼 하나의 영향 후보가 상품 컬럼 28개(테이블 의존)에서 1개로, 조회 1회 0.24초([측정 20](docs/measurements.md#측정-20-s4-1-재측정과-s6-컬럼의-영향-조회-컬럼-리니지로-p4-3-2026-11-13)). 원천 값을 일부러 바꾼 변이 시험 7건에서 놓침 0([측정 31](docs/measurements.md#측정-31-변이-시험-다시-쓰기-raw-키-값-변이-design_remaining_workmd-7절-25-4-결정-84-2026-11-13)).
+- **Airflow 지휘·계산 분리:** 무거운 계산을 DockerOperator로 작업마다 메모리 상한을 건 계산 컨테이너에서 돌린다([결정 109](docs/decisions.md#결정-109-무거운-계산을-airflow-컨테이너-밖-작업-컨테이너로-뺀다-standalone-해체--dockeroperator-결정-101-b를-docker-단계로-앞당김)). OOM 3회 유도에서 죽은 것은 그 계산 컨테이너뿐이고 스케줄러 하트비트 간격은 최대 6.4초([측정 48](docs/measurements.md#측정-48-계산-컨테이너-oom-유도와-지휘-영향-결정-109-h6-2026-11-14-23342337)). 스케줄러가 죽으면 주인 없는 계산 컨테이너가 같은 일을 두 번 돌던 것을, 스케줄러 시작 때 멈추게 처방했다([F-32](docs/failure_analysis.md#f-32-스케줄러가-갑자기-죽으면-계산-컨테이너가-주인-없이-끝까지-돌고-약-5분-뒤-airflow가-같은-작업을-새-시도로-다시-돌린다-결정-109-s2-2026-11-15-02080230)).
+- **DuckDB 14억 행 정제 OOM:** 같은 SQL을 한 번에 돌리면 16GiB에서 656.0초에 메모리 오류([측정 49](docs/measurements.md#측정-49-duckdb-메모리-진단-무엇이-16gib를-잡는가-결정-110-d1-2026-11-14-23442355)). 배치마다 새 프로세스를 띄우고 결과를 Parquet로 넘겨 658.8초에 완주했고, Spark 결과(2,419초, [측정 42](docs/measurements.md#측정-42-f-9-처방-a--c--d-뒤-생활이동-전체-실행-1회-airflow-file_living_migration-결정-103-handoff_judgmentsmd-j-12j-14-2026-11-14-13001404))와 세 표 모두 0행 차이([결정 111](docs/decisions.md#결정-111-duckdb는-배치마다-새-프로세스에서-돌리고-배치-결과는-parquet-파일로-넘긴다-f-30-결정-110-후속), [측정 51](docs/measurements.md#측정-51-duckdb-배치마다-새-프로세스--parquet-넘김-생활이동-전체-완주-결정-111-d3d4-2026-11-15-00470109)).
+
 이 질문에 답할 수 있도록, 위치 기준과 갱신 주기가 서로 다른 공공데이터 여러 종을 **2025년 행정동 하나의 기준**으로 맞추고, 부동산 플랫폼이 가져다 쓸 수 있는 **데이터 상품**(행정동 지표 파일 + 데이터 계약)으로 내보낸다. 질문 정의는 [docs/question.md](docs/question.md), 설계 결정은 [docs/decisions.md](docs/decisions.md)에 있다.
 
 ## 구조
@@ -198,7 +204,7 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 이동 시간은 생활이동의 평균 이동 시간이라 가까운 동네일수록 길게 나온다(근거리 직행 제외, 경유 포함). 그래서 직선거리를 함께 쓴다([결정 23](docs/decisions.md), [데이터 계약 6절](docs/data_contract.md)).
 
 ## 주장과 증거
-이 파이프라인이 지킨다고 말하는 여섯 가지와, 그것을 실제로 돌려 확인한 방법이다. 강도와 한계는 [docs/guarantees.md](docs/guarantees.md), 수치의 조건은 [docs/measurements.md](docs/measurements.md)에 있다. 명령은 레포 루트에서 실행한다.
+이 파이프라인이 지킨다고 말하는 여덟 가지와, 그것을 실제로 돌려 확인한 방법이다. 강도와 한계는 [docs/guarantees.md](docs/guarantees.md), 수치의 조건은 [docs/measurements.md](docs/measurements.md)에 있다. 명령은 레포 루트에서 실행한다.
 
 | 주장 | 증명 방법 | 수치 | 다시 돌리는 명령 |
 |---|---|---|---|
@@ -207,16 +213,19 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | 다시 돌려도 같다 | 같은 입력을 다시 처리하고 결과 비교 | 같은 생활이동 zip을 Airflow DAG로 다시 넣어 세 표 차이 0, 상품 파일 8개 sha256 같음(측정 42). Iceberg 같은 파티션 두 번 덮어쓰기 차이 0(측정 9). 전월세 처리 단위 백필 6회(측정 6) | 레이크의 zip을 `lake\_inbox\living_migration\`에 다시 넣고 Airflow에서 `file_living_migration` 실행 뒤 위 비교. 처리 단위 하나는 Airflow 화면에서 Clear |
 | 전부 되거나 전부 안 된다 | 교체 도중 실패를 일부러 넣는다 | 스키마 교체: 둘째 스키마 실패 → 첫째도 취소(결정 32), 실제 wh_load에서도 1회(결정 61). 실행기 교체: 첫 표를 0행으로 두면 둘째 표도 이전 그대로(F-13). 실제 실행에서 세 표 교체가 한 트랜잭션 448.6초(측정 42) | `docker compose run --rm spark-job python -m tests.check_runner_swap` |
 | 실패는 드러난다 | 나쁜 입력과 자원 고갈을 일부러 만든다 | 쓰는 키 이름 변경 → 관문 거절(측정 23, 30). 한 배치의 9.95%를 깨뜨림 → 그 배치만 거절, 다른 출처는 갱신(측정 25). 메모리 초과 → 그 계산 컨테이너만 종료 코드 137, 스케줄러 하트비트 간격 최대 6.4초(평소 약 5초), 같이 돈 DAG·dbt 성공(3회, 측정 48). 실제 DuckDB 측정이 컨테이너 상한에 닿았을 때도 Airflow는 그대로(측정 50). 임시 공간 상한 → DuckDB가 오류로 끝나고 VM은 멈추지 않음(측정 39, 48). 계산 중 스케줄러를 `docker kill`: 처방 전에는 같은 작업이 두 번 돎(F-32), 처방(시작 때 주인 없는 계산 컨테이너 멈춤) 뒤 한 시도만 끝까지(1회, guarantees 2.9) | `python -X utf8 -u -m measure.induce_guard mem 3`<br>`python -X utf8 -u -m measure.induce_guard disk` |
-| SQL 에이전트는 운영을 바꾸지 않고, 해석 변경을 통과시키지 않는다 | 정답을 먼저 정한 사례(원천 변경 S1·M1·M7, 대조군 4, 사람이 고친 규칙 S3)로 에이전트를 돌리고, 실행마다 운영 표 49개 행 수·상품 sha256을 앞뒤로 비교 | 거짓 통과 0, 원인 적중 12/12, 판정 일치 16/17(S3는 단위 테스트가 먼저 잡아 fail). 해석이 바뀌는 수정은 G5가 needs_decision으로 멈춤(M7 3/3, S3b). 24번 실행(A4 DAG 포함) 모두 운영 변화 0, 에이전트 컨테이너 최대 0.29GiB(측정 53, 54) | `docker compose run --rm --no-deps agent-job python -m agent.run --data M1`<br>`python measure/ops_snapshot.py --compare <앞 스냅숏>` |
+| 컬럼 리니지가 영향을 놓치지 않는다 | 원천 값을 일부러 바꾼 변이(M1~M7)를 격리 스키마에서 다시 빌드해, 실제로 바뀐 상품 컬럼이 지도의 예측 안에 드는지 본다. 관문을 출처별로 나눈 뒤 다시 잼 | 변이 7건 놓침 0([측정 31](docs/measurements.md#측정-31-변이-시험-다시-쓰기-raw-키-값-변이-design_remaining_workmd-7절-25-4-결정-84-2026-11-13)). 출처별 관문 뒤 같음 증명 120개 통과, 상품 sha256 같음([측정 35](docs/measurements.md#측정-35-f-7-처방-a출처별-관문-모델-같음-증명과-지도-정밀도-결정-97-failure_analysis-f-7-2026-11-13)). 영향 후보 28개 → 1개, 조회 0.24초([측정 20](docs/measurements.md#측정-20-s4-1-재측정과-s6-컬럼의-영향-조회-컬럼-리니지로-p4-3-2026-11-13)) | `docker compose exec -w /opt/project airflow-scheduler python -m measure.lineage_mutation` |
+| DuckDB도 같은 SQL로 같은 결과를 낸다 | 생활이동 정제 SQL을 엔진만 DuckDB로 바꿔 배치마다 새 프로세스로 돌리고, Spark 결과 세 표와 두 방향 `EXCEPT ALL` | 658.8초 완주, `living_commute` 13,782,826행·`living_batch_status` 10행·`living_quarantine` 31,935,758행 모두 0행 차이. 배치 하나(202601)는 threads 12에서 넘쳐 threads 4로 다시 해서 성공([F-31](docs/failure_analysis.md#f-31-duckdb-202601-배치만-threads-12에서-흘리기-전에-8초-만에-메모리-오류-결정-111-d4-측정-51-2026-11-15-0059-0107), 원인 미확정). 1회([측정 51](docs/measurements.md#측정-51-duckdb-배치마다-새-프로세스--parquet-넘김-생활이동-전체-완주-결정-111-d3d4-2026-11-15-00470109)) | `docker compose run --rm duckdb-job python -m measure.duckdb_sql spark_sql/living --show batch_status --compare` |
+| SQL 에이전트는 운영을 바꾸지 않고, 해석 변경을 통과시키지 않는다 | 정답을 먼저 정한 사례(원천 변경 S1·M1·M7, 대조군 4, 사람이 고친 규칙 S3)로 에이전트를 돌리고, 실행마다 운영 표 49개 행 수·상품 sha256을 앞뒤로 비교 | 거짓 통과 0, 원인 적중 12/12, 판정 일치 16/17(S3는 단위 테스트가 먼저 잡아 fail). 해석이 바뀌는 수정은 G5가 needs_decision으로 멈춤(M7 3/3 + 끝까지 1회, S3b). 허용 밖 다섯 경로를 고치라고 시킨 실행(O1)에서 Edit 거절 4건, Write·Bash는 도구 없음, 허용 밖 바뀐 파일 0. 26번 실행(A4 DAG 포함) 모두 운영 변화 0, 에이전트 컨테이너 최대 0.29GiB(측정 53, 54, 55) | `docker compose run --rm --no-deps agent-job python -m agent.run --data M1`<br>`python measure/ops_snapshot.py --compare <앞 스냅숏>` |
 
-한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42). 계산을 작업 컨테이너로 뺀 뒤 1회째는 11.3% 느렸고(측정 46) 2회째는 18.3% 빨라(측정 52), 같은 일인데 세 실행이 36% 벌어져 분리가 속도에 주는 영향은 말할 수 없다. 같은 SQL을 DuckDB로 돌리면 배치마다 새 프로세스로 16GiB 안에서 658.8초에 끝나 Spark(1,971~2,419초)보다 약 3.0~3.7배 빠르다(측정 51, 1회).
+한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42). 계산을 작업 컨테이너로 뺀 뒤 1회째는 11.3% 느렸고(측정 46) 2회째는 18.3% 빨라(측정 52), 같은 일인데 세 실행이 36% 벌어져 분리가 속도에 주는 영향은 말할 수 없다. 같은 SQL을 DuckDB로 돌리면 배치마다 새 프로세스로 16GiB 안에서 658.8초에 끝나 Spark(1,971~2,419초)보다 약 3.0~3.7배 빠르다(측정 51, 1회). 다만 배치 하나(202601)가 threads 12에서만 넘치는 원인은 확정하지 못했다(F-31). SQL 에이전트의 허용 밖 편집 차단은 실제 실행 1회(O1, 측정 55)로 봤고, 금지 도구(Write, Bash)는 "불렀는데 막힘"이 아니라 "도구가 주어지지 않음"으로만 확인됐다. 에이전트의 실제 PR·Slack(A5)은 로컬 main이 GitHub main보다 앞서 있어 동기화를 기다린다(지금은 PR 본문과 Slack 메시지를 파일로만 남김).
 
 ## 도구를 고른 이유
 | 도구 | 쓰나 | 이유 |
 |---|---|---|
 | PostGIS | 씀 | 필지·역·업소 좌표를 행정동에 붙이고 가장 가까운 역을 찾는다 |
 | Airflow | 씀 | 출처마다 갱신 주기가 다르고(매주, 매월 21일, 분기, 수시), 늦게 오는 파일을 기다리고(센서), 과거 기간을 다시 돌려야 한다(백필) |
-| Spark | 생활이동에만 씀: Iceberg 적재와, Iceberg 14억 행에서 관문·격리·경계 표를 만드는 Spark SQL 실행기(결정 35, 88~90, 96) | 처음엔 학습 목적이었다. 한 달치(6.3GB)에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)), 10달(58GiB, 14억 행)에서도 DuckDB(CSV) 약 33초, Spark(CSV) 약 168초로 한 대에서는 DuckDB가 빨랐다. 같은 Spark가 Iceberg 표를 읽으면 약 29초([측정 10](docs/measurements.md), [결정 37](docs/decisions.md)) |
+| Spark | 생활이동에만 씀: Iceberg 적재와, Iceberg 14억 행에서 관문·격리·경계 표를 만드는 Spark SQL 실행기(결정 35, 88~90, 96) | 처음엔 학습 목적이었다. 한 달치(6.3GB)에서 DuckDB 5.5~6.1초, Spark 28.5~29.1초([측정 5](docs/measurements.md), [결정 24](docs/decisions.md)), 10달(58GiB, 14억 행)에서도 DuckDB(CSV) 약 33초, Spark(CSV) 약 168초로 한 대에서는 DuckDB가 빨랐다. 같은 Spark가 Iceberg 표를 읽으면 약 29초([측정 10](docs/measurements.md), [결정 37](docs/decisions.md)). 정제 전체(관문·격리·경계)를 같은 SQL로 비교하면, 배치로 나눈 DuckDB 658.8초 대 Spark 1,971~2,419초([측정 51](docs/measurements.md#측정-51-duckdb-배치마다-새-프로세스--parquet-넘김-생활이동-전체-완주-결정-111-d3d4-2026-11-15-00470109), [결정 111](docs/decisions.md#결정-111-duckdb는-배치마다-새-프로세스에서-돌리고-배치-결과는-parquet-파일로-넘긴다-f-30-결정-110-후속)). 운영 실행기는 지금도 Spark다(DuckDB는 메모리 여유가 거의 없고 넘치면 실패하므로) |
+| DuckDB | 측정과 대안 실행기로 씀 (`measure/duckdb_sql.py`, 이미지 `seoul-duckdb-job`) | 같은 생활이동 SQL을 두 엔진으로 돌려 병목과 결과 동등을 본다(결정 94). 운영 DAG `file_living_migration`은 Spark 실행기를 쓴다. 배치로 나누면 약 3.0~3.7배 빠르지만 컨테이너 상한까지 여유가 0.4GiB뿐이다([측정 51](docs/measurements.md#측정-51-duckdb-배치마다-새-프로세스--parquet-넘김-생활이동-전체-완주-결정-111-d3d4-2026-11-15-00470109)) |
 | Iceberg | 씀 (생활이동) | 레이크에 표 개념이 없어 과거 시점 조회와 스키마 변경 추적이 안 됐다. 원본 58GiB → 11GB, 대상연월 파티션 덮어쓰기, 스냅샷([결정 35](docs/decisions.md), [측정 9](docs/measurements.md)) |
 | Kafka | 안 씀 | 스트리밍 출처가 없다 |
 
@@ -242,3 +251,8 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | [docs/guarantees.md](docs/guarantees.md) | 멱등·동등·원자성 같은 성질의 증명 방법과 강도, 아직 증명하지 않은 것 |
 | [docs/failure_analysis.md](docs/failure_analysis.md) | 만난 오류의 원인 분석과 처방 (F-1~) |
 | [docs/resource_guard.md](docs/resource_guard.md) | 메모리·디스크 고갈 방지 장치(L0~L5)와 예산 |
+| [docs/judgment_log.md](docs/judgment_log.md) | 지시서 작업 중 스스로 내린 작은 판단의 한 줄 기록 |
+| [docs/design_agent.md](docs/design_agent.md) | SQL 1차 대응 에이전트 설계(신호, 격리 빌드, G1~G5 판정, 평가 정답표 [docs/agent_answer_key.json](docs/agent_answer_key.json)) |
+| [docs/design_change_resilience.md](docs/design_change_resilience.md) | 컬럼 리니지(P4)와 혼잡도 정제 SQL 이전의 상세 설계 |
+| [docs/test_cases.md](docs/test_cases.md) | 시험 케이스 기록(목적, 넣은 것, 기대, 결과, 다시 돌리는 법) |
+| `docs/handoff_*.md`, `docs/progress_*.md` | 작업 지시서와 진행 기록(단계마다 한 일과 결과) |

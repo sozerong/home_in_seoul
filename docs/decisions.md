@@ -1208,4 +1208,4 @@
   - 처방 둘: F-33(읽기 전용 레포 복제가 git 소유자 검사에 걸림 → 이미지 시스템 설정), F-34(판정이 dbt가 skip한 표를 읽음 → 기준선 상품이 없으면 운영 mart와 비교, 후보 실패 노드면 G1으로 바로 fail).
   - A5: `.env`에 `GITHUB_TOKEN`, `SLACK_WEBHOOK_URL`이 없어 실제 PR·Slack은 대기. 실행마다 `logs/agent/<실행>/`에 `branch.bundle`, `branch.patch`, `pr.json`, `slack.json`(dry-run)을 남긴다. 실제로 가려면 이 레포만 고른 fine-grained 토큰, Slack 웹훅, main 보호 규칙(결정 108 결과)이 필요하다.
   - Airflow 이미지에서 SDK를 뺀 것을 적용(다시 빌드, airflow 서비스 4개와 ui만 `--no-deps`로 다시 만듦, 모두 healthy, DAG 가져오기 오류 0).
-  - 남은 것: 허용 밖 편집 차단은 실제 시도가 없어 selftest로만 확인. DB 역할로 운영 쓰기를 막는 `agent_rw`는 없다. 정답표가 S1 고칠 파일을 좁게 적었는지는 사용자 판단(판단 119).
+  - 남은 것: 허용 밖 편집 차단은 실제 시도가 없어 selftest로만 확인. → 2026-11-15 O1(측정 55)에서 실제 실행으로 시험: Edit 넷 거절, Write·Bash 도구 없음, 허용 밖 바뀐 파일 0. M7도 처방 뒤 끝까지 1회 needs_decision(G5 187). DB 역할로 운영 쓰기를 막는 `agent_rw`는 없다. 정답표가 S1 고칠 파일을 좁게 적었는지는 사용자 판단(판단 119).

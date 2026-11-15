@@ -3,7 +3,7 @@
 #
 # 규칙
 # - dags: DAG 하나 = dag_id와 일정. 일정은 cron 문자열, "manual"(schedule=None), "asset"(Asset 트리거) 중 하나.
-#   tests/test_ui_pipelines.py가 dags/*.py의 실제 DAG와 같은지 본다(어긋남 시험). 8개 DAG가 모두 한 번씩 나와야 한다.
+#   tests/test_ui_pipelines.py가 dags/*.py의 실제 DAG와 같은지 본다(어긋남 시험). 운영 DAG 9개가 모두 한 번씩 나와야 한다(손으로만 도는 시험 DAG `test_*.py`는 뺀다).
 # - 지금 상태를 뜻하는 숫자(행 수, 실행 횟수, 회차, 마지막 실행 시각, 다음 실행)는 적지 않는다. 화면이 DB와 Airflow API에서 읽는다.
 # - proofs의 숫자는 과거 측정 기록이라 측정 번호와 함께 둔다(docs/measurements.md가 원본).
 # - batch_sources: stg_dbt.batch_status.source 값, ops_sources: ops.quality·ops.freshness의 source 값(한글). 상세 화면이 이 값으로 거른다.
@@ -321,7 +321,7 @@ next = "wh_load"
 id = "wh_load"
 kind = "build"
 title = "웨어하우스 · 마트 · 상품"
-dags = { wh_load = "asset" }
+dags = { wh_load = "asset", agent_triage = "*/30 * * * *" }  # agent_triage: 관문 거절·dbt 실패 신호의 1차 대응(결정 112)
 records = "build_runs"
 trigger = "Asset"
 chain = "원본·stg 갱신 → dbt build → 교체 → 내보내기"

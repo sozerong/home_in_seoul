@@ -703,3 +703,16 @@
 - 처방(판단 121): `sandbox.diff`는 기준선 상품 표가 없으면 운영 `mart`(고객이 지금 받는 마지막 정상본)와 비교한다. `sandbox.judge`는 후보 빌드에 실패 노드가 있으면 G1만으로 바로 fail을 낸다. `agent/run.py`는 fail이면 평가용 상품 비교를 하지 않는다.
 - 확인: M7 patch 3개를 판정만 다시(판단 120): 3회 모두 needs_decision(G1~G4 통과, G5 전월세 승인 단위 정제 행 187 차이), 정답표와 같다. S3: fail(G1, `rent_rows_rules` 실패). 운영 변화 0.
 - 상태: **처방함.**
+## F-35. GitHub CI `check`가 origin/main(5d05f47)에서 실패, 로컬 HEAD도 다른 이유로 실패 (handoff_agent_finish.md G0, 2026-11-15 19:35~19:45)
+- 태그: CI, 시험 환경
+- 증상: origin/main 5d05f47의 마지막 GitHub Actions `check`가 `정제 규칙 단위 테스트` 단계에서 exit 1, dbt parse는 건너뜀. Actions 로그는 보지 못했다(토큰에 Actions 읽기 없음).
+- 재현: CI와 같은 조건(`python:3.12-slim-bookworm`, `pip install -r requirements.txt`, ci.yml `check`의 명령 그대로)을 컨테이너에서 커밋마다 돌림(`logs/g0/ci_by_commit.txt`, `ci_5d05f47.log`, `ci_85faabc.log`).
+  - 5d05f47, 3efb02f, 0eea892: `tests/test_runner_swap.py`가 `common.read_env("DATABASE_URL")`로 `.env`를 읽다 `FileNotFoundError`. DB가 있어야 도는 시험이 `tests/test_*.py` 이름이라 CI가 단위 테스트로 돌렸다. 294ee65(결정 105 옛 경로 은퇴)에서 이 파일이 지워져 그 뒤 커밋은 통과(294ee65, 95df778, d5664d5, fae014f, 51211d6, 50924ed, ecac268 OK. ui 갈래 3392122는 지우기 전에 갈라져 실패, 병합 ecac268에서 풀림).
+  - daa0ac6부터 HEAD 85faabc까지: `tests/test_ui_pipelines.py`가 실패. 이 시험은 DAG 파일을 가짜 Airflow 모듈로 실행해 일정만 모으는데, 결정 109로 DAG가 `dags/jobs.py`(DockerOperator, `docker.types.Mount`, compose 환경 변수 `HOST_PROJECT_DIR`·`DATABASE_URL`)를 import하게 됐다. 가짜 모듈 목록에 docker provider가 없어 `ModuleNotFoundError`. 그 뒤 결정 112의 `agent_triage`(DAG를 읽을 때 `.env`를 읽음)와 시험 DAG `test_scheduler_kill`로 DAG 수도 8개가 아니게 됐다.
+- 원인: 로컬에서는 이 시험을 돌리는 Python이 3.10이라(tomllib 없음) 결정 109 뒤 아무도 돌리지 않았고, origin에 push하지 않아 GitHub CI도 돌지 않았다. CI 실패는 push를 멈춘 5d05f47 한 번만 보였다.
+- 처방(시험만 고침, 운영 DAG 코드는 그대로):
+  - `tests/test_ui_pipelines.py`: 가짜 모듈에 `airflow.providers.docker.*`, `docker`, `docker.types`, `common`을 더함. `JobOperator`가 상속하므로 `DockerOperator`는 빈 클래스. compose 환경 변수 세 개를 시험 값으로. 손으로만 도는 `test_*.py` DAG는 뺌. 기대 DAG 수 8 → 9.
+  - `ui/pipelines.toml`: `agent_triage = "*/30 * * * *"`를 wh_load 파이프라인의 dags에 더함(관문 거절·dbt 실패 신호를 받는 1차 대응).
+- 확인: 고친 작업 트리 사본에서 CI 두 단계 모두 통과(`logs/g0/ci_worktree.txt`: 단위 테스트, `rent_fingerprint --selftest`, `dbt parse --no-partial-parse`). GitHub에서의 통과는 A5 동기화 PR에서 확인한다 [확인 필요].
+- 남은 것: DB가 필요한 시험은 `check_*.py`, CI 단위 테스트는 `test_*.py`라는 이름 규칙이 문서에 없다. 로컬에 Python 3.12가 없어 CI와 같은 시험을 손으로 돌리려면 위 컨테이너 명령을 쓴다.
+- 상태: **처방함(로컬 재현 통과).**
