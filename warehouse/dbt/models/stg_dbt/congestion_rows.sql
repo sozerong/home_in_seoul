@@ -8,7 +8,7 @@ with src as (
            {{ py_strip("coalesce(r.raw ->> 'DOW_SE', '')") }} as dow,  -- Python strip()과 같은 공백 문자
            {{ py_strip("coalesce(r.raw ->> 'LINE', '')") }} as line,
            {{ py_strip("coalesce(r.raw ->> 'STTN_NO', '')") }} as sttn_no,
-           {{ py_strip("coalesce(r.raw ->> 'DPTRE_STTN', '')") }} as sttn_nm,
+           {{ py_strip("coalesce(r.raw ->> 'STTN_NM', r.raw ->> 'DPTRE_STTN', '')") }} as sttn_nm,
            {{ py_strip("coalesce(r.raw ->> 'UP_DOWN_SE', '')") }} as direction
     from {{ source('raw', 'congestion') }} r
 )
