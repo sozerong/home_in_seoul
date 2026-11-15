@@ -716,3 +716,12 @@
 - 확인: 고친 작업 트리 사본에서 CI 두 단계 모두 통과(`logs/g0/ci_worktree.txt`: 단위 테스트, `rent_fingerprint --selftest`, `dbt parse --no-partial-parse`). GitHub에서의 통과는 A5 동기화 PR에서 확인한다 [확인 필요].
 - 남은 것: DB가 필요한 시험은 `check_*.py`, CI 단위 테스트는 `test_*.py`라는 이름 규칙이 문서에 없다. 로컬에 Python 3.12가 없어 CI와 같은 시험을 손으로 돌리려면 위 컨테이너 명령을 쓴다.
 - 상태: **처방함(로컬 재현 통과).**
+## F-36. A5 첫 실제 push가 403: 토큰이 이 레포에 접근 권한이 없음 (handoff_agent_finish.md A5, 2026-11-15 21:06)
+- 태그: 권한, 외부 서비스
+- 증상: `docker compose run --rm --no-deps agent-job python -m agent.run --data S1 --publish`가 판정 pass(G1~G5 통과)까지 간 뒤 `git push https://github.com/sozerong/home_in_seoul.git agent/s1-20261115205513:...`에서 `remote: Permission to sozerong/home_in_seoul.git denied to sozerong.` `The requested URL returned error: 403`. 실행은 오류로 끝났고(rc 1, `ops.agent_run` error) PR·Slack은 보내지 않았다. 원격에 `agent/` 브랜치 0개.
+- 확인(읽기만, 값 출력 없음): 토큰으로 `GET /user` 200(`sozerong`)이라 토큰은 유효하고 push 인증(헤더)도 사용자로 인식됐다. 그런데 이 레포의 `GET /repos/sozerong/home_in_seoul/collaborators`가 403이고 응답 헤더 `X-Accepted-GitHub-Permissions: metadata=read`. fine-grained 토큰은 고른 레포마다 metadata 읽기를 자동으로 받으므로, 이 레포가 토큰의 Repository access에 들어 있지 않다고 본다. 레포가 public이라 PR 조회(`find_pr`)와 레포 조회는 토큰 없이도 돼서 앞선 점검에서 드러나지 않았다(`permissions` 값은 토큰이 아니라 사용자 역할을 보여 준다).
+- 원인: A5 준비물(2.2) 토큰의 레포 선택 [사용자 확인 필요]. 코드 쪽 원인은 찾지 못했다(인증 헤더가 틀렸다면 403 "denied to sozerong"이 아니라 인증 실패가 났을 것).
+- 처방: 사용자가 토큰 설정에서 Repository access를 "Only select repositories → home_in_seoul"로, 권한을 Contents 읽기·쓰기, Pull requests 읽기·쓰기로 맞춘다(값이 바뀌면 `.env`도). 그 뒤 같은 명령 1회. 점검 순서에 "토큰으로 metadata가 필요한 조회(collaborators) 200"을 넣어, public 레포에서 토큰 없이 되는 조회로 점검을 끝내지 않는다.
+- 재점검(2026-11-15, 사용자가 레포 선택을 고친 뒤): `collaborators` 200으로 레포 접근은 풀렸으나 `git push --dry-run`(아무것도 쓰지 않고 쓰기 권한만 검사)이 여전히 403. Contents 쓰기 권한이 없는 것으로 본다. 이후 점검은 12분짜리 실행 전에 `push --dry-run`으로 한다.
+- 결과: 사용자가 Contents 쓰기를 준 뒤 `push --dry-run` rc 0, 같은 실행으로 PR 2 열림·Slack 200(측정 55).
+- 상태: **처방함(사용자 토큰 설정).**

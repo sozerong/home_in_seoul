@@ -151,3 +151,10 @@ README는 이력서·포트폴리오에서 넘어온 사람이 처음 보는 곳
 - 문서 (20:15): 측정 55 새로, 측정 54 한계 줄에 O1 결과 덧붙임, guarantees 2.8(26회, O1 차단 결과), design_agent 9절 A5(main 동기화 대기)·A6(O1), 결정 112 남은 것, README 증거 표 에이전트 행과 한계 문단(O1, A5 대기, F-31 원인 미확정).
 - A5: 첫 진행이라 하지 않음(5절 A5). 대기: main 동기화 필요(로컬 main이 origin/main보다 14커밋 앞, 이번 작업 커밋 뒤에는 15).
 - 마무리 (20:10): 최종 작업 트리 사본에서 CI 두 단계 통과(`logs/g0/ci_worktree_final.txt`), agent selftest 통과, README 링크 검사 통과. 아무것도 지우지 않음. 6절 보고.
+- A5 시작 (20:53): 사용자 "A5 진행". `git fetch` 뒤 `origin/main..main` 0, `main..origin/main` 0(main = 병합 커밋 0bd1ac5, PR 1 check 통과 뒤 merge commit). 동기화 확인.
+- A5 코드 (20:40~20:52): compose `agent-job`에 `GITHUB_TOKEN`, `SLACK_WEBHOOK_URL` 두 줄. `agent/run.py` `publish()`: 같은 브랜치 PR 조회(있으면 그 링크, 멱등) → push(토큰은 `GIT_CONFIG_*` 환경 변수의 HTTP 헤더로만, URL·명령줄·.git/config에 없음) → PR 생성(병합 안 함) → Slack 한 건(예외면 예외 이름만). 평가 사례마다 PR이 열리지 않게 `--publish`일 때만(실데이터 `--data real`은 그대로 보냄, 판단 126). selftest 통과. 읽기 점검: repo `sozerong/home_in_seoul`, 두 값 있음.
+- A5 실행 (20:55~21:07, 703초): S1 판정 pass(G1~G5 통과, 16턴), 운영 변화 0. **push가 403으로 실패**(`Permission ... denied to sozerong`), PR·Slack 안 보냄, 원격 `agent/` 브랜치 0. 토큰이 이 레포에 metadata 읽기조차 없음을 읽기 조회로 확인 → 토큰의 레포 선택 문제로 판단(F-36). 토큰·웹훅 문자열 검색 0건. main 직접 push 시험은 지금 토큰으로는 룰셋이 아니라 권한 부족으로 막혀 룰셋을 시험하지 못하므로 미룸. **A5 대기: 토큰 레포 선택.**
+- A5 재점검 (21:12): 사용자가 토큰을 고침. 토큰으로 `collaborators` 조회 200(레포 선택 풀림). 그러나 `git push --dry-run`(쓰지 않음, 쓰기 권한만 검사) 여전히 403 `denied to sozerong` → Contents 쓰기 권한이 없는 것으로 판단, S1 실행은 돌리지 않음. F-36 둘째 원인.
+- A5 재점검 2 (21:16): 사용자가 Contents 권한을 바꿈. `push --dry-run` rc 0, 원격에 아무것도 안 생김. S1 실제 전송 다시 실행.
+- A5 실제 전송 (21:16~21:28, 711초): S1 판정 pass, 운영 변화 0. PR [sozerong/home_in_seoul#2](https://github.com/sozerong/home_in_seoul/pull/2) 열림(병합 안 함, CI `check` 통과), Slack HTTP 200, push~Slack 3.6초. 멱등 조회: 같은 브랜치 → PR 2(원격 조회만). main 직접 push: GH013 룰셋 거절, main 0bd1ac5 그대로. 토큰·웹훅 문자열 0건(보고·로그·pr.json·slack.json·PR 본문). `SLACK_WEBHOOK_URL`이 생긴 뒤로 wh_load 운영 알림도 같은 채널로 간다(결정 86). 측정 55, F-36 처방함. **A5 끝.**
+- 마무리 2 (21:35): 측정 55, F-36, guarantees 2.8(28회), design_agent A5, 결정 112, README(에이전트 행, 실행 설명, 한계), 정리 목록 19·20번 갱신.

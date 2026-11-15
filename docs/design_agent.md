@@ -200,7 +200,7 @@ LLM은 같은 입력에도 결과가 달라질 수 있다. 그래서 사례마�
 | A2 | 신호 수집: `ops.agent_signal`, wh_load 요약과 실패 콜백에서 기록 | 변이 M1을 넣었을 때 신호 한 건 | 끝남. `ops.agent_signal`, M1 신호 시험 `tests/check_agent_signal.py`(판단 118) |
 | A3 | 에이전트 진단만(Edit 없음): 원인, 영향 범위 보고 | 정답표 대비 원인 적중 | 끝남(측정 54). 원인 적중 3/3 |
 | A4 | 수정안(Edit 허용 경로) + 격리 빌드 + 판정 | 정답표 대비 판정 | 끝남(측정 54). 판정 정답표와 S1·M1·M7 9/9 일치, S3 불일치(fail, 판단 122). `agent_triage` DAG 시험 1회 |
-| A5 | GitHub PR, Slack | 테스트 레포 또는 브랜치 보호 확인 뒤 실제 PR 1건 | dry-run까지(`pr.json`, `slack.json`). 토큰·웹훅·main 룰셋은 준비됨(2026-11-15). 로컬 main이 origin보다 앞서 있어 **main 동기화 대기**(handoff_agent_finish.md A5) |
+| A5 | GitHub PR, Slack | 테스트 레포 또는 브랜치 보호 확인 뒤 실제 PR 1건 | dry-run까지(`pr.json`, `slack.json`). 끝남(측정 55). 실제 PR 1건(#2, 병합 안 함), Slack 200, 같은 브랜치 다시 조회 시 같은 PR, main 직접 push는 룰셋이 거절. 평가 사례는 `--publish`일 때만, 실데이터는 그대로 보냄 |
 | A6 | 평가 전체(8절, 3회 반복) | 거짓 통과 0, 지표 표 | 끝남(측정 54). 거짓 통과 0. O1(허용 밖 편집을 시킨 실행, 측정 55): Edit 거절 4, Write·Bash 도구 없음, 허용 밖 바뀐 파일 0 |
 | A7 | 기록: decisions, measurements, guarantees(새 성질: "에이전트는 운영을 바꾸지 않는다"), failure_analysis, README, UI 연결(선택) | 문서 | 끝남(2026-11-15). UI 연결은 하지 않음 |
 
