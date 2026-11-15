@@ -52,7 +52,7 @@
 
 | 요소 | 운영 | 격리 파이프라인 | 이미 있는 것 |
 |---|---|---|---|
-| 코드 | main | git worktree `/scratch/agent/<run>` (브랜치 `agent/<신호ID>`) | worktree는 UI 세션에서도 씀 |
+| 코드 | main | `/scratch/agent/<run>/repo`에 레포 복제본(`git clone --no-hardlinks`), 후보는 복제본 안 worktree (브랜치 `agent/<데이터>-<시각>`) | 결정 112: 호스트 `.git`에 쓰지 않음(F-22) |
 | 입력 | `raw`, `stg` | 같은 표를 **읽기만** | raw는 원천 모양 그대로라 걸린 배치를 그대로 다시 쓸 수 있다 |
 | 출력 스키마 | `stg_dbt`, `wh`, `mart` | `agent_<run>_stg_dbt`, `_wh`, `_mart` | dbt `build_suffix` 변수, `*_build` 스키마(측정 31 변이 시험이 이미 이 방식) |
 | 빌드 범위 | 전체 | 바뀐 모델과 그 아래만: `dbt build -s state:modified+ --defer --state <운영 manifest>` | 운영 빌드의 manifest(`ops.build_run`이 SQL 해시를 남김) |
@@ -193,16 +193,16 @@ LLM은 같은 입력에도 결과가 달라질 수 있다. 그래서 사례마�
 
 `docs/handoff_decisions.md`와 `handoff_ui.md`가 끝난 뒤에 시작한다. `/scratch` 볼륨과 커밋 정리가 먼저 있어야 한다.
 
-| 단계 | 할 일 | 확인 |
-|---|---|---|
-| A0 | 정답표(8절) 커밋, 결정 108 기록 | 사용자 승인 |
-| A1 | **격리 파이프라인**: worktree, `agent_*` 스키마, slim 빌드(`state:modified+ --defer`), 상품 출력 경로 인자, G1~G5 판정 코드, 정리. 사람이 고친 S1 브랜치로 판정이 도는지 | S1 통과, S3 해석 변경 의심, 운영 스키마 변화 0 |
-| A2 | 신호 수집: `ops.agent_signal`, wh_load 요약과 실패 콜백에서 기록 | 변이 M1을 넣었을 때 신호 한 건 |
-| A3 | 에이전트 진단만(Edit 없음): 원인, 영향 범위 보고 | 정답표 대비 원인 적중 |
-| A4 | 수정안(Edit 허용 경로) + 격리 빌드 + 판정 | 정답표 대비 판정 |
-| A5 | GitHub PR, Slack | 테스트 레포 또는 브랜치 보호 확인 뒤 실제 PR 1건 |
-| A6 | 평가 전체(8절, 3회 반복) | 거짓 통과 0, 지표 표 |
-| A7 | 기록: decisions, measurements, guarantees(새 성질: "에이전트는 운영을 바꾸지 않는다"), failure_analysis, README, UI 연결(선택) | 문서 |
+| 단계 | 할 일 | 확인 | 구현 상태 |
+|---|---|---|---|
+| A0 | 정답표(8절) 커밋, 결정 108 기록 | 사용자 승인 | 끝남(2026-11-14) |
+| A1 | **격리 파이프라인**: worktree, `agent_*` 스키마, slim 빌드(`state:modified+ --defer`), 상품 출력 경로 인자, G1~G5 판정 코드, 정리. 사람이 고친 S1 브랜치로 판정이 도는지 | S1 통과, S3 해석 변경 의심, 운영 스키마 변화 0 | 끝남(측정 45). 2026-11-15 A1.5로 자기 컨테이너·복제본으로 옮김(결정 112, 측정 53) |
+| A2 | 신호 수집: `ops.agent_signal`, wh_load 요약과 실패 콜백에서 기록 | 변이 M1을 넣었을 때 신호 한 건 | 끝남. `ops.agent_signal`, M1 신호 시험 `tests/check_agent_signal.py`(판단 118) |
+| A3 | 에이전트 진단만(Edit 없음): 원인, 영향 범위 보고 | 정답표 대비 원인 적중 | 끝남(측정 54). 원인 적중 3/3 |
+| A4 | 수정안(Edit 허용 경로) + 격리 빌드 + 판정 | 정답표 대비 판정 | 끝남(측정 54). 판정 정답표와 S1·M1·M7 9/9 일치, S3 불일치(fail, 판단 122). `agent_triage` DAG 시험 1회 |
+| A5 | GitHub PR, Slack | 테스트 레포 또는 브랜치 보호 확인 뒤 실제 PR 1건 | dry-run까지(`pr.json`, `slack.json`). 실제 PR은 GitHub 토큰·Slack 주소·main 보호 대기 |
+| A6 | 평가 전체(8절, 3회 반복) | 거짓 통과 0, 지표 표 | 끝남(측정 54). 거짓 통과 0 |
+| A7 | 기록: decisions, measurements, guarantees(새 성질: "에이전트는 운영을 바꾸지 않는다"), failure_analysis, README, UI 연결(선택) | 문서 | 끝남(2026-11-15). UI 연결은 하지 않음 |
 
 **[확인 필요]**
 - Agent SDK 설치 위치(Airflow 이미지 안 별도 venv가 맞는지)
@@ -308,6 +308,7 @@ G5를 정제 표(`stg_dbt.congestion` 등) 단계에서 보는 이유가 있다.
 - **D1:** 기준선은 "바뀐 데이터 + 기존 SQL(main)", 후보는 "바뀐 데이터 + 에이전트가 고친 SQL"이다. 둘 다 같은 바뀐 데이터로 격리 빌드한다. 에이전트는 SQL만 바꾸고, 나머지 비교는 파이프라인이 한다(사용자 답). 선택지 (a)와 같다.
 - **D2 (가정, 사용자 답 없음):** 전체 빌드로 시작해 시간을 재고, 길면 바뀐 모델만으로 줄인다.
 - **D3 (가정):** Airflow 컨테이너 안 `/scratch`의 git worktree. git이 없으면 멈추고 보고한다.
+- **D3 변경 (결정 112, 2026-11-15):** 에이전트는 자기 계산 컨테이너 `seoul-agent-job`에서 돈다. 레포는 `/opt/project:ro`, 작업은 `/scratch/agent/<run>/repo` 복제본에서 한다. 고친 브랜치는 `logs/agent/<run>/branch.bundle`·`branch.patch`로 넘기고(A5 준비물이 있으면 push와 PR), 복제본은 heavy 잠금이 `/scratch`를 비울 때 함께 지워진다. 그래서 `forget_scratch_worktrees`(F-22 우회)는 지웠다.
 - **D4 (가정, 사용자 답 없음):** 변이 시험의 공통 부분을 `sandbox/`로 옮기고, 측정 31 재현으로 확인한다.
 
 ### 11.6 A1 완료 기준

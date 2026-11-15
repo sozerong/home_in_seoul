@@ -1,4 +1,4 @@
-"""계산 컨테이너(seoul-spark-job, seoul-duckdb-job) 메모리 관측 (결정 109 H4·D2). vm_watch는 Airflow 구성 요소 안에서 돌고,
+"""계산 컨테이너(seoul-spark-job, seoul-duckdb-job, seoul-agent-job) 메모리 관측 (결정 109 H4·D2). vm_watch는 Airflow 구성 요소 안에서 돌고,
 계산 컨테이너는 코드·logs가 읽기 전용이라 그 안에서 기록할 수 없어 호스트에서 docker stats로 5초마다 한 줄씩 남긴다.
 
 실행(호스트, 레포 루트, 백그라운드): python -u -m measure.job_stats 이름 [이미지 접두어=seoul-]
@@ -29,7 +29,8 @@ def main():
         f.write("ts\tcontainer\timage\tmem_b\tlimit_b\tcpu_pct\n")
         while True:
             ids = subprocess.run(["docker", "ps", "-q", "--filter", f"ancestor={prefix}spark-job:3.5.9",
-                                  "--filter", f"ancestor={prefix}duckdb-job:2.0.0"], capture_output=True, text=True).stdout.split()
+                                  "--filter", f"ancestor={prefix}duckdb-job:2.0.0",
+                                  "--filter", f"ancestor={prefix}agent-job:0.2.182"], capture_output=True, text=True).stdout.split()
             if ids:
                 r = subprocess.run(["docker", "stats", "--no-stream", "--format", "{{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}", *ids],
                                    capture_output=True, text=True)

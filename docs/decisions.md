@@ -1113,6 +1113,8 @@
   | D4 변이 시험과의 관계 (가정) | 공통 부분을 `sandbox/`로 옮기고 변이 시험이 쓰게 | 새로 작성: 같은 비교 로직이 두 벌이 된다 |
 - 결정과 이유 (사용자, 2026-11-14): 위 표의 "고른 것". 에이전트의 일은 바뀐 데이터에 맞게 SQL(`warehouse/dbt/models/stg_dbt/**`, `macros/**`)을 고치는 것 하나다. 판정 G1~G5, PR, 알림은 에이전트 밖의 코드가 한다(에이전트가 자기 결과를 채점하지 않게). 경고만 있는 신호(모르는 키)는 에이전트를 돌리지 않는다. D2~D4는 사용자 답이 없어 설계도의 제안을 가정으로 둔다.
 - 검증: 정답표 `docs/agent_answer_key.json` 사용자 승인(A0, 2026-11-14). 에이전트 실행 전에 커밋한다. A1 완료 기준(design_agent.md 11.6), A6 평가에서 거짓 통과 0, 사례마다 3회.
+  - A6 결과(2026-11-15, 측정 54): **거짓 통과 0.** 원인 적중 12/12(진단 3, 수정 9). 판정 일치 16/17(S1 pass 3/3, M1 pass 3/3, M7 needs_decision 3/3, 대조군 no_run 4/4, 진단 3/3). 불일치 1은 S3가 fail로 나온 것(정답표 뒤 생긴 단위 테스트 `rent_rows_rules`가 G1에서 잡음, 더 보수적, 판단 122). 규칙과 테스트를 함께 바꾼 보충 사례 S3b는 needs_decision(G5 116행). 고칠 파일 준수 6/9(S1 3회가 정답표 밖 `congestion_quarantine.sql`도 고침, 판단 119). 허용 밖 편집 시도 0회(차단은 selftest로만 확인). 실행마다 운영 변화 0. 회당 진단 약 4분·0.5~0.9 USD, 수정 약 11분·0.5~1.1 USD(SDK 계산값).
+  - 실행체는 결정 112로 Airflow 태스크 안에서 자기 계산 컨테이너(`seoul-agent-job`)로 옮겼다. Airflow 이미지에서 SDK를 뺐다(2026-11-15 다시 빌드, 1,012.0MB → 840.8MB).
 - 결과와 남은 것 (A0 확인, 2026-11-14):
   - SDK 설치(2026-11-14, 사용자 승인): Airflow 기본 환경에 `claude-agent-sdk==0.2.182`. dry-run에서 새로 깔리는 것은 SDK 하나뿐이었고 기존 패키지 버전 변화 없음. 내장 CLI `_bundled/claude` 2.1.325가 돌고(node 불필요), 설치 크기 351MB. 별도 venv 제안은 의존이 겹치지 않아 거뒀다. `Dockerfile`에 같은 줄을 넣었다(컨테이너를 다시 만들 때 적용).
   - SDK: `claude-agent-sdk` 0.2.182, Python 3.10 이상, 플랫폼별 wheel(manylinux x86_64 약 150MB대)이다. Claude Code 실행 파일이 wheel에 함께 들어 있는 것으로 보이며 Airflow 컨테이너에 node는 없다. 함께 들어 있는지는 설치할 때 확인한다 [확인 필요]. 의존(mcp >=1.23 <3, anyio, jsonschema)은 컨테이너의 mcp 2.3.0, anyio 4.15.1, jsonschema 4.26.0과 맞는다. 설치 위치는 dbt-venv, spark-venv와 같은 방식의 별도 venv(`/opt/airflow/agent-venv`)를 제안한다.
@@ -1188,3 +1190,22 @@
   - D4 전체: **658.8초에 완주.** Spark 결과 세 표(`living_commute` 13,782,826행, `living_batch_status` 10행, `living_quarantine` 31,935,758행)와 두 방향 `EXCEPT ALL` 모두 0행. 배치당 48.9~61.5초, 자식 최대 RSS 17.09~17.30GiB, 컨테이너 최대 17.62GiB.
   - 넘침 규칙이 한 번 일했다: 202601이 threads 12에서 8초 만에 넘치고 threads 4로 83.8초에 성공(F-31, 혼자 다시 돌려도 같음).
 - 결과와 남은 것: 결정 110의 배치 처리가 이 구조로 완주했다. F-19(DuckDB가 16GiB에서 못 끝냄)는 처방됨. 같은 계산 범위에서 Spark(측정 42, 2,419초)보다 약 3.7배 빠르지만 컨테이너 상한까지 여유가 0.4GiB뿐이다. 남은 것: 202601이 threads 12에서만 넘치는 원인(F-31), 반복 측정, 상한 여유(예: `memory_limit` 15GiB에서의 시간).
+
+## 결정 112. SQL 에이전트는 자기 계산 컨테이너(`seoul-agent-job`)에서, 레포 복제본으로 일한다 (결정 108 D3 변경, 결정 109)
+- 상황: A1(측정 45)은 에이전트를 Airflow 컨테이너 안에서, `/scratch`의 git worktree로 돌렸다. 결정 109 뒤 스케줄러 상한은 1792m다(측정 47). 에이전트(Claude CLI + dbt 빌드 2회)를 스케줄러에서 돌리면 P1(계산이 지휘자 cgroup에 있음)이 에이전트로 되살아난다. F-22는 컨테이너가 호스트 `.git`에 쓰면서 났다.
+- 선택지:
+  - A. 스케줄러 컨테이너에 그대로(worktree). 장점: 바꿀 것이 없다. 단점: P1 재발, 호스트 `.git`에 계속 쓴다.
+  - B. 자기 계산 컨테이너 + 레포 읽기 전용 + `/scratch` 안 복제본(`git clone --no-hardlinks`). 장점: 지휘와 자원이 나뉘고, 호스트 `.git`에 쓰지 않으니 F-22가 구조로 막힌다. 단점: 이미지 하나가 늘고, 고친 브랜치를 넘기는 길(push 또는 bundle)이 따로 필요하다.
+  - C. 호스트에서 직접. 단점: Airflow가 부를 수 없고 격리가 없다.
+- 결정과 이유 (사용자, 2026-11-15, `handoff_duckdb_agent.md` 4절 3부): **B.** 이미지는 Python 3.12, dbt-venv(같은 버전), `claude-agent-sdk==0.2.182`, git. 고친 브랜치는 준비물(GitHub 토큰)이 있으면 push와 PR, 없으면 `logs/agent/<run>/`에 bundle·patch. 상한은 실측 최대 × 1.5, 스왑 금지. 격리 빌드는 heavy 잠금을 그대로 쓴다. 비밀은 `private_environment`로 넘긴다. D2(빌드 범위)는 전체로 시작해 5분이 넘으면 줄이고, D4는 A1 그대로.
+- 검증:
+  - A1.5(측정 53): `docker compose run --rm agent-job python -m agent.run --data S1`이 측정 45와 같은 판정(pass, G1~G5 통과, 후보 상품 = M0). 운영 표 49개 행 수·상품 sha256 같음, 남은 `*_sbx_*` 0, 호스트 `.git` 새 브랜치 0. 같은 시간 스케줄러 RSS 493~598MB.
+  - 상한: A1.5 최대 0.28GiB x 1.5 → 512m(판단 117). A6 22번 실행 최대 0.286GiB / 512MiB, OOM 없음(측정 54).
+  - A6(측정 54): 거짓 통과 0, 원인 적중 12/12, 판정 일치 16/17. 실행마다 `measure/ops_snapshot.py` 앞뒤 같음(guarantees 2.8).
+  - A4 DAG(2026-11-15 05:50~05:54): 시험 신호(`found_by` `test:A4`) 1건을 넣고 `agent_triage`를 켜자 예약 실행의 `pick_signal`이 신호를 running으로 바꾸고, DockerOperator `run_agent`가 `seoul-agent-job`을 실데이터로 203초 돌려 no_run(실데이터에 거절 없음, C0와 같음), 신호 done. 신호가 없는 수동 실행은 `pick_signal`에서 건너뜀(short circuit). 운영 변화 0. DAG는 다시 일시정지.
+  - D2: 기준선 전체 빌드를 포함한 신호 없는 실행이 약 200초라 5분 안이다. 전체 빌드를 그대로 둔다.
+- 결과와 남은 것:
+  - 처방 둘: F-33(읽기 전용 레포 복제가 git 소유자 검사에 걸림 → 이미지 시스템 설정), F-34(판정이 dbt가 skip한 표를 읽음 → 기준선 상품이 없으면 운영 mart와 비교, 후보 실패 노드면 G1으로 바로 fail).
+  - A5: `.env`에 `GITHUB_TOKEN`, `SLACK_WEBHOOK_URL`이 없어 실제 PR·Slack은 대기. 실행마다 `logs/agent/<실행>/`에 `branch.bundle`, `branch.patch`, `pr.json`, `slack.json`(dry-run)을 남긴다. 실제로 가려면 이 레포만 고른 fine-grained 토큰, Slack 웹훅, main 보호 규칙(결정 108 결과)이 필요하다.
+  - Airflow 이미지에서 SDK를 뺀 것을 적용(다시 빌드, airflow 서비스 4개와 ui만 `--no-deps`로 다시 만듦, 모두 healthy, DAG 가져오기 오류 0).
+  - 남은 것: 허용 밖 편집 차단은 실제 시도가 없어 selftest로만 확인. DB 역할로 운영 쓰기를 막는 `agent_rw`는 없다. 정답표가 S1 고칠 파일을 좁게 적었는지는 사용자 판단(판단 119).

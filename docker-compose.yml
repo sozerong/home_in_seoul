@@ -251,6 +251,28 @@ services:
       # 측정 기록(--memwatch CSV, D1)만 쓴다. 레포의 logs/는 git 제외
       - ./logs:/opt/project/logs
 
+  # SQL 1차 대응 에이전트(결정 112). 레포는 읽기 전용, 작업은 /scratch 안 복제본에서. 고친 브랜치는 logs/agent/<run>/에 bundle·patch로 넘긴다.
+  # 상한: A1.5 첫 실행의 최대 x 1.5(handoff_duckdb_agent.md 4절). 스왑 금지. 비밀은 환경 변수로만(Airflow에서는 private_environment).
+  agent-job:
+    <<: *job
+    build:
+      context: .
+      target: agent-job
+    image: seoul-agent-job:0.2.182
+    # 상한(결정 112, resource_guard L2): A1.5 첫 실행(S1, 690초) docker stats 최대 0.28GiB(Claude CLI + dbt 빌드 2회. 무거운 일은 DB가 한다)
+    # x 1.5 = 424MiB, 256MiB 단위 올림 → 512m. 스왑 금지. dags/jobs.py AGENT_MEM과 함께 바꾼다
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 4
+    environment:
+      <<: *job-env
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      LINEAGE_READER_PASSWORD: ${LINEAGE_READER_PASSWORD:-}
+    volumes:
+      - ./:/opt/project:ro
+      - scratch:/scratch
+      - ./logs/agent:/opt/project/logs/agent
+
 volumes:
   pgdata:
   pgadmin_data:

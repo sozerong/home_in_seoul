@@ -82,10 +82,36 @@ def disk_line():
     return f"- 디스크: 호스트 C: 여유 {free / 1e9:.1f}GB, /scratch {used / 1e9:.2f}GB"
 
 
-def wh_load_report():
-    """wh_load 마지막 작업: 경고, 거절 배치, 늦은 출처를 메시지 하나로. 보낼 것이 없으면 보내지 않는다. 보낸 글을 돌려준다."""
+def record_agent_signals(found_by, run_results=None):
+    """관문 거절(stg_dbt.batch_status)과 dbt 실패(run_results)를 ops.agent_signal에 남긴다(A2, agent/signals.py).
+    새로 들어간 signal_id 목록. agent_triage DAG가 status new를 집어 에이전트를 부른다."""
+    import sys
+
+    import psycopg
+    sys.path.insert(0, "/opt/project")  # 레포 패키지(agent). DAG 폴더만 sys.path에 있다
+    from agent import signals
+    with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5) as conn:
+        return signals.record(conn, signals.collect(conn, run_results=run_results), found_by)
+
+
+def wh_load_dbt_failed(context):
+    """dbt_build 실패 콜백: 평소 알림에 더해 dbt 실패 노드를 신호로 남긴다. 신호 기록이 실패해도 알림은 간다."""
+    notify_failure(context)
+    try:
+        results = Path("/opt/project/warehouse/dbt/target/run_results.json")
+        rr = json.loads(results.read_text(encoding="utf-8")) if results.exists() else None
+        ti = context["task_instance"]
+        print("에이전트 신호:", record_agent_signals(f"{ti.dag_id}/{ti.run_id}", rr))
+    except Exception:
+        logging.exception("에이전트 신호 기록 실패")
+
+
+def wh_load_report(found_by="wh_load"):
+    """wh_load 마지막 작업: 경고, 거절 배치, 늦은 출처를 메시지 하나로. 보낼 것이 없으면 보내지 않는다. 보낸 글을 돌려준다.
+    관문 거절은 에이전트 신호로도 남긴다(A2)."""
     import psycopg
 
+    print("에이전트 신호:", record_agent_signals(found_by))
     with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=5) as conn:
         warnings = conn.execute("SELECT warnings FROM ops.build_run ORDER BY build_id DESC LIMIT 1").fetchone()
         rejected = conn.execute("SELECT source, batch_key, array_to_string(failed_checks, ',') FROM stg_dbt.batch_status "

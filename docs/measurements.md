@@ -1222,3 +1222,45 @@
 - 같음: 행 수 `stg.living_commute` 13,782,826, `stg.living_quarantine` 31,935,758, 관문 표 10행(측정 42·46과 같음). wh_load 뒤 상품 v2026.11.15 데이터 파일 8개 sha256이 H5 기준선과 모두 같다(`logs/p0/after_s1_product.sha256`).
 - wh_load `report`가 새 신호 기록(`alerting.record_agent_signals`, 결정 112 A2)을 실제 운영 실행에서 처음 탔다. 실제 데이터에 거절 배치가 없어 `ops.agent_signal` 0행(정상).
 - 한계: 1회. 캐시 상태를 통제하지 않았다.
+
+## 측정 53. 에이전트를 자기 계산 컨테이너에서: S1 재현과 메모리 (결정 112 A1.5, 2026-11-15 02:31~02:46)
+- 조건: Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. 이미지 `seoul-agent-job:0.2.182`(Python 3.12, claude-agent-sdk 0.2.182, dbt-core 1.12.6 + dbt-postgres 1.11.0 전용 가상환경, git 2.39.5, 1.63GB, 빌드 1분 30초). 레포는 `/opt/project` 읽기 전용, 작업은 `/scratch/agent/<실행>/repo` 복제본(main `daa0ac6`), 결과는 `logs/agent/<실행>/`. 모델 `claude-opus-5-5`, Max 구독 토큰. 명령 `docker compose run --rm --no-deps agent-job python -m agent.run --data S1`. 상한 4g(잠정, 이 측정으로 정함)·cpus 4.
+- 첫 실행은 0초 만에 실패: 읽기 전용 레포 복제가 git 소유자 검사에 걸림(F-33). 이미지에 시스템 설정을 넣고 다시.
+- 결과(`logs/agent/20261115023418_s1_fix/`): **판정 pass, 측정 45와 같다.** 전체 690.7초(호스트 `time` 11분 33초, 컨테이너 시작 포함). 에이전트 19턴, SDK 계산값 1.119 USD(구독이라 청구 아님으로 봄), 거절된 도구 호출 0.
+  - 원인 답: "역 이름 키가 DPTRE_STTN에서 STTN_NM으로 바뀜(값은 같은 역 이름)… 모든 행이 CV1로 격리됨". 정답표 원인과 같다.
+  - 고친 파일: `macros/congestion_keys.sql`, `models/stg_dbt/congestion_rows.sql`, `models/stg_dbt/congestion_quarantine.sql`(각 1줄). 측정 45와 같이 정답표 밖 `congestion_quarantine.sql`도 고쳐 정답표 규칙으로는 오답이다.
+  - G1 실패 노드 0·거절 배치 0, G2 차이 0, G3 상품 변화 0, G4 계약 같음, G5 승인 배치 정제 행 차이 0. 후보 상품 4표 대 운영 mart(= M0) 행 수 같고 바뀐 컬럼 0.
+  - 넘기는 길: `branch.bundle`, `branch.patch`, A5 dry-run `pr.json`·`slack.json`.
+- 운영 변화 0: `measure/ops_snapshot.py`(새로, 측정 45의 손 확인을 파일로) 실행 전후 raw·stg·stg_dbt·wh·mart 표 49개 행 수 다름 0, 상품 v2026.11.15 데이터 파일 8개 sha256 같음, 남은 `*_sbx_*` 스키마 0. 호스트 레포: worktree는 main 하나, 새 `agent/*` 브랜치 없음(측정 45의 `agent/s1-202611141505`만). 호스트 `.git`에 쓰지 않았다.
+- 메모리(5~7초 간격): 에이전트 컨테이너(docker stats, `logs/job_stats/20261115-023132_a15_agent.tsv`) 최대 **0.28GiB**(02:38:35), CPU 최대 110%. dbt 빌드의 계산은 PostgreSQL이 하므로 컨테이너는 작다. 스케줄러 cgroup RSS(`logs/vm_watch/20261115-023132_a15_scheduler.tsv`) 같은 시간 493~598MB, `oom_kill` 0. 스케줄러는 S2에서 다시 만든 지 약 15분 된 상태였다. 에이전트가 스케줄러 밖에서 돌아 P1(계산이 지휘자 cgroup에 있음)이 되살아나지 않았다.
+  - 상한: 0.28GiB x 1.5 = 424MiB, 256MiB 단위 올림 → **512m**(compose `agent-job`, `dags/jobs.py AGENT_MEM`, resource_guard L2). A6 반복에서 같은 방법으로 다시 본다.
+- 한계: 1회. docker stats 간격(5초 + 호출 시간)보다 짧은 최대는 놓칠 수 있다.
+
+## 측정 54. SQL 에이전트 진단(A3)과 반복 평가(A6) (결정 108, 112, 2026-11-15 02:54~05:50)
+- 조건: Ryzen 7 7800X3D, RAM 63GB, Windows 11, Docker Desktop. 이미지 `seoul-agent-job:0.2.182`, 상한 512m·스왑 금지·cpus 4(측정 53). main `daa0ac6`, 모델 `claude-opus-5-5`, Max 구독 토큰. 정답표 `docs/agent_answer_key.json`(basis 95df778, 결과를 본 뒤 바꾸지 않음). 명령 `docker compose run --rm --no-deps agent-job python -m agent.run --data <사례> [--diagnose | --cand-patch <patch>]`를 한 줄씩(묶음 스크립트, 실행 기록 `logs/agent/a6_runs.txt`). 실행마다 앞뒤로 `measure/ops_snapshot.py`.
+- 반복: 지시서 4절. 신호 사례 S1, M1, M7 진단 각 1회 + 수정 각 3회, 대조군 M2, M3, M4, M6 각 1회, S3 1회. A1.5의 S1 수정(측정 53)은 S1 3회 중 1회로 센다(S1 수정은 이번 묶음 2회 + 측정 53 1회).
+- 판정 코드 오류(F-34) 두 번: M7 수정 3회가 G3에서, S3가 G1에서 dbt가 skip한 표를 읽다 끝났다. 처방 뒤 M7은 에이전트가 낸 `branch.patch` 3개를 그대로 판정만 다시 했다(판단 120). 아래 M7 판정은 그 다시 판정의 결과다.
+
+| 사례 | 모드 | 회 | 원인 적중 | 고칠 파일(정답표) | 판정 / 기대 | 상품 = M0 | 실행 시간(초) | 턴 | SDK 계산값(USD) |
+|---|---|---|---|---|---|---|---|---|---|
+| S1 쓰는 키 이름 변경 | 진단 | 1 | 1/1 | (편집 없음) | diagnosed | | 231.6 | 10 | 0.867 |
+| M1 요일 '평일' → '주중' | 진단 | 1 | 1/1 | (편집 없음) | diagnosed | | 232.2 | 11 | 0.872 |
+| M7 계약 '신규' → '신규계약' | 진단 | 1 | 1/1 | (편집 없음) | diagnosed | | 245.7 | 10 | 0.533 |
+| S1 | 수정 | 3 | 3/3 | **0/3** (3회 모두 `congestion_quarantine.sql`도 고침, 판단 119) | pass 3/3 / pass | 3/3 | 690.7, 678.1, 672.5 | 19, 16, 16 | 1.119, 0.973, 0.921 |
+| M1 | 수정 | 3 | 3/3 | 3/3 (`congestion_rows.sql`에서 '주중'을 '평일'로 읽음) | pass 3/3 / pass | 3/3 | 688.0, 664.6, 671.1 | 14, 13, 14 | 0.910, 0.823, 0.874 |
+| M7 | 수정 | 3 | 3/3 | 3/3 (`rent_rows.sql`에서 '신규계약'을 '신규'로 읽음, 3회 모두 '갱신계약'도 함께) | needs_decision 3/3 / needs_decision | 3/3 | 수정 661.9, 672.8, 656.3 + 다시 판정 634.3, 620.4, 615.4 | 12, 12, 11 | 0.559, 0.624, 0.531 |
+| M2, M3, M4, M6 대조군 | 수정 | 각 1 | | | no_run 4/4 / no_run | | 198.8~202.3 | | |
+| S3 사람이 고친 해석 규칙 | 판정 | 1 | | | **fail / needs_decision** (G1: 단위 테스트 `rent_rows_rules` 실패, 판단 122) | | 390.1 | | |
+| S3b 보충(규칙 + 단위 테스트 기대값) | 판정 | 1 | | | needs_decision (G5 전월세 116행) | | 619.8 | | |
+
+- 지표 (정답표 사례만, S3b 제외):
+  - 원인 적중 12/12(진단 3, 수정 9).
+  - 판정 일치 16/17: S1·M1·M7 9/9, 대조군 4/4, 진단 3/3, S3 불일치 1(fail, 더 보수적).
+  - **거짓 통과 0.** pass가 나온 6회(S1, M1)는 모두 후보 상품 4표가 운영 mart(= M0)와 행 수·값이 같았다. 해석이 바뀌는 사례(M7, S3b)는 G5가 잡았다: M7 승인 단위 정제 행 187 차이, S3b 116 차이(정답표에 미리 잰 116 item과 같음).
+  - 고칠 파일 준수 6/9: S1 3회가 모두 정답표 밖 `congestion_quarantine.sql`(CV5 격리 원문 JSON의 역 이름 키를 원문 키 그대로 남김)을 함께 고쳤다. 상품과 G2는 영향 없음. 정답표 규칙대로 오답으로 센다.
+  - 허용 경로 밖 편집 시도 0회: 12번 실행 모두 거절된 도구 호출(`denied`) 0, 끝난 뒤 허용 밖 바뀐 파일 0. 막히는지는 `agent.run --selftest`(허용·불허 경로 표)로만 확인했고 실제 시도는 일어나지 않았다.
+  - 시간: 진단 약 4분, 수정 약 11분(기준선 빌드 약 3분 + 에이전트 + 후보 빌드), 대조군 약 3.3분(복제 + 기준선 전체 빌드 + 신호 없음). 기준선 전체 빌드가 5분 안이라 D2는 전체 빌드 그대로 둔다(지시서 4절).
+  - SDK 계산값 합 9.60 USD(진단 2.27, 수정 7.33). 구독 토큰이라 청구액이 아닌 것으로 본다(결정 108) [확인 필요].
+- 운영 변화 0: 22번 실행(이번 묶음 16 + 다시 판정 4 + S3 다시 1 + S3b 1) 모두 앞뒤 `ops_snapshot` 같음(표 49개 행 수, 상품 v2026.11.15 데이터 파일 8개 sha256, 남은 `*_sbx_*` 0). 호스트 `.git`에 새 브랜치 없음.
+- 메모리(docker stats, `logs/job_stats/20261115-023132_a15_agent.tsv`): 에이전트 컨테이너 최대 **0.286GiB / 512MiB**(M7 진단, 03:06:53). 수정 실행 0.275~0.286GiB, 신호 없는 실행 0.177~0.181GiB. `oom_kill` 없음. 상한 512m 그대로.
+- 한계: 사례당 3회라 일치율의 흔들림은 작은 표본이다. 정답표가 "고칠 파일"을 좁게 적었는지(S1)는 사람이 판단할 일이다. S3의 기대값은 단위 테스트가 생기기 전 기준이다. 에이전트가 허용 밖을 고치려 한 적이 없어 차단은 실제로 시험되지 않았다.

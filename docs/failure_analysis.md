@@ -687,3 +687,19 @@
   - 계산 컨테이너에 compose 라벨(`com.docker.compose.service=spark-job`)이 함께 붙어 있다(이미지 라벨이 상속됨). `docker compose down --remove-orphans` 같은 명령이 이 컨테이너를 compose 것으로 다룰 수 있다 [확인 필요].
   - CeleryExecutor나 k8s로 가면 태스크 프로세스가 스케줄러 밖에 있어 이 처방(시작 때 전부 멈춤)은 틀린 처방이 된다. 그때는 TI 상태와 라벨을 대조해야 한다.
 - 상태: **처방함, 처방 뒤 1회 확인.**
+
+## F-33. 에이전트 컨테이너에서 읽기 전용 레포 복제가 git 소유자 검사에 걸림 (결정 112 A1.5, 2026-11-15 02:31)
+- 태그: 컨테이너 권한, git
+- 증상: `docker compose run --rm agent-job python -m agent.run --data S1` 첫 실행이 0초 만에 `git clone ... /opt/project ...` 실패: "detected dubious ownership in repository at '/opt/project/.git'". `agent/run.py`의 `git()`은 이미 `git -c safe.directory=* ...`로 불렀다.
+- 원인: 붙인 레포는 컨테이너 안에서 root 소유로 보이고 실행 사용자는 uid 50000(job)이다. 로컬 경로 clone은 원본 쪽에서 하위 git(upload-pack)을 따로 띄우는데, 명령줄 `-c`도 `GIT_CONFIG_COUNT` 환경 변수 설정도 그 하위 프로세스의 소유자 검사에는 쓰이지 않았다(둘 다 같은 오류로 재현). `git config --global`로 넣으면 통과했다(같은 컨테이너에서 확인). 앞선 worktree 방식(측정 45)은 clone을 하지 않아 `-c`로 충분했다.
+- 처방: `Dockerfile` agent-job에 `git config --system --add safe.directory '*'`. 이 이미지는 읽기 전용 레포와 `/scratch` 복제본만 다룬다. `git()`의 `-c`는 지움.
+- 확인: 다시 빌드 뒤 같은 clone이 main `daa0ac6`를 받음. 첫 실패 실행도 `ops.agent_run`에 error로 남았다(`report.json`과 같은 내용).
+- 상태: **처방함.**
+
+## F-34. 판정이 dbt가 skip한 표를 읽다 오류로 끝남: 기준선(M7)과 후보(S3) (결정 112 A6, 2026-11-15 04:15~05:39)
+- 태그: 판정 코드, dbt skip
+- 증상: (1) M7 수정 3회가 에이전트 수정·후보 빌드까지 끝난 뒤 G3에서 `UndefinedTable: relation "mart_sbx_base.dong_profile" does not exist`로 끝남(rc=1, 판정 없음). (2) S3 판정이 G1에서 `stg_dbt_sbx_cand.batch_status does not exist`로 끝남. 운영 표·상품은 그대로였다(실행마다 `ops_snapshot` 비교).
+- 원인: `dbt build`는 테스트가 실패하면 그 하류 모델을 skip한다. (1) M7 기준선은 전월세 1,320단위가 거절돼 `rent_listing`이 0행이 되고 `rent_listing_not_empty`가 실패해 `dong_profile` 등 하류가 만들어지지 않았다. (2) S3 후보는 단위 테스트 `rent_rows_rules`(산 지번은 대지구분 2)가 실패해 `rent_rows`부터 `batch_status`까지 skip됐다. 판정 코드는 두 쪽 표가 다 있다고 가정했다. S1·M1은 혼잡도 거절이 상품 표를 비우지 않아 드러나지 않았다.
+- 처방(판단 121): `sandbox.diff`는 기준선 상품 표가 없으면 운영 `mart`(고객이 지금 받는 마지막 정상본)와 비교한다. `sandbox.judge`는 후보 빌드에 실패 노드가 있으면 G1만으로 바로 fail을 낸다. `agent/run.py`는 fail이면 평가용 상품 비교를 하지 않는다.
+- 확인: M7 patch 3개를 판정만 다시(판단 120): 3회 모두 needs_decision(G1~G4 통과, G5 전월세 승인 단위 정제 행 187 차이), 정답표와 같다. S3: fail(G1, `rent_rows_rules` 실패). 운영 변화 0.
+- 상태: **처방함.**

@@ -1,16 +1,19 @@
 """SQL 1차 대응 에이전트 (design_agent.md 1, 4절, 결정 108). 한 번 실행 = 신호 하나.
 
 1. heavy 잠금(/scratch 비움) + 지난 실행의 *_sbx_* 스키마 지우기
-2. 기준선: main을 worktree로 받아 데이터(실제 또는 변이)로 격리 빌드하고 신호를 뽑는다. 신호가 없으면 끝(에이전트 안 돎)
-3. 에이전트(Claude Agent SDK)가 브랜치 agent/<라벨> worktree에서 허용된 SQL만 고친다
-4. 후보 빌드 → G1~G5 판정(agent/sandbox.py). 에이전트는 판정에 관여하지 않는다
-5. 보고 JSON을 표준 출력에. 고친 브랜치는 남기고(PR은 A5) 스키마와 worktree는 지운다
+2. 레포(읽기 전용 /opt/project)의 main을 /scratch/agent/<실행>/repo로 복제한다(결정 112). 호스트 .git에는 쓰지 않는다(F-22를 구조로 막음)
+3. 기준선: 복제본 main을 데이터(실제 또는 변이)로 격리 빌드하고 신호를 뽑는다. 신호가 없으면 끝(에이전트 안 돎)
+4. 에이전트(Claude Agent SDK)가 복제본 안 브랜치 agent/<라벨> worktree에서 허용된 SQL만 고친다
+5. 후보 빌드 → G1~G5 판정(agent/sandbox.py). 에이전트는 판정에 관여하지 않는다
+6. 보고 JSON을 표준 출력과 logs/agent/<실행>/report.json에. 고친 브랜치는 같은 폴더에 bundle과 patch로 남긴다
+   (PR은 A5). 스키마는 지우고, 복제본은 잠금이 /scratch를 비울 때 함께 지워진다
 
 python -m agent.run --data S1                      평가: 변이로 신호를 만든다 (docs/agent_answer_key.json)
 python -m agent.run --data real                    실제 데이터에 신호가 있으면 대응
 python -m agent.run --data S1 --cand-branch <b>    에이전트 없이 사람이 고친 브랜치를 판정 (토큰 불필요)
 python -m agent.run --selftest                     편집 경로 검사 시험 (DB, SDK 불필요)
-Airflow 컨테이너에서 돈다(dbt, /scratch, git). 에이전트 실행은 .env의 CLAUDE_CODE_OAUTH_TOKEN(Max 구독, `claude setup-token`)이 필요하다(결정 108 인증).
+계산 컨테이너 seoul-agent-job에서 돈다(결정 112): docker compose run --rm agent-job python -m agent.run --data S1, Airflow는 agent_triage DAG.
+에이전트 실행은 CLAUDE_CODE_OAUTH_TOKEN(Max 구독, `claude setup-token`)이 필요하다(결정 108 인증).
 """
 import argparse
 import asyncio
@@ -39,22 +42,12 @@ SAMPLE_ROWS = 50
 
 
 def git(*args, cwd=ROOT):
-    """컨테이너 안 git은 레포 소유자가 달라 safe.directory가 필요하다."""
-    out = subprocess.run(["git", "-c", "safe.directory=*", *args], cwd=cwd, capture_output=True, text=True)
+    """컨테이너 안 레포(/opt/project)는 소유자가 달라 safe.directory가 필요하다. `-c`나 GIT_CONFIG_COUNT 환경 변수는 clone이
+    띄우는 하위 git(upload-pack)까지 가지 않아(F-33) 이미지의 시스템 설정(Dockerfile agent-job)으로 둔다."""
+    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
     if out.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} 실패: {out.stderr.strip()}")
     return out.stdout
-
-
-def forget_scratch_worktrees():
-    """/scratch 아래를 가리키는 worktree 기록만 지운다. `git worktree prune`은 쓰지 않는다: 컨테이너는 호스트 경로의
-    worktree(C:/.../new_proj_ui)를 못 보므로 prune이 그 기록까지 지운다(F-22, 2026-11-14 실제로 일어남)."""
-    import shutil
-    admin = ROOT / ".git" / "worktrees"
-    for d in admin.glob("*") if admin.exists() else []:
-        gitdir = d / "gitdir"
-        if gitdir.exists() and gitdir.read_text(encoding="utf-8").strip().startswith(SCRATCH + "/"):
-            shutil.rmtree(d)
 
 
 def editable(root, path):
@@ -95,8 +88,9 @@ SYSTEM = """너는 서울 동네 찾기 데이터 파이프라인의 SQL 1차 �
 """
 
 
-async def fix(wt, signal, base):
-    """에이전트 한 번. 돌려주는 것: 마지막 JSON, 비용, 턴, 거절된 도구 호출."""
+async def fix(wt, signal, base, diagnose=False):
+    """에이전트 한 번. 돌려주는 것: 마지막 JSON, 비용, 턴, 거절된 도구 호출.
+    diagnose: 진단만(A3). Edit 도구를 주지 않고 원인과 영향만 보고하게 한다."""
     from claude_agent_sdk import (ClaudeAgentOptions, ClaudeSDKClient, HookMatcher, ResultMessage,
                                   create_sdk_mcp_server, tool)
     if found := [k for k in BILLED if os.environ.get(k)]:
@@ -148,13 +142,16 @@ async def fix(wt, signal, base):
         model=MODEL, cwd=str(wt), max_turns=MAX_TURNS, system_prompt=SYSTEM + rules_text(),
         env={"CLAUDE_CODE_OAUTH_TOKEN": read_env("CLAUDE_CODE_OAUTH_TOKEN")},  # Max 구독 한도에서 차감(결정 108)
         mcp_servers={"pipe": pipe, "lineage": lineage},
-        allowed_tools=["Read", "Grep", "Glob", "Edit", "mcp__pipe__raw_sample", "mcp__pipe__quarantine_sample",
-                       "mcp__lineage__downstream", "mcp__lineage__upstream", "mcp__lineage__find_columns"],
-        disallowed_tools=["Bash", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent"],
+        allowed_tools=["Read", "Grep", "Glob", *([] if diagnose else ["Edit"]), "mcp__pipe__raw_sample",
+                       "mcp__pipe__quarantine_sample", "mcp__lineage__downstream", "mcp__lineage__upstream",
+                       "mcp__lineage__find_columns"],
+        disallowed_tools=["Bash", "Write", "MultiEdit", "NotebookEdit", "WebFetch", "WebSearch", "Task", "Agent",
+                          *(["Edit"] if diagnose else [])],
         hooks={"PreToolUse": [HookMatcher(matcher="Edit|Write|MultiEdit|NotebookEdit", hooks=[guard_edit]),
                               HookMatcher(matcher="Read|Grep|Glob", hooks=[guard_read])]})
-    prompt = ("신호(파이프라인이 기준선 빌드에서 뽑음):\n" + json.dumps(signal, ensure_ascii=False, indent=1)
-              + "\n\n원인을 찾고, 필요하면 SQL을 고쳐라.")
+    ask = ("원인과 영향 범위만 보고하라. 이번에는 파일을 고치지 않는다(진단만). JSON의 fixed는 false로 둔다." if diagnose
+           else "원인을 찾고, 필요하면 SQL을 고쳐라.")
+    prompt = "신호(파이프라인이 기준선 빌드에서 뽑음):\n" + json.dumps(signal, ensure_ascii=False, indent=1) + "\n\n" + ask
     result = None
     async with ClaudeSDKClient(options=options) as client:
         await client.query(prompt)
@@ -177,43 +174,110 @@ def shorten(signal):
     return s
 
 
+def sources_of(files):
+    """후보가 고친 파일에서 출처를 고른다(신호 없는 판정 사례 S3용). congestion_rows.sql -> congestion."""
+    return sorted({s for s in sandbox.SOURCES for f in files if f.rsplit("/", 1)[-1].startswith(s)})
+
+
+def pr_text(report):
+    """PR 본문(design_agent.md 6절): 신호, 원인, diff, G1~G5 표, 예측과 실제 영향, 시간과 턴. 원본 표본은 넣지 않는다."""
+    agent, gates = report.get("agent") or {}, report.get("gates") or {}
+    rows = "\n".join(f"| {g} | {'통과' if v.get('ok') else '실패'} | {json.dumps({k: x for k, x in v.items() if k != 'ok'}, ensure_ascii=False)[:300]} |"
+                     for g, v in gates.items())
+    answer = agent.get("answer") or {}
+    return (f"## 에이전트 수정안: {report['data']} ({report['verdict']})\n\n"
+            f"- 신호: {json.dumps(report.get('signal'), ensure_ascii=False)[:800]}\n"
+            f"- 원인(에이전트): {answer.get('cause')}\n- 기준 main: {report.get('main')}\n"
+            f"- 에이전트 턴 {agent.get('turns')}, 걸린 시간 {report.get('sec')}초\n\n"
+            f"### 판정 G1~G5 (파이프라인 코드가 냄)\n\n| 게이트 | 결과 | 내용 |\n|---|---|---|\n{rows}\n\n"
+            f"### 영향\n- 에이전트 예측: {answer.get('impact')}\n- 실제 바뀐 상품 컬럼: {gates.get('G3', {}).get('changed')}\n\n"
+            f"### diff\n```\n{report.get('diff', '')}\n```\n")
+
+
+def publish(report, out):
+    """A5. 준비물(GITHUB_TOKEN, SLACK_WEBHOOK_URL)이 없으면 만들 PR 본문과 Slack 페이로드를 파일로만 남긴다(dry-run).
+    ponytail: 실제 PR·Slack 경로는 준비물이 생기면 붙인다. 지금은 보낼 내용이 맞는지까지만 시험한다."""
+    verdict = report.get("verdict")
+    body = pr_text(report)
+    labels = {"pass": [], "needs_decision": ["needs-decision"], "fail": []}.get(verdict, [])
+    pr = {"title": f"[에이전트] {report['data']}: {verdict}", "head": report.get("branch"), "base": "main",
+          "draft": verdict == "fail", "labels": labels, "body": body}
+    slack = {"text": f"[에이전트] {report['data']} 신호 {','.join((report.get('signal') or {}).get('sources', []))}: "
+                     f"판정 {verdict}. PR: (dry-run, {out.relative_to(ROOT)}/pr.json)"}
+    (out / "pr.json").write_text(json.dumps(pr, ensure_ascii=False, indent=1), encoding="utf-8")
+    (out / "slack.json").write_text(json.dumps(slack, ensure_ascii=False), encoding="utf-8")
+    ready = [k for k in ("GITHUB_TOKEN", "SLACK_WEBHOOK_URL") if os.environ.get(k)]
+    return {"mode": "dry_run" if len(ready) < 2 else "ready_not_sent", "files": ["pr.json", "slack.json"], "have": ready}
+
+
+def record_run(conn, run_id, a, mode, report, started, sec):
+    agent = report.get("agent") or {}
+    conn.execute("INSERT INTO ops.agent_run (run_id, signal_id, data, mode, main_commit, verdict, sec, turns, cost_usd, report, "
+                 "started_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (run_id) DO UPDATE SET "
+                 "verdict = EXCLUDED.verdict, sec = EXCLUDED.sec, report = EXCLUDED.report",
+                 [run_id, a.signal_id, a.data, mode, report.get("main"), report.get("verdict") or ("error" if "error" in report else None),
+                  sec, agent.get("turns"), agent.get("cost_usd"), json.dumps(report, ensure_ascii=False, default=str), started])
+    if a.signal_id:  # agent_triage가 running으로 바꿔 둔 신호를 끝낸다
+        conn.execute("UPDATE ops.agent_signal SET status = %s, handled_at = now() WHERE signal_id = %s",
+                     ["failed" if "error" in report else "done", a.signal_id])
+
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--data", default="real")
-    p.add_argument("--cand-branch", help="에이전트 대신 이 브랜치를 후보로 판정")
+    p.add_argument("--cand-branch", help="에이전트 대신 레포의 이 브랜치를 후보로 판정")
+    p.add_argument("--cand-patch", help="에이전트 대신 이 patch(레포 기준 경로)를 main에 얹어 후보로 판정. 예: agent/s3_rule.patch")
+    p.add_argument("--diagnose", action="store_true", help="진단만(A3): 에이전트에 Edit를 주지 않고 원인·영향만 받는다")
+    p.add_argument("--signal-id", type=int, help="ops.agent_signal의 신호(agent_triage DAG가 넘김)")
     p.add_argument("--selftest", action="store_true")
     a = p.parse_args()
     if a.selftest:
         return selftest()
-    stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
+    started = datetime.datetime.now(datetime.timezone.utc)
+    stamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    mode = "judge" if (a.cand_branch or a.cand_patch) else "diagnose" if a.diagnose else "fix"
     branch = f"agent/{a.data.lower()}-{stamp}"
-    work = Path(SCRATCH) / "agent"
-    base_wt, cand_wt = work / "base", work / "cand"
-    report = {"data": a.data, "started": stamp}
-    lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때 풀리고 /scratch를 비운다
-    forget_scratch_worktrees()
+    work = Path(SCRATCH) / "agent" / stamp
+    base_wt, cand_wt = work / "repo", work / "cand"  # 기준선은 복제본 자체(main), 후보는 복제본 안 worktree
+    run_id = f"{stamp}_{a.data.lower()}_{mode}"
+    out = ROOT / "logs" / "agent" / run_id  # 레포 logs/agent만 쓰기로 붙어 있다(git 제외)
+    report = {"data": a.data, "mode": mode, "started": stamp}
+    try:
+        lock = heavy_lock()  # noqa: F841  프로세스가 끝날 때 풀리고 /scratch를 비운다(복제본도 함께)
+    except SystemExit:  # 다른 무거운 작업 중: 신호를 new로 되돌려 agent_triage가 다음 주기에 다시 본다
+        if a.signal_id:
+            with psycopg.connect(read_env("DATABASE_URL"), autocommit=True) as conn:
+                conn.execute("UPDATE ops.agent_signal SET status = 'new' WHERE signal_id = %s", [a.signal_id])
+        raise
     with psycopg.connect(read_env("DATABASE_URL"), autocommit=True) as conn:
         sandbox.drop(conn)
         changes = sandbox.data_changes(a.data)
         params = sandbox.mutation_params(conn) if "%(station)s" in json.dumps(changes) else None
         try:
-            git("worktree", "add", "--detach", str(base_wt), "main")
+            git("clone", "-q", "--no-hardlinks", "--branch", "main", str(ROOT), str(base_wt), cwd="/")
+            report["main"] = git("rev-parse", "--short", "HEAD", cwd=base_wt).strip()
             built = sandbox.build(conn, base_wt, "base", changes, params)
             signal = sandbox.signal_from(conn, "base", built)
             report["signal"] = signal
-            if signal is None:
+            if signal is None and mode != "judge":  # 신호 없음: 에이전트를 돌리지 않는다(대조군)
                 report["verdict"] = "no_run"
                 return
             if a.cand_branch:
-                git("worktree", "add", "--detach", str(cand_wt), a.cand_branch)
+                git("worktree", "add", "--detach", str(cand_wt), f"origin/{a.cand_branch}", cwd=base_wt)
+            elif a.cand_patch:
+                git("worktree", "add", "--detach", str(cand_wt), "main", cwd=base_wt)
+                git("apply", str(ROOT / a.cand_patch), cwd=cand_wt)
             else:
-                git("worktree", "add", "-B", branch, str(cand_wt), "main")
-                agent = asyncio.run(asyncio.wait_for(fix(cand_wt, shorten(signal), "base"), TIME_LIMIT))
+                git("worktree", "add", "-B", branch, str(cand_wt), "main", cwd=base_wt)
+                agent = asyncio.run(asyncio.wait_for(fix(cand_wt, shorten(signal), "base", a.diagnose), TIME_LIMIT))
                 report["agent"] = agent
                 changed = [l[3:] for l in git("status", "--porcelain", cwd=cand_wt).splitlines()]
                 outside = [f for f in changed if not editable(cand_wt, cand_wt / f)]
-                if outside:  # 훅을 지나 바뀐 파일이 있으면 판정하지 않는다
+                if outside:  # 훅을 지나 바뀐 파일이 있으면 판정하지 않는다(안전장치 실패, 지시서 3절)
                     raise SystemExit(f"허용 밖 파일이 바뀌었습니다: {outside}")
+                if a.diagnose:
+                    report["verdict"] = "diagnosed" if not changed else "error"
+                    return
                 if not changed:
                     report["verdict"] = "no_fix"
                     return
@@ -222,23 +286,33 @@ def main():
                     f"에이전트 수정안: {a.data}\n\n원인: {agent['answer'].get('cause')}", cwd=cand_wt)
                 report["branch"] = branch
                 report["diff"] = git("diff", "main", "--stat", cwd=cand_wt)
+                out.mkdir(parents=True, exist_ok=True)  # 사람에게 넘기는 길(A5 준비물이 없을 때): bundle과 patch
+                git("bundle", "create", "-q", str(out / "branch.bundle"), branch, "^main", cwd=cand_wt)
+                (out / "branch.patch").write_text(git("format-patch", "main", "--stdout", cwd=cand_wt), encoding="utf-8")
+                report["handoff"] = [str((out / f).relative_to(ROOT)) for f in ("branch.bundle", "branch.patch")]
+            files = [l[3:] for l in git("status", "--porcelain", cwd=cand_wt).splitlines()] or \
+                git("diff", "--name-only", "main", cwd=cand_wt).split()
+            if signal is None:  # 신호 없는 판정 사례(S3): 후보가 고친 파일의 출처로 G1~G5를 본다
+                signal = {"sources": sources_of(files), "rejected": {}, "failed_nodes": [], "note": "신호 없음, 후보 파일에서 출처를 고름"}
             cand_built = sandbox.build(conn, cand_wt, "cand", changes, params)
             contract = json.loads((base_wt / "docs" / "product_contract.json").read_text(encoding="utf-8"))
             report["verdict"], report["gates"] = sandbox.judge(conn, "base", "cand", signal, cand_built, contract)
-            if a.data != "real":  # 평가 전용(정답표 product_equals_m0): 운영 mart는 같은 main 코드 + 변이 없는 데이터 = M0
+            if a.data != "real" and report["verdict"] != "fail":  # fail이면 후보 상품 표가 없을 수 있다. 평가 전용(정답표 product_equals_m0): 운영 mart는 같은 main 코드 + 변이 없는 데이터 = M0
                 report["product_vs_operational"] = sandbox.diff(conn, "mart", "mart_sbx_cand")
+            out.mkdir(parents=True, exist_ok=True)
+            report["sec"] = round((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds(), 1)
+            report["publish"] = publish(report, out)
         except BaseException as e:  # 실패해도 그때까지의 보고(신호, 에이전트 답)를 남긴다. 예외는 다시 올린다(설계 원칙 4)
             report["error"] = f"{type(e).__name__}: {e}"
             raise
         finally:
-            print(json.dumps(report, ensure_ascii=False, indent=1, default=str))
+            report["sec"] = round((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds(), 1)
+            text = json.dumps(report, ensure_ascii=False, indent=1, default=str)
+            print(text)
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "report.json").write_text(text, encoding="utf-8")
             sandbox.drop(conn)
-            for wt in (base_wt, cand_wt):
-                if wt.exists():
-                    git("worktree", "remove", "--force", str(wt))
-            forget_scratch_worktrees()
-            if not a.cand_branch and "branch" not in report and branch in git("branch", "--list", branch):
-                git("branch", "-D", branch)  # 커밋이 없는 빈 브랜치. worktree를 지운 뒤라야 지워진다
+            record_run(conn, run_id, a, mode, report, started, report["sec"])
 
 
 def selftest():
@@ -253,6 +327,9 @@ def selftest():
     assert inside(root, f"{root}/docs/x.md") and not inside(root, "/opt/project/.env")
     assert inside(root, "warehouse") and not inside(root, "../.env") and editable(root, "warehouse/dbt/macros/congestion_keys.sql")
     assert re.search(r"^## 4\.", rules_text(), re.M) and re.search(r"^## 7\.", rules_text(), re.M)
+    assert sources_of(["warehouse/dbt/models/stg_dbt/rent_rows.sql", "warehouse/dbt/macros/congestion_keys.sql"]) == ["congestion", "rent"]
+    body = pr_text({"data": "S1", "verdict": "pass", "signal": {"sources": ["congestion"]}, "gates": {"G1": {"ok": True}, "G5": {"ok": False, "changed_rows": {"rent": 3}}}})
+    assert "| G1 | 통과 |" in body and "| G5 | 실패 |" in body and "원본" not in body.split("###")[0]
     print("selftest 통과")
 
 

@@ -28,6 +28,9 @@ flowchart LR
     AF -.-> P
     AF -->|DockerOperator| JOB[[계산 컨테이너<br>seoul-spark-job / seoul-duckdb-job<br>작업마다 하나, 18GiB]]
     JOB -.-> I
+    AF -->|agent_triage, 신호가 있을 때| AG[[SQL 에이전트 컨테이너<br>seoul-agent-job<br>레포 읽기 전용 + /scratch 복제본]]
+    AG -.->|격리 스키마 *_sbx_*에서만 빌드| S
+    AG -.->|수정안 bundle·patch, PR 본문| H[사람 검토]
 ```
 
 | 층 | 무엇 | 어디 |
@@ -41,6 +44,7 @@ flowchart LR
 | 운영 대시보드 | 지금 정상인지, 어느 출처와 DAG를 고칠지 색으로 판정. 읽기 전용 계정으로 봄 | Metabase, 카드 `warehouse/sql/ops/`, 생성 `warehouse/metabase_setup.py` (결정 38, 39) |
 | 파이프라인 UI | 파이프라인 구조, 실행·관문·품질, 컬럼 리니지 지도, 변경 시나리오를 DB와 Airflow API에서 읽어 보여 주는 읽기 전용 화면 | `ui/`, [docs/ui.md](docs/ui.md) (결정 106) |
 | 일정 | 출처별 DAG, 손으로 받는 파일은 센서로 기다림, 스테이징이 바뀌면 웨어하우스 → 마트 → 데이터 상품까지 자동으로 다시 만듦 | `dags/` |
+| SQL 에이전트 | 관문 거절·dbt 실패가 신호(`ops.agent_signal`)로 남으면, 에이전트가 자기 컨테이너에서 레포 복제본의 정제 SQL만 고치고, 파이프라인 코드가 격리 스키마에서 G1~G5로 판정한다. 운영 스키마와 호스트 `.git`은 바꾸지 않고, 병합은 사람이 한다 | `agent/`, `dags/agent_triage.py`, [docs/design_agent.md](docs/design_agent.md) (결정 108, 112) |
 | 실행 구조 | Airflow는 구성 요소별 컨테이너(API 서버, 스케줄러, DAG 처리기, 트리거러)로 지휘만 하고, Spark 계산은 작업마다 따로 뜨는 계산 컨테이너에서 돈다. 계산이 메모리를 넘쳐도 그 컨테이너만 끝나고 스케줄러는 산다(측정 48). 무거운 작업은 PostgreSQL advisory lock으로 컨테이너를 넘어 한 번에 하나 | `docker-compose.yml`, `dags/jobs.py`, `common.heavy_lock` (결정 109) |
 
 ## 데이터 소스
@@ -99,7 +103,7 @@ HOST_PROJECT_DIR=C:/Users/me/new_proj
 ```
 ```
 docker compose build
-docker compose --profile jobs build spark-job duckdb-job
+docker compose --profile jobs build spark-job duckdb-job agent-job
 docker compose up -d
 ```
 Airflow는 구성 요소별 컨테이너로 뜬다(결정 109): `airflow-init`(DB 준비 후 끝남), `airflow-apiserver`(화면·API), `airflow-scheduler`, `airflow-dag-processor`, `airflow-triggerer`, 그리고 계산 컨테이너를 만들 때만 쓰는 `socket-proxy`. Spark와 DuckDB는 Airflow 안에서 돌지 않고, 작업마다 `seoul-spark-job`·`seoul-duckdb-job` 컨테이너가 따로 뜬다(DAG는 DockerOperator, 손으로는 `docker compose run --rm spark-job ...`).
@@ -108,10 +112,17 @@ http://localhost:8080 (개발용, 로그인 없음, 내 PC에서만 열림). DAG
 ```
 docker compose exec airflow-scheduler airflow pools set heavy 1 "무거운 작업 한 번에 하나"
 ```
-Airflow 이미지에는 dbt(`/opt/airflow/dbt-venv`)가, `seoul-spark-job` 이미지에는 Spark 3.5.9 + Iceberg 1.12.0(Java 17)이, `seoul-duckdb-job` 이미지에는 DuckDB 2.0.0이 들어 있다. Iceberg 연결 확인:
+Airflow 이미지에는 dbt(`/opt/airflow/dbt-venv`)가, `seoul-spark-job` 이미지에는 Spark 3.5.9 + Iceberg 1.12.0(Java 17)이, `seoul-duckdb-job` 이미지에는 DuckDB 2.0.0이, `seoul-agent-job` 이미지에는 Claude Agent SDK 0.2.182와 같은 버전의 dbt, git이 들어 있다. Iceberg 연결 확인:
 ```
 docker compose run --rm spark-job python -m common lock -- python -m transform.iceberg --selftest
 ```
+SQL 에이전트(선택, 결정 108, 112): `.env`에 Max 구독 토큰(`claude setup-token`으로 만든 `CLAUDE_CODE_OAUTH_TOKEN`)과 리니지 읽기 계정 비밀번호(`LINEAGE_READER_PASSWORD`)가 있어야 돈다. `ANTHROPIC_API_KEY`가 환경에 있으면 API 과금이 되므로 에이전트가 멈춘다. 변이 사례로 평가하거나(`--data S1`, 정답표 `docs/agent_answer_key.json`), 사람이 고친 patch를 판정만 한다:
+```
+docker compose run --rm agent-job python -m agent.run --data S1
+docker compose run --rm agent-job python -m agent.run --data S1 --diagnose
+docker compose run --rm agent-job python -m agent.run --data S3 --cand-patch agent/s3_rule.patch
+```
+결과는 `logs\agent\<실행>\report.json`(G1~G5), 고친 브랜치는 같은 폴더의 `branch.bundle`·`branch.patch`, 보낼 PR 본문과 Slack 메시지는 `pr.json`·`slack.json`(GitHub 토큰·Slack 주소가 없으면 파일로만). Airflow에서는 `agent_triage` DAG(30분마다, 처음엔 일시정지)가 `ops.agent_signal`의 새 신호 하나를 집어 같은 컨테이너를 부른다.
 
 DB를 화면에서 보며 SQL을 던지려면 http://localhost:5050 (pgAdmin, 개발용, 로그인 없음, 내 PC에서만 열림). 왼쪽 `Servers → seoul (PostGIS)`를 누르고 `.env`의 `POSTGRES_PASSWORD`를 한 번 입력한다. 쿼리는 `Tools → Query Tool`. 도형 칸(geom, point)은 결과 표의 지도 아이콘으로 지도에 그려 볼 수 있다.
 
@@ -164,6 +175,8 @@ docker compose run --rm spark-job python -m tests.check_scratch
 docker compose run --rm duckdb-job python -m tests.check_scratch
 docker compose run --rm spark-job python -m tests.check_living_conflict
 python -X utf8 tests\check_heavy_lock.py
+docker compose run --rm agent-job python -m agent.run --selftest
+docker compose run --rm agent-job python -m tests.check_agent_signal
 docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 ```
 `tests\test_*.py`는 DB 없이 돌아 CI(`.github/workflows/ci.yml`)도 같은 것을 돌린다. DB가 필요한 확인은 `tests\check_*.py`다(CI 밖). `demo.sql` 맨 위 `params`(직장 행정동, 예산, 면적, 출퇴근 한도)를 바꿔 가며 결과를 본다.
@@ -185,7 +198,7 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 이동 시간은 생활이동의 평균 이동 시간이라 가까운 동네일수록 길게 나온다(근거리 직행 제외, 경유 포함). 그래서 직선거리를 함께 쓴다([결정 23](docs/decisions.md), [데이터 계약 6절](docs/data_contract.md)).
 
 ## 주장과 증거
-이 파이프라인이 지킨다고 말하는 다섯 가지와, 그것을 실제로 돌려 확인한 방법이다. 강도와 한계는 [docs/guarantees.md](docs/guarantees.md), 수치의 조건은 [docs/measurements.md](docs/measurements.md)에 있다. 명령은 레포 루트에서 실행한다.
+이 파이프라인이 지킨다고 말하는 여섯 가지와, 그것을 실제로 돌려 확인한 방법이다. 강도와 한계는 [docs/guarantees.md](docs/guarantees.md), 수치의 조건은 [docs/measurements.md](docs/measurements.md)에 있다. 명령은 레포 루트에서 실행한다.
 
 | 주장 | 증명 방법 | 수치 | 다시 돌리는 명령 |
 |---|---|---|---|
@@ -194,6 +207,7 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | 다시 돌려도 같다 | 같은 입력을 다시 처리하고 결과 비교 | 같은 생활이동 zip을 Airflow DAG로 다시 넣어 세 표 차이 0, 상품 파일 8개 sha256 같음(측정 42). Iceberg 같은 파티션 두 번 덮어쓰기 차이 0(측정 9). 전월세 처리 단위 백필 6회(측정 6) | 레이크의 zip을 `lake\_inbox\living_migration\`에 다시 넣고 Airflow에서 `file_living_migration` 실행 뒤 위 비교. 처리 단위 하나는 Airflow 화면에서 Clear |
 | 전부 되거나 전부 안 된다 | 교체 도중 실패를 일부러 넣는다 | 스키마 교체: 둘째 스키마 실패 → 첫째도 취소(결정 32), 실제 wh_load에서도 1회(결정 61). 실행기 교체: 첫 표를 0행으로 두면 둘째 표도 이전 그대로(F-13). 실제 실행에서 세 표 교체가 한 트랜잭션 448.6초(측정 42) | `docker compose run --rm spark-job python -m tests.check_runner_swap` |
 | 실패는 드러난다 | 나쁜 입력과 자원 고갈을 일부러 만든다 | 쓰는 키 이름 변경 → 관문 거절(측정 23, 30). 한 배치의 9.95%를 깨뜨림 → 그 배치만 거절, 다른 출처는 갱신(측정 25). 메모리 초과 → 그 계산 컨테이너만 종료 코드 137, 스케줄러 하트비트 간격 최대 6.4초(평소 약 5초), 같이 돈 DAG·dbt 성공(3회, 측정 48). 실제 DuckDB 측정이 컨테이너 상한에 닿았을 때도 Airflow는 그대로(측정 50). 임시 공간 상한 → DuckDB가 오류로 끝나고 VM은 멈추지 않음(측정 39, 48). 계산 중 스케줄러를 `docker kill`: 처방 전에는 같은 작업이 두 번 돎(F-32), 처방(시작 때 주인 없는 계산 컨테이너 멈춤) 뒤 한 시도만 끝까지(1회, guarantees 2.9) | `python -X utf8 -u -m measure.induce_guard mem 3`<br>`python -X utf8 -u -m measure.induce_guard disk` |
+| SQL 에이전트는 운영을 바꾸지 않고, 해석 변경을 통과시키지 않는다 | 정답을 먼저 정한 사례(원천 변경 S1·M1·M7, 대조군 4, 사람이 고친 규칙 S3)로 에이전트를 돌리고, 실행마다 운영 표 49개 행 수·상품 sha256을 앞뒤로 비교 | 거짓 통과 0, 원인 적중 12/12, 판정 일치 16/17(S3는 단위 테스트가 먼저 잡아 fail). 해석이 바뀌는 수정은 G5가 needs_decision으로 멈춤(M7 3/3, S3b). 24번 실행(A4 DAG 포함) 모두 운영 변화 0, 에이전트 컨테이너 최대 0.29GiB(측정 53, 54) | `docker compose run --rm --no-deps agent-job python -m agent.run --data M1`<br>`python measure/ops_snapshot.py --compare <앞 스냅숏>` |
 
 한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42). 계산을 작업 컨테이너로 뺀 뒤 1회째는 11.3% 느렸고(측정 46) 2회째는 18.3% 빨라(측정 52), 같은 일인데 세 실행이 36% 벌어져 분리가 속도에 주는 영향은 말할 수 없다. 같은 SQL을 DuckDB로 돌리면 배치마다 새 프로세스로 16GiB 안에서 658.8초에 끝나 Spark(1,971~2,419초)보다 약 3.0~3.7배 빠르다(측정 51, 1회).
 

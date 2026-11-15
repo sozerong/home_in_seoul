@@ -78,3 +78,40 @@ def spark_job(task_id, command, **kw):
         pool="heavy",  # 한 번에 하나(L5). 실행 안에서는 heavy 잠금(common.heavy_lock)도 잡는다
         **kw,
     )
+
+
+AGENT_MEM = "512m"  # docker-compose.yml agent-job과 같은 값(결정 112). A1.5 실측 최대 0.28GiB x 1.5, 256MiB 단위 올림
+
+
+def agent_job(task_id, command, **kw):
+    """SQL 에이전트 컨테이너(seoul-agent-job, 결정 112). 레포는 읽기 전용, 작업은 /scratch 안 복제본, 결과는 logs/agent/에.
+    비밀(Max 구독 토큰, 리니지 읽기 비밀번호)은 private_environment로만 넘긴다. GitHub 토큰·Slack 주소는 있을 때만(A5)."""
+    import sys
+    sys.path.insert(0, "/opt/project")  # DAG 폴더 밖 레포 모듈(common). .env는 /opt/project에 있다
+    from common import read_env
+    secrets = {k: read_env(k) for k in ("DATABASE_URL", "POSTGRES_PASSWORD", "CLAUDE_CODE_OAUTH_TOKEN", "LINEAGE_READER_PASSWORD")}
+    for k in ("GITHUB_TOKEN", "SLACK_WEBHOOK_URL"):
+        try:
+            secrets[k] = read_env(k)
+        except SystemExit:  # 준비물이 없으면 넘기지 않는다(A5 dry-run)
+            pass
+    return JobOperator(
+        task_id=task_id,
+        image="seoul-agent-job:0.2.182",
+        command=["bash", "-c", "set -euo pipefail; (while sleep 60; do echo \"[alive] $(date +%T)\"; done) & HB=$!; "
+                               "trap 'kill $HB' EXIT; " + command],  # 1분 heartbeat: F-29(위 spark_job 주석)
+        docker_url="tcp://socket-proxy:2375",
+        mounts=[Mount("/opt/project", HOST, type="bind", read_only=True),
+                Mount("/opt/project/logs/agent", f"{HOST}/logs/agent", type="bind"),
+                Mount("/scratch", "new_proj_scratch", type="volume")],
+        network_mode="new_proj_default",
+        mount_tmp_dir=False,
+        auto_remove="never",
+        working_dir="/opt/project",
+        environment={"TZ": "Asia/Seoul", "PYTHONDONTWRITEBYTECODE": "1"},
+        private_environment=secrets,
+        mem_limit=AGENT_MEM,
+        cpus=4,
+        pool="heavy",  # 격리 빌드가 dbt 전체 빌드라 heavy(L5). 실행 안에서 heavy 잠금도 잡는다
+        **kw,
+    )

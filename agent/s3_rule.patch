@@ -1,0 +1,22 @@
+diff --git a/warehouse/dbt/models/stg_dbt/rent_rows.sql b/warehouse/dbt/models/stg_dbt/rent_rows.sql
+index eeab722..b7afbb9 100644
+--- a/warehouse/dbt/models/stg_dbt/rent_rows.sql
++++ b/warehouse/dbt/models/stg_dbt/rent_rows.sql
+@@ -38,7 +38,7 @@ n as materialized (  -- C3, C4, C5: 숫자로 읽기. 읽지 못하면 null
+            {{ rent_int('deal_year_t') }} as y,
+            {{ rent_int('deal_month_t') }} as m,
+            {{ rent_int('deal_day_t') }} as d,
+-           regexp_match(v.jibun, '^(산)?([0-9]+)(?:-([0-9]+))?$') as jibun_m  -- V9: [산]본번 또는 [산]본번-부번
++           case when v.jibun like '산%' then null else regexp_match(v.jibun, '^(산)?([0-9]+)(?:-([0-9]+))?$') end as jibun_m  -- V9: [산]본번 또는 [산]본번-부번
+     from v
+ ),
+ c as (
+@@ -56,7 +56,7 @@ c as (
+ select c.source_type, c.collected_date, c.source_file, c.item_no, c.deal_ymd, c.sgg_cd, c.raw,
+        c.umd_nm, c.bjd_cd, c.jibun,
+        case when c.jibun_m is not null and c.bjd_cd is not null  -- C6: 법정동코드 + 대지구분(산이면 2) + 본번 4 + 부번 4
+-            then c.bjd_cd || case when c.jibun_m[1] is null then '1' else '2' end
++            then c.bjd_cd || '1'
+                  || {{ zfill4('c.jibun_m[2]') }} || {{ zfill4("coalesce(c.jibun_m[3], '0')") }}
+        end as pnu,
+        c.building_name, c.house_type, c.build_year, c.floor, c.excl_area, c.deal_date, c.deposit, c.monthly_rent,

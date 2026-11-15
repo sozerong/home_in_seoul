@@ -7,7 +7,7 @@
 
 변이 시험(measure/lineage_mutation.py)도 여기의 뷰 만들기와 비교(diff, predicted)를 쓴다(D4).
 실행은 agent/run.py가 한다. 이 파일만으로 사람이 고친 브랜치를 판정하려면:
-    python -m agent.run --cand-branch <브랜치> [--data S1]   (Airflow 컨테이너)
+    python -m agent.run --cand-branch <브랜치> [--data S1]   (agent-job 컨테이너, 결정 112)
 """
 import json
 import subprocess
@@ -18,7 +18,7 @@ import yaml
 from common import ROOT
 from lineage.product import product_tables
 
-DBT = "/opt/airflow/dbt-venv/bin/dbt"
+DBT = "/opt/dbt-venv/bin/dbt"  # seoul-agent-job 이미지(결정 112). 버전은 Airflow 이미지의 dbt-venv와 같다
 KEYS = {"dong_profile": ["dong_id"], "commute_od": ["origin_dong_id", "dest_dong_id"],
         "dong_mois_map": ["mois_dong_cd"], "rent_listing": []}  # rent_listing은 거래 고유 키가 없다
 # 출처마다: 원본 표, 정제 표, 격리 표, batch_status.batch_key와 같은 식 (batch_status_*.sql, rent_batch_key 매크로)
@@ -94,18 +94,21 @@ def diff(conn, left, right):
     result = {}
     for table in product_tables():
         key = KEYS[table]
-        rows = [conn.execute(f"SELECT count(*) FROM {s}.{table}").fetchone()[0] for s in (left, right)]
+        # 기준선 빌드에서 상류 테스트가 실패하면 dbt가 상품 모델을 skip해 표가 없다(M7, F-34).
+        # 그때는 고객이 지금 받는 운영 상품(mart)과 비교한다. ponytail: 운영 mart가 마지막 정상본이라는 가정
+        left_t = left if conn.execute("SELECT to_regclass(%s)", [f"{left}.{table}"]).fetchone()[0] else "mart"
+        rows = [conn.execute(f"SELECT count(*) FROM {s}.{table}").fetchone()[0] for s in (left_t, right)]
         changed = []
         for c in columns(conn, right, table):
             if c in key:
                 continue
             pick = ", ".join(key + [c])
-            n = conn.execute(f"SELECT count(*) FROM ((SELECT {pick} FROM {left}.{table} EXCEPT ALL "
+            n = conn.execute(f"SELECT count(*) FROM ((SELECT {pick} FROM {left_t}.{table} EXCEPT ALL "
                              f"SELECT {pick} FROM {right}.{table}) UNION ALL (SELECT {pick} FROM {right}.{table} "
-                             f"EXCEPT ALL SELECT {pick} FROM {left}.{table})) d").fetchone()[0]
+                             f"EXCEPT ALL SELECT {pick} FROM {left_t}.{table})) d").fetchone()[0]
             if n:
                 changed.append(c)
-        result[table] = {"rows": rows, "changed": changed}
+        result[table] = {"rows": rows, "changed": changed} | ({"left": left_t} if left_t != left else {})
     return result
 
 
@@ -178,10 +181,11 @@ def judge(conn, base, cand, signal, cand_built, contract):
     srcs = signal["sources"]
     g = {}
     # G1 실패가 풀렸나: 후보 빌드에 실패 노드 0, 신호 출처의 배치가 모두 승인
+    if cand_built["failed"]:  # 실패 노드가 있으면 하류 표가 skip돼 없을 수 있다(S3, F-34). G1만으로 fail이다
+        return "fail", {"G1": {"ok": False, "failed_nodes": cand_built["failed"][:20], "rejected_batches": None}}
     left = conn.execute(f"SELECT count(*) FROM stg_dbt_sbx_{cand}.batch_status WHERE source = ANY(%s) AND NOT approved",
                         [srcs]).fetchone()[0]
-    bad = [f for f in cand_built["failed"]]
-    g["G1"] = {"ok": not bad and left == 0, "failed_nodes": bad[:20], "rejected_batches": left}
+    g["G1"] = {"ok": left == 0, "failed_nodes": [], "rejected_batches": left}
     # G2 다른 곳은 그대로인가: 신호 출처의 지도 하류가 아닌 표는 기준선과 같아야 한다
     down = {r[0] for r in conn.execute("SELECT DISTINCT to_table FROM lineage.downstream WHERE from_table = ANY(%s)",
                                        [[SOURCES[s][0] for s in srcs]])}
