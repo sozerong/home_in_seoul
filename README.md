@@ -12,6 +12,10 @@
 
 ## 구조
 
+![아키텍처: 원천 7종, Docker Compose 안의 Airflow 지휘 컨테이너와 작업별 계산 컨테이너(spark-job, duckdb-job, agent-job), 저장소, 외부 연동](docs/img/architecture.png)
+
+컨테이너 구성과 메모리 상한(위 그림)이다. 데이터가 층을 지나는 흐름은 아래와 같다.
+
 ```mermaid
 flowchart LR
     subgraph 수집
