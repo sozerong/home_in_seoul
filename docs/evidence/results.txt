@@ -1,0 +1,98 @@
+[PostgreSQL 16.15, 2026-11-21, Claude 작업 공간]
+T1  rr_before=100000, rr_after_commit=100000 (리더가 먼저 t를 읽어 ACCESS SHARE를 쥠 → TRUNCATE가 기다림)
+T1b snap(other)=1, rr_after_truncate_commit=0 (스냅샷만 먼저, t는 커밋 뒤 첫 접근 → 빈 표)
+T2  reader|old|100000 (커밋된 옛 값), 읽기 대기 0.047~0.064초
+T3  새 읽기 3.04초 대기 뒤 new 1000행(교체 트랜잭션이 긴 읽기를 기다리는 동안 뒤 읽기도 대기)
+T4  ERROR: canceling statement due to lock timeout
+T5  긴 읽기(4초) 중 DETACH CONCURRENTLY: 명령 자체는 3.53초 대기, 그 사이 새 읽기는 0.03초에 0행. 0행 구간 = 앞선 가장 긴 트랜잭션 + ATTACH. 재현: pg_tests.sql(초기화에 p_1n DROP 포함) + pg_tests.sh, 두 번 연속 실행 결과 같음
+
+[DuckDB 2.0.0 approx_count_distinct, 각 1회]
+n=100,000 → 99,467 (-0.53%) / 1,000,000 → 982,272 (-1.77%) / 10,000,000 → 9,895,083 (-1.05%) / 50,000,000 → 50,701,524 (+1.40%)
+
+[측정 42 이벤트 로그 local-1794629126637 분석]
+단계별(태스크/셔플읽기/셔플쓰기/메모리흘림/디스크흘림/태스크최대PeakExec):
+ 2: 118 / 0 / 37.6GB / 305.1GB / 29.4GB / 1,225MB   sort fallback tasks 117
+ 5: 318 / 64.0GB / 0 / 587.6GB / 63.0GB / 1,292MB   sort fallback tasks 200
+17: 118 / 0 / 43.5GB / 325.5GB / 37.0GB / 1,745MB   sort fallback tasks 116
+19: 200 / 43.5GB / 0 / 332.2GB / 45.0GB / 504MB     sort fallback tasks 200
+69: 118, sort fallback 56, mem spill 33.3GB ; 71: 200 tasks read 8.0GB no spill ; 74: 200 tasks read 7.2GB
+실행기 메모리 최대: OnHeapUnifiedMemory 4,965MB, OnHeapStorageMemory 117MB, JVMHeapMemory 8,335MB
+PeakExec>414MB 태스크의 실행 중간 시점 동시 태스크 수: 단계 2 (8,12,12), 단계 17 (8,12,12) → 동시 12개일 때도 넘음
+(삭제: 단계 71·74의 PeakExec는 태스크마다 같은 고정값 570,425,920B / 20,971,504B라 데이터 크기 비례가 아님, 검토 1회차 R12)
+실행 7(cache quarantine) 계획: InMemoryRelation 안 AdaptiveSparkPlan. 최종 단계 = Union(Project(15) 118조각, SortMergeJoin(50) 200조각) → 318태스크 = 단계 5.
+  SMJ 입력 ShuffleQueryStage(29) sizeInBytes=255.9GiB rowCount=1.37E+9, (45) 204.6GiB rowCount=1.37E+9
+실행 9(cache batch_status) 계획: ShuffleQueryStage(122) 225.1GiB rowCount=1.37E+9 → HashAggregate → 작은 셔플(126) AQEShuffleRead coalesced → ... (122)를 읽는 단계 = 단계 19, 최종 단계가 아님
+spark.master=local[*], Total Cores=12
+
+[C3 계산] 그룹 안 값 2개의 64비트 해시 충돌 확률 = 2^-64 ≈ 5.4e-20 (앞 판 1.1e-19는 2^-63, 틀림)
+[버전] 실제 실행 Spark 3.5.9(이벤트 로그), 인용 소스 3.5.6/3.5.9 CacheManager 동일(검토 1회차가 diff로 확인)
+[C3 NULL] Spark XxHash64는 NULL 인자를 건너뜀(hash.scala: case null => seed) → xxhash64(NULL,'x') = xxhash64('x',NULL). 그러나 clean 입력은 reasons=''(20_clean.sql)이고 열 수가 10이 아니면 모든 열이 NULL+V1(transform/living_iceberg.py 96행), 빈 글자는 V1(10_checked.sql) → 통과 행에 NULL 없음. V1 규칙이 바뀌면 깨지는 의존
+
+[DuckDB 2.0.0 ALLOCATOR 소규모 재현, Claude 작업 공간 2코어, 검토 4회차 스크립트 /home/claude/rv_scripts/gen.py·memq.py, 각 1회]
+500만 행, threads 2, 600MB: 임시 최대 195MiB, ALLOCATOR 최대 25MiB, 완주
+2,000만 행, threads 2, 600MB: 임시 1,795MiB, ALLOCATOR 79MiB, 완주
+2,000만 행, threads 1, 600MB: 임시 1,866MiB, ALLOCATOR 140MiB, 완주
+→ ALLOCATOR가 흘린 양과 함께 늘고, 스레드가 적을수록 컸다(검토 4회차의 6,000만 행·threads 1~8 결과와 같은 방향)
+[입력 고정 재현, Claude 재실행, 각 1회] 2,000만 행(그룹 19,757,039), threads 2: 600MB → 임시 1,795MiB, ALLOCATOR 79MiB / 4,000MB → 임시 0, ALLOCATOR 197MiB. 500만 행, 2,400MB → 임시 0, ALLOCATOR 84MiB. → 흘림이 줄수록 ALLOCATOR가 커짐(흘림 비례 아님), 메모리 안 그룹 수를 따라감
+[계산] 측정 42 clean 그룹 1,373,116,739 × 8B = 10.23GiB (측정 49 ALLOCATOR 10.36GiB), 202510 그룹 139,742,984 × 8B = 1.04GiB (측정 50 1.07~1.16GiB)
+[threads 4 시계열, Claude 재실행] 2,000만 행, threads 4, 600MB: 임시 0 → 1,723MiB 동안 ALLOCATOR 12 → 69MiB로 거의 직선 증가(HASH_TABLE 552 → 500MiB로 감소), 임시를 다시 읽는 동안 ALLOCATOR 83~89MiB 유지, 연산자 끝에 75MiB → 이후 해제. threads 2 이하에서 본 "흘림이 줄면 ALLOCATOR 증가"는 다른 해시 표 전략(GROW_STRATEGY_THREAD_THRESHOLD = 2)이라 운영(threads 4·12)에 쓰지 않음
+[측정 49 비율] ALLOCATOR/임시: 23:46 0.092, 23:47 0.081, 23:48 0.078, 23:52 0.088, 23:53 0.083, 23:54 0.081, 오류 직전 10.36/123.3 = 0.084
+[흘림 없는 대조, Claude 재실행] 2,000만 행, threads 4, 4,000MB: 임시 0인데 ALLOCATOR 12 → 90MiB로 처리 진행에 따라 증가, 연산자 끝까지 유지 뒤 해제. 600MB(임시 1,786MiB)일 때와 같은 90MiB. 500만 행 4,000MB: 26MiB.
+→ ALLOCATOR는 흘림과 무관하게 연산자가 처리한 입력 행 수에 비례(소규모 약 4.5~5.4 B/행). 운영: 측정 49 한 물결 10.36GiB / 1.41E9행 ≈ 7.9 B/행, 측정 50 배치 하나 1.07~1.16GiB / 약 1.4E8행 ≈ 8.2~8.9 B/행. 코드 경로 미확인
+(검토 7회차: 키 글자 40자 사본은 임시 +55%인데 ALLOCATOR 더 작음 → 바이트 비례 아님, count(*)만 남겨도 109MiB → 집계 상태 아님, 그룹 500만·행 2,000만이면 84MiB → 행을 따라감)
+
+== 검토 9회차 확인: 고정 폭 키 (Claude 재실행, 2026-11-22) ==
+입력 /tmp/memv/d20000000.parquet (2,000만 행), DuckDB 2.0.0, threads 4, memory_limit 600MB, 100ms 표본, rv_mine/alloc.py
+VARCHAR 키 9개 GROUP BY ALL:          6.7s  ALLOCATOR 최대 84MiB  HASH_TABLE 552MiB  임시 1603MiB  그룹 19,757,039
+고정 폭 키(DATE/ENUM/UTINYINT/UINTEGER): 3.1s  ALLOCATOR 최대 23MiB  HASH_TABLE 559MiB  임시   63MiB  그룹 19,757,039
+같은 명령 2회 실행, 두 번 모두 같은 값. 한계: 소규모 합성 입력 1개, threads 4 하나, 결과 동등성(EXCEPT ALL)은 아직 안 봄.
+소스 후보(읽기만, 실행 경로 미확인): tuple_data_allocator.cpp 140/194/246, partitioned_tuple_data.cpp 15, tuple_data_segment.cpp 78
+
+== 검토 10회차 확인 (Claude 재실행, 2026-11-22) ==
+clean 꼴 집계: SELECT <VARCHAR 키 9개>, min(TRY_CAST(avg_minutes_raw AS INT)), count(*) FROM d20000000.parquet GROUP BY ALL, 작업 공간 2코어, 각 1회
+threads 4 600MB : 5.6s ALLOCATOR 84 HT 553 임시 1,495MiB
+threads 4 4000MB: 3.2s ALLOCATOR 88 HT 3,038 임시 0
+threads 8 600MB : 6.4s ALLOCATOR 54 HT 548 임시 1,398MiB
+threads 8 4000MB: 3.7s ALLOCATOR 116 HT 3,227 임시 0
+VARCHAR 키 하나(dest_cd)만, 나머지 고정 폭, threads 4 600MB: 3.8s ALLOCATOR 57 HT 542 임시 321MiB
+→ threads 4는 한도 영향 5%, threads 8은 2배(흘림 있으면 작음). 검토 9회차 "4→8에서 74→125"는 근거 파일에 없어 이 값으로 대체
+15136368 CSV(/home/claude/rv10/dl/link.csv, utf-8-sig): 130,193행, 열 9개, 개정일자 6개(2025-10-01~2026-10-01), 신설동 11060930·용두동 11060920, 11230510 신사동. 화면: 공공누리 3유형, 연간
+소스: tuple_data_scatter_gather.cpp 127행 StringHeapSize = !IsInlined() * GetSize() (rv10/src)
+레포: measurements.md 506행 metabase_ro가 raw.rent·stg_dbt.rent 등을 읽음 / 937행 failcnt 2·oom_kill 0 / 185행 202605 148,671,100행 / spark_sql_runner.py 119~141행 --no-write는 write() 전에 return / 174행 C: 447.7GB / failure_analysis.md 555행 979.73GB
+
+== 검토 11회차 확인 (Claude 재실행, 2026-11-22, 각 1회, threads 4, 600MB, 2,000만 행) ==
+d20000000.parquet DESCRIBE: target_ym_i BIGINT, 나머지 키 8개 VARCHAR (앞 기록의 "VARCHAR 키 9개"는 틀림)
+넓은 고정 폭(키마다 HUGEINT): 6.7s ALLOCATOR 35 HT 559 임시 1,509MiB
+운영 꼴(target_ym VARCHAR, collected_date DATE, 나머지 VARCHAR): 6.3s ALLOCATOR 84 HT 553 임시 1,658MiB
+→ 임시·시간은 줄 폭, ALLOCATOR는 레이아웃(전부 고정 폭인가)을 따름
+레포: living_iceberg.py 102행 target_ym string, collected_date date / 22_batch_status.sql 20행 lag / duckdb_sql.py 34행 / failure_analysis.md 657행(202601 7.9·8.3초 실패, 다른 9배치 48.9~61.5초), 663행 H4
+15136368 서울 2025-10-01판: 행정구역코드 distinct 453, 8자리 427, 8자리 행의 행정동코드 10자리 끝 00이 아닌 것 0
+
+== 검토 12회차 확인 (Claude 재실행, 2026-11-22, threads 4, 각 1회) ==
+시간대 하나(arrive_hour_raw = min, 833,336행, 그룹 823,403): 4000MB ALLOCATOR 11 임시 0 / 200MB 14 임시 0 / 60MB 12 임시 56MiB
+2,000만 행 전체 4000MB: ALLOCATOR 88 (앞 기록) → 행당 4.4B 대 13.4B, 흘림 없이도 규모로 행당 값이 달라짐
+target_ym만 VARCHAR + 나머지 좁은 고정 폭, 600MB: 4.0s ALLOCATOR 57 HT 543 임시 390MiB
+레포: data_contract.md 42행 source_type offi/rh(오피스텔·연립다세대만)
+
+== 검토 13회차 확인 (Claude 재실행, 2026-11-22, threads 4, 4000MB, 각 1회) ==
+그룹 100만, 4,000만 행(rv13/g1m_*.parquet, 키 9개 같은 꼴): 섞인 순서 7.5s ALLOCATOR 125 HT 3,725 임시 977MiB / 모인 순서 0.8s ALLOCATOR 7 HT 155 임시 0
+레포: duckdb_sql.py 21·208~212행(넘친 배치 선택지 B 재계산), 418~441행(rc 75·−9면 threads 4로 재시도) / failure_analysis.md 520행 DuckDB 3회 C: 299.7→221.7→180.2GB / spark_sql_runner.py 100~105행 TRUNCATE+INSERT, 334초 읽기 잠김 / decisions.md 832행 ops.build_diff
+15108071 Swagger(rv12/dl/15108071.html): regSeCd 전체 1(기본), 거주자 2, 거주불명자 3, 재외국민 4
+
+== 검토 14회차 확인 (Claude 재실행, 2026-11-22) ==
+g1m_40000000(섞인 순서, 그룹 100만), threads 4, 4000MB, 같은 명령 3회: ALLOCATOR 123 / 93 / 130MiB, HASH_TABLE 3,725 / 1,301 / 3,721MiB, 임시 653 / 0 / 971MiB, 7.4 / 2.5 / 8.3초 → 엔진 안에서 두 갈래
+(앞 기록의 "섞인 순서 125MiB 1회"는 흘림 갈래 하나였음)
+V34 검토 14회차 3회씩: 600MB 83·84·83, 4000MB 94·88·93 (Claude 1회씩 84·88과 같은 방향)
+레포: dags/file_sources.py 33~34행 운영 인자 / docker-compose.yml 47행 "5433:5432", 75·157·181·201행 127.0.0.1 / decisions.md 445행 결정 40 리니지 단위 컬럼 / data_contract.md 85행 혼잡도 15071311 "제한 없음"
+
+== 검토 15회차 확인 (2026-11-22) ==
+소스(rv10/src, v2.0.0): tuple_data_segment.cpp 11~16행 SetHeapEmpty(INVALID, INVALID, 0, nullptr), 74~96행 AllConstant면 78행에서 합침, 아니면 89~91행 힙 정렬 비교(빈 힙끼리 참) → 합쳐짐. allocator 270~271행 힙 합 0이면 SetHeapEmpty. → "조각을 합치지 못함"은 틀림
+레포: tests/check_living_conflict.py 27~31행(한 배치·08시, origin_cd 자리에 사례 이름) / spark_sql_runner.py 84~91행 record()가 ops.engine_run에 씀 / ops_snapshot.py 19행 SCHEMAS에 ops 없음
+15108071 Swagger: numOfRows 1~100, lv 기본 4(통반)
+검토자 실행 값(Claude가 다시 돌리지 않음, 표시용): V34 600MB 84·84·83·85 / 4000MB 85·88·106·90·114(검토 15회차), 600MB 83·84·83 / 4000MB 94·88·93(검토 14회차). V36 섞인 순서 검토 15회차 4회 95·125·94·129MiB(임시 0·909·0·897). E4 8,192행(검토 11·15회차, threads 4), 4,096행(검토 13·14회차, threads 2)
+
+== 검토 16회차 (2026-11-22, 검토자 실행 값, Claude가 다시 돌리지 않음) ==
+g1m_40000000 섞인 순서 threads 4, 4000MB 6회: ALLOCATOR 90·89·133·95·94·94MiB, 임시 0·0·1,098·0·0·0 / 정렬 입력 2회 7MiB
+(앞 기록의 "검토 14회차 8회, 123~136, 95~97, 캐시를 비워도"는 이 파일에 기록이 없어 설계에서 뺌)
+이벤트 로그: 단계 5 셔플 읽기 64.0GB(318태스크), 단계 19 43.5GB(200태스크)
+레포: tests/check_living_conflict.py 32~33행(한 배치·08시, origin_cd 자리에 사례 이름) / spark_sql_runner.py 165행 target 필수 위치 인자, 119행 saves
