@@ -1209,3 +1209,116 @@
   - A5: `.env`에 `GITHUB_TOKEN`, `SLACK_WEBHOOK_URL`이 없어 실제 PR·Slack은 대기. 실행마다 `logs/agent/<실행>/`에 `branch.bundle`, `branch.patch`, `pr.json`, `slack.json`(dry-run)을 남긴다. 실제로 가려면 이 레포만 고른 fine-grained 토큰, Slack 웹훅, main 보호 규칙(결정 108 결과)이 필요하다.
   - Airflow 이미지에서 SDK를 뺀 것을 적용(다시 빌드, airflow 서비스 4개와 ui만 `--no-deps`로 다시 만듦, 모두 healthy, DAG 가져오기 오류 0).
   - 남은 것: 허용 밖 편집 차단은 실제 시도가 없어 selftest로만 확인. → 2026-11-15 O1(측정 55)에서 실제 실행으로 시험: Edit 넷 거절, Write·Bash 도구 없음, 허용 밖 바뀐 파일 0. M7도 처방 뒤 끝까지 1회 needs_decision(G5 187). A5(측정 55): 실제 PR [sozerong/home_in_seoul#2](https://github.com/sozerong/home_in_seoul/pull/2)·Slack 200, main 직접 push는 룰셋 거절. 토큰 권한 문제 F-36. DB 역할로 운영 쓰기를 막는 `agent_rw`는 없다. 정답표가 S1 고칠 파일을 좁게 적었는지는 사용자 판단(판단 119).
+
+## 결정 113. 데이터 상품을 공개 정적 사이트(GitHub Pages, 데이터 전용 레포)로 배포한다
+- 상황: 사용자 방향의 첫 줄은 "여러 출처의 데이터를 다른 사람이 쉽게 확인하고 가져가게 한다"이다. 그런데 사람이 쓰는 통로는 모두 127.0.0.1에만 열려 있어(docker-compose.yml 75·157·181·201행) 작업 PC 밖에서 가져간 증거가 없었다. 설계 검토(docs/design_platform.md)의 가장 큰 논리 허점이었다.
+- 선택지:
+  - 공개 범위: (A) 허용 컬럼만 (B) 미정도 출처 붙여 공개 (C) 공개 없이 초대 배포
+  - 레포: (A) 데이터 전용 새 레포. 코드 레포가 버전마다 약 22MB씩 커지지 않음 (B) 같은 레포 gh-pages. 관리할 레포가 하나지만 레포 크기가 커짐
+  - 가져가는 방법: 카탈로그 페이지 / 파일 + manifest / URL 조회 예시 / 브라우저 안 SQL(DuckDB-WASM)
+  - 확인: PC 밖 에이전트 + 사람 / PC 밖 에이전트만 / 사람만
+- 결정과 이유 (2026-11-22 사용자):
+  - 공개 범위: 이용조건을 다 찾아보고, 출처를 붙여서라도 공개한다. 그래도 안 되는 컬럼만 뺀다.
+    - 다시 찾은 결과, 생활이동은 공공데이터포털 15087677에 공공누리 1유형(제3자 권리 저작권 표시)으로 되어 있어 공개한다.
+    - 혼잡도는 3유형(변경금지) 경로 대신 "제한 없음"인 15071311 경로로 바꾼 뒤 공개한다.
+    - SGIS 도형을 직접 잰 면적은 통합 약관 제15조(사전 승낙 없는 복제·타인 제공 불가, 비영리여도 같음) 때문에 서울시 동별 면적(1유형)으로 바꾸기 전까지 뺀다.
+    - 자세한 판정은 docs/handoff_pages.md 2절에 있다.
+  - 레포는 데이터 전용 새 레포로 한다.
+  - 가져가는 방법은 네 가지를 모두 둔다.
+  - 확인은 작업 PC 밖 에이전트로 한다.
+- 검증: (구현 후) handoff_pages.md 6절의 끝난 기준을 따른다. 공개 URL 동작, selftest, 범위 요청 실측, PC 밖 인수 시험 결과로 확인한다.
+- 결과와 남은 것:
+  - 이 결정으로 설계의 D2는 "파일 + 공개 정적 사이트", D3는 "일부 클라우드(정적 호스팅)"로 정해졌다.
+  - 이용조건 판정은 법률 검토가 아니다.
+  - 혼잡도 경로 전환(6a)과 면적 교체(6b)는 각각 선택지를 비교한 뒤 따로 결정한다.
+  - 단계 1 도구 변경(D12)의 기록 번호는 다음 결정 번호로 미룬다.
+  - 2026-11-22 공개 사이트를 포털로 확장했다(handoff_pages.md 8절, handoff_portal.md). 그 안에서 고른 것은 결정 114(정적 요약), 115(컬럼 사전 위치), 116(SQL 엔진).
+
+
+## 결정 114. 글만 읽는 도구를 위해 index.html 안에 정적 요약을 넣는다 (handoff_portal.md Q2)
+- 사용자 위임(2026-11-22 지시), Claude Code가 고름.
+- 상황: 포털 index.html은 JavaScript로 화면을 그린다. JavaScript를 돌리지 않는 도구는 빈 화면을 받는다. 바깥 에이전트의 인수 시험(단계 P5)이 바로 이런 도구일 수 있다.
+  - 실측(2026-11-22): 받은 그대로의 포털 index.html(49,475 B)에서 script·style을 뺀 글은 144자였다. 공개 파일 링크는 0개였다(Python html.parser).
+  - 공식 문서(2026-11-22 확인):
+    - Anthropic web fetch 도구 문서(https://platform.claude.com/docs/en/agents-and-tools/tool-use/web-fetch-tool)는 JavaScript로 그리는 사이트를 지원하지 않는다고 적는다.
+    - Google JavaScript SEO 기본 문서(https://developers.google.com/search/docs/crawling-indexing/javascript/javascript-seo-basics)는 Googlebot이 JavaScript를 렌더링하지만 렌더링 대기열을 거친다고 적는다. 같은 문서는 모든 봇이 JavaScript를 돌리지는 못하므로 서버 측 렌더링이나 사전 렌더링을 권한다.
+- 선택지:
+  - (가) 만들 때 `<main>` 안에 평범한 HTML 요약을 넣고, JavaScript가 돌면 덮어쓴다.
+    - 장점: 같은 주소를 받은 누구나(JS 없는 에이전트, 검색엔진, JS를 끈 브라우저) 본문으로 읽는다.
+    - 단점: index.html이 커진다. publish_site에 요약 함수가 늘어난다(약 40행).
+  - (나) `<noscript>` 안에 요약을 넣는다.
+    - 장점: JS를 켠 사람에게는 보이지 않는다.
+    - 단점: 내용은 (가)와 같은데 읽는 곳이 noscript에 한정된다. 글 변환기가 noscript를 어떻게 다루는지는 도구마다 다르다. Google 문서에서 noscript 지침도 찾지 못했다 [확인 못 함].
+  - (다) 따로 글 파일(`llms.txt` 등)을 두고 링크한다.
+    - 장점: index.html이 그대로다.
+    - 단점: 에이전트가 그 파일을 알아야 읽는다. 받은 주소의 첫 페이지는 여전히 비어 있다. llms.txt는 제안 단계라, 어느 검색엔진·에이전트도 공식 지원을 밝히지 않았다(https://llmstxt.org/, 2026-11-22).
+  - (라) 아무것도 더하지 않고 catalog.json 링크만 둔다.
+    - 장점: 코드가 그대로다.
+    - 단점: 위 실측대로 첫 페이지 글이 144자이고 파일 링크가 0개다.
+- 결정과 이유: (가).
+  - 평가 기준(같은 입력이면 같은 바이트, 서버 없음, 의존성 0, 처음 보는 사람이 쓰기 쉬움)을 모두 지킨다.
+  - 주소 하나만 받은 도구가 추가 지식 없이 읽는다.
+  - 요약은 catalog.json과 공개 manifest 값으로만 만들고 시각을 찍지 않아, 같은 입력이면 같은 바이트다.
+  - 버린 이유: (나)는 내용이 (가)와 같은데 읽히는 범위만 좁다. (다)는 첫 페이지가 여전히 비고, 공식 지원 근거가 없다. (라)는 실측으로 정보가 없다.
+- 검증 (2026-11-22, 로컬 범위 요청 서버 127.0.0.1:8765):
+  - `curl -s <사이트>/ | grep -c "dong_profile.parquet"` = 1. curl로 받은 index.html에 공개 파일 8개(parquet 4, csv 4) 링크가 모두 있다.
+  - JavaScript를 끈 headless Chrome(CDP `Emulation.setScriptExecutionDisabled`)으로 연 DOM에도 링크 8개가 있다. 화면에는 표 4개, 컬럼 사전, 비공개 컬럼 이름과 이유가 보인다.
+  - 요약을 넣은 뒤 같은 방법으로 센 글은 8,047자다(1회차 사전 기준). 3회차 시험까지 반영한 최종 빌드에서는 10,156자, `<main>` 안 링크 12개(공개 파일 8개, catalog·latest·NOTICE, 코드 레포), index.html 90,726 B다.
+  - selftest 2d(매 실행): 공개 파일 링크가 모두 있고, 비공개 컬럼 이름은 "이름·이유" 목록에만 나온다. selftest 1: 두 번 만든 17개 파일의 sha256이 같다.
+  - JavaScript를 켜면 포털 화면이 요약을 덮어쓴다. 콘솔 오류 0(headless Chrome).
+- 결과와 남은 것:
+  - 실제 Pages에서 curl로 확인하는 일은 사용자 배포(handoff_portal.md Q7) 뒤에 한다.
+  - 검색엔진이 요약을 실제로 색인하는지는 재지 않았다.
+
+## 결정 115. 컬럼의 쉬운 말 사전은 docs/public_columns.json에 둔다 (handoff_portal.md Q3)
+- 사용자 위임(2026-11-22 지시), Claude Code가 고름.
+- 상황: 포털의 컬럼 설명을 data_contract.md 3절 표에서 그대로 가져와 처음 보는 사람에게 어려웠다.
+  - 여러 컬럼을 한 줄로 묶어 "(한 줄로 함께 설명: ...)" 꼬리가 붙었다.
+  - 단위와 코드 값(offi, rh, basis)의 뜻이 화면에 없었다.
+  - 컬럼마다 한글 이름(label), 설명(help), 단위(unit), 코드 값 풀이(values), 근거(source_ref)를 둘 곳이 필요하다.
+- 선택지:
+  - (가) public_columns.json의 컬럼 항목에 필드를 더한다.
+    - 장점: 컬럼 집합이 계약과 같은지 이미 검사하는 파일이다(check_public_columns). 그래서 빠진 컬럼을 같은 검사로 잡는다. 파일이 늘지 않는다.
+    - 단점: 이용조건 판정(`public`)과 같은 파일이다. 사전을 고치다 `public`을 잘못 바꿀 위험이 있다.
+  - (나) data_contract.md 3절을 컬럼별 표로 바꾸고 거기서 읽는다.
+    - 장점: 계약 문서 한 곳에 모인다.
+    - 단점: Markdown 표를 파싱해야 한다. values·source_ref 같은 구조를 표 칸에 넣기 어렵다. 3절을 컬럼 하나씩으로 다시 써야 한다.
+  - (다) 새 파일(예: docs/column_dictionary.json).
+    - 장점: 이용조건과 분리된다.
+    - 단점: 컬럼별 파일이 둘이 되어, 컬럼 집합 일치 검사를 하나 더 만들어야 한다.
+- 결정과 이유: (가).
+  - 원본이 컬럼마다 한 곳이고, 기존 검사가 빠짐을 그대로 잡는다. 새 검사는 사전 필드 확인 한 줄이다.
+  - 계약 문서와 어긋날 위험은 이렇게 줄였다: catalog에 data_contract.md 3절 설명(`description`)을 그대로 함께 싣는다(화면에서 근거 칸에 마우스를 올리면 보인다).
+  - `public` 오변경 위험은 이렇게 막았다: 편집 스크립트가 쓰기 전후 `public` 값 전체를 비교해, 다르면 쓰지 않는다. 이번 두 번의 편집 모두 같았다.
+  - 버린 이유: (나)는 파서와 문서 재작성 비용이 크고 구조 필드가 맞지 않는다. (다)는 같은 검사를 두 번 유지해야 한다.
+  - 예시 값(`example`)은 JSON에 적지 않는다. publish_site가 그 버전 프로필에서 고른다(숫자는 가운데 값, 글자는 가장 자주 나오는 값). 버전이 바뀌어도 틀리지 않게 하려는 것이다.
+- 검증 (2026-11-22, selftest):
+  - 2c: 공개 컬럼 48개 모두 label·help·source_ref가 있다.
+  - 2c: 코드 풀이 7개(basis, copied_from_2021_split_dong, is_primary, source_type, house_type, lease_type, sgg_cd)의 키가 이 버전 parquet의 실제 값과 빠짐없이 같다. 없는 코드를 풀이하거나 있는 코드를 빠뜨리면 실패한다.
+  - 6: help를 지우거나 표의 notes를 지우면 check_public_columns가 실패한다.
+- 결과와 남은 것:
+  - 표마다 "쓰기 전에 알아 둘 것"(table_notes)도 같은 파일에 두었다(Q4). data_contract.md 6절에서 나눠 왔다.
+  - 구 이름(sgg_cd 풀이 25개)은 소상공인 상가정보 2026-06-30 판의 시군구명을 mois_dong_cd 앞 5자리로 이어 만들었다. 25개 구가 1:1로 이어진다. 경계가 바뀌면 다시 확인한다.
+
+## 결정 116. 브라우저 SQL 엔진은 jsDelivr의 @duckdb/duckdb-wasm 1.33.1-dev57.0을 고정해 그대로 쓴다 (handoff_portal.md Q6b)
+- 사용자 위임(2026-11-22 지시), Claude Code가 고름.
+- 상황: 포털 SQL 화면은 jsDelivr에서 1.33.1-dev57.0을 받는다. 판 이름에 dev가 붙어 있다. CDN이 막힌 곳에서는 SQL·미리보기만 동작하지 않는다(정적 요약과 파일은 결정 114로 그대로 보인다).
+- 선택지 (근거 확인 2026-11-22):
+  - (가) 지금처럼 jsDelivr, 판 고정. npm dist-tag `latest` = 1.33.1-dev57.0(2026-06-22 게시, `npm view`)이다. 즉 이 패키지의 게시자가 기본 설치 판으로 지정한 판이다. jsDelivr README는 npm에서 지워진 패키지도 영구 저장소에서 계속 서빙한다고 적는다. 대역폭 한도는 없고, 패키지 150 MB 초과는 기본 미지원이다. 이 판의 unpacked는 149,377,663 B로 그 아래다.
+  - (나) unpkg 등 다른 CDN: 실측에서 3회 모두 실패했다. `dist/duckdb-browser.mjs`가 `apache-arrow`를 bare specifier로 import해 브라우저가 풀지 못한다. jsDelivr의 `+esm` 같은 변환이 필요하다.
+  - (다) 엔진 파일을 데이터 레포에 같이 올린다.
+    - wasm 하나가 eh 35.9 MB, mvp 41.3 MB, coi 35.6 MB다(1.33.1-dev57.0, jsDelivr data API). 셋이면 약 113 MB다.
+    - GitHub Pages는 게시 사이트 1 GB 한도이고, 버전 폴더가 약 22 MB씩 쌓인다(data_contract.md 5절).
+    - 엔진을 바꿀 때마다 git 이력에 수십 MB가 남는다. DuckDB 문서(https://duckdb.org/docs/2.0/clients/wasm/deploying_duckdb_wasm.html)대로 worker·wasm을 그대로 서빙하고 번들 경로를 직접 지정해야 한다.
+  - (라) 정식 판으로 고정: dev가 아닌 최신 npm 판은 1.32.0(2025-12-16)이다. GitHub 릴리스의 최신 v1.33.0은 npm에 없다(E404). `next` 태그 1.33.1-dev121.0은 eh wasm이 없어지고 파일 구성이 바뀌었다.
+- 실측 (측정 57): 같은 로컬 사이트에서 (가)·(라)·(나)를 3회씩 쟀다. 프로필은 매번 새것, HTTP 캐시는 끔.
+  - (가)와 (라)는 예시 질의 8개가 3회 모두 성공했고 콘솔 오류 0이다. 첫 질의까지 걸린 시간은 (가) 3,877 / 2,289 / 2,963 ms, (라) 3,811 / 3,020 / 3,251 ms로, 3회 범위가 겹친다.
+  - 엔진 안 DuckDB 판은 (가) v1.5.4, (라) v1.4.3이다(`SELECT version()`).
+- 결정과 이유: (가) 그대로 둔다.
+  - (라)와 결과·속도가 같다. 이득은 이름에 dev가 없다는 것뿐이고, 대신 DuckDB 코어가 한 판 낮다. 이 레포의 Python DuckDB는 2.0.0이라 문법 차이를 줄이려면 코어가 새 쪽이 낫다.
+  - npm 게시자가 `latest`로 지정한 판이다. 정확한 판으로 고정해 jsDelivr가 같은 파일을 계속 준다.
+  - 버린 이유: (나)는 실측 실패. (다)는 CDN이 막힌 환경 하나를 위해 레포에 약 113 MB와 번들 경로 코드를 더하는 일이다. 그 환경에서도 정적 요약·파일 내려받기는 된다. (라)는 이득이 측정되지 않았고 코어가 낮다.
+- 검증: 측정 57. 실제 Pages(jsDelivr에서 받은 엔진)에서 예시 질의가 도는지는 사용자 배포(Q7) 뒤 확인한다.
+- 결과와 남은 것:
+  - 판을 올릴 때는 npm `latest`가 바뀐 뒤, 같은 측정(예시 질의 8개, 3회)을 다시 돌려 비교한다.
+  - dev121부터 파일 구성(base·threads wasm)이 달라져 `getJsDelivrBundles`가 그대로 맞는지 [확인 필요].

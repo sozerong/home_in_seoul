@@ -725,3 +725,43 @@
 - 재점검(2026-11-15, 사용자가 레포 선택을 고친 뒤): `collaborators` 200으로 레포 접근은 풀렸으나 `git push --dry-run`(아무것도 쓰지 않고 쓰기 권한만 검사)이 여전히 403. Contents 쓰기 권한이 없는 것으로 본다. 이후 점검은 12분짜리 실행 전에 `push --dry-run`으로 한다.
 - 결과: 사용자가 Contents 쓰기를 준 뒤 `push --dry-run` rc 0, 같은 실행으로 PR 2 열림·Slack 200(측정 55).
 - 상태: **처방함(사용자 토큰 설정).**
+
+## F-37. 데이터 레포 첫 푸시에서 CSV 바이트가 바뀜: git 줄바꿈 변환 (handoff_pages.md P2, 2026-11-22)
+- 태그: git, 결정적 출력
+- 증상: `publish_site`로 만든 공개 폴더를 sozerong/home_in_seoul-data에 커밋·푸시(`b90e919`)한 뒤, 커밋에 들어간 CSV 4개의 sha256이 공개 manifest와 달랐다(예: dong_profile.csv manifest `df44d259...`, 커밋 blob `a7210e01...`). Parquet 4개는 같았다. 커밋 때 git이 "LF will be replaced by CRLF" 경고를 냈다.
+- 원인: Git for Windows 시스템 설정 `core.autocrlf=true`(`C:/Program Files/Git/etc/gitconfig`). 이 설정은 텍스트로 보이는 파일의 CRLF를 커밋할 때 LF로 바꾼다. 상품 CSV는 `csv.writer` 기본 줄끝 CRLF로 쓰여 바뀌었고, Parquet는 바이너리로 판단돼 그대로였다. 코드 레포는 product/를 git에 넣지 않아 이 문제가 처음 드러났다.
+- 처방: `publish_site`가 공개 폴더에 `.gitattributes`(`* -text`)를 쓰게 했다. 어느 PC의 git 설정으로 커밋해도 줄바꿈을 바꾸지 않는다. 데이터 레포에서 `git add --renormalize .` 후 커밋(`ebba93e`)·푸시.
+- 확인: 커밋 blob 8개의 sha256이 공개 manifest와 모두 같다. 공개 URL에서 받은 8개 파일도 바이트 수와 sha256이 같다(측정 56).
+- 상태: **처방함.** 첫 커밋 `b90e919`의 CSV는 manifest와 다른 바이트로 git 이력에 남아 있다. Pages는 `ebba93e`부터 배포했다.
+
+
+## F-38. 포털 화면 수정 중 정규식 한 줄이 포털 JavaScript 전체를 멈춤, 그리고 사실과 다른 SQL 오류 안내 (handoff_portal.md Q5, 2026-11-22)
+- 태그: 화면, 검증 누락
+- 증상 1: SQL 오류 안내의 정규식을 고친 뒤, 포털이 정적 요약만 보이고 멈췄다. 버전 선택도 비었다. 콘솔에는 `Uncaught SyntaxError: Invalid regular expression: ... Range out of order in character class`.
+- 원인 1:
+  - 한글 값을 잡으려던 `[^\x00-\x7f]`를 bash heredoc 안 Python 문자열로 넣었다. 이스케이프가 두 언어를 거치며 실제 제어 문자로 바뀌어 파일에 들어갔다.
+  - `<script type="module">` 하나에 포털 전체가 들어 있어, 문법 오류 하나가 모든 화면을 멈춘다.
+  - 앞선 수정 뒤에는 `node --check`를 돌렸지만, 이 수정 뒤에는 돌리지 않았다.
+- 처방 1:
+  - 정규식을 `[가-힣]`로 바꿨다. 이후 수정은 heredoc이 아니라 파일로 쓴 편집 스크립트로 하고, 매번 module 부분을 떼어 `node --check`와 headless Chrome 콘솔 오류 수를 확인했다.
+  - JavaScript가 멈춰도 정적 요약(결정 114)은 남아 표·파일 링크는 보였다.
+- 증상 2: "코드 값을 숫자 11230과 비교하면 맞지 않는다"는 안내를 넣었는데, 실제로 `WHERE sgg_cd = 11230`(따옴표 없음)은 DuckDB-WASM에서 22행을 돌려준다.
+- 원인 2: 다른 DB에서의 경험을 확인 없이 안내 문장으로 썼다. DuckDB는 이 비교에서 글자를 숫자로 맞춰 바꾼다.
+- 처방 2: 안내를 "코드 컬럼은 글자 타입이니 작은따옴표로 쓴다"로 바꿨다(사실만). 오류마다 실제로 질의를 넣어 첫 안내가 맞는지 확인했다:
+  - 따옴표 없는 `= 역삼1동`은 따옴표 안내가 먼저 나온다.
+  - 컬럼 오타는 이름 안내가 먼저 나온다.
+- 상태: **처방함.**
+
+## F-39. rent_listing의 "한 행" 문구가 포털과 catalog.json에서 잘림 (handoff_portal.md Q6 2회차, 2026-11-22)
+- 태그: 화면, 검증 누락
+- 증상: 처음 보는 사람 시험 2회차에서 "이 표의 한 줄은 최근 계약월(최대 6개월입니다"로 잘려 보인다는 지적이 나왔다. catalog.json의 grain도 "한 행 = 최근 계약월(최대 6개월"이었다.
+- 원인:
+  - 같은 날 Q1에서 data_contract.md 3절 제목을 "(한 행 = 최근 6개월 ...)"에서 "(한 행 = 최근 계약월(최대 6개월) 신규 ...)"로 바꿨다. 괄호 안에 괄호가 생겼다.
+  - publish_site.py contract_docs()는 제목을 `\((.*?)\)`(가장 짧게)로 읽어, 안쪽 첫 닫는 괄호에서 끊었다.
+  - selftest는 grain이 있는지만 보고 괄호가 맞는지는 보지 않았다. 1회차 시험은 이 제목을 고치기 전 빌드라 드러나지 않았다.
+  - 데이터 레포(공개 중)의 catalog.json은 고치기 전 제목이라 "최근 6개월 신규 전월세 계약 한 건"으로 온전하다(2026-11-22 확인). 공개된 적은 없다.
+- 처방:
+  - 제목 줄 한 줄만 보고 바깥 괄호까지 읽는다: `re.match(r"(\w+) \((.*)\)\s*$", block.splitlines()[0])`.
+  - selftest 2c에 grain의 여는·닫는 괄호 수가 같은지 더했다.
+  - 다시 만든 사이트에서 네 표의 "이 표의 한 줄은 ..." 문장이 모두 온전한지 확인했다.
+- 상태: **처방함.**

@@ -1284,3 +1284,61 @@
 - A5 첫 실제 전송 (2026-11-15 20:55~21:07, main 동기화 뒤 `0bd1ac5`): `--data S1 --publish` 1회. 판정 pass(G1~G5 통과, 16턴, 701.0초, SDK 계산값 0.941 USD), 운영 변화 0. push 단계에서 403(토큰이 이 레포에 접근 권한 없음, F-36)으로 실패해 PR·Slack 0건, 원격 `agent/` 브랜치 0. 보고·로그·`pr.json`·`slack.json`에서 `github_pat_`, `hooks.slack.com/services/`, `x-access-token` 0건. 실제 PR·Slack, 멱등 조회, main 직접 push 거절은 토큰을 고친 뒤 다시 함(아래 줄).
 - A5 실제 전송 2회째 (21:16~21:28, 토큰 레포 선택과 Contents 쓰기를 사용자가 고친 뒤, 먼저 `git push --dry-run` rc 0 확인): `--data S1 --publish` 1회. 판정 pass(G1~G5 통과, 17턴, 708.2초, 0.946 USD), 운영 변화 0. **PR [sozerong/home_in_seoul#2](https://github.com/sozerong/home_in_seoul/pull/2) 열림**(브랜치 `agent/s1-20261115211649`, 바뀐 파일 3, 병합 안 함, 그 커밋 CI `check` 통과). **Slack HTTP 200**(메시지: 신호 출처, 판정, PR 링크). push부터 Slack까지 3.6초. 멱등: 같은 브랜치로 다시 조회하면 PR 2를 돌려줌(PR을 다시 열지 않고 원격 조회만, 레포 PR 수 2 그대로). main 직접 push(빈 커밋): rc 1, `GH013: Repository rule violations` - "Changes must be made through a pull request", "Required status check \"check\" is expected". GitHub main은 0bd1ac5 그대로(`logs/agent/a5_checks.txt`). 토큰·웹훅 문자열(`github_pat_`, `hooks.slack.com/services/`, `x-access-token`)은 보고·로그·`pr.json`·`slack.json`·PR 본문 어디에도 0건.
 - A5 한계: 1회. 실데이터 신호를 받은 `agent_triage` DAG가 PR까지 보내는 경로, needs_decision 라벨, fail의 draft, Slack 실패 경로는 돌지 않았다. `.env`의 `SLACK_WEBHOOK_URL`은 wh_load `report`와 `dags/alerting.py`도 읽어(결정 86), 이 주소가 생긴 뒤로 운영 알림도 같은 채널로 간다.
+
+## 측정 56. 공개 정적 사이트(GitHub Pages)에서 Parquet 범위 요청 (결정 113, handoff_pages.md P3, 2026-11-22)
+- 예측 (측정 전에 적음): GitHub Pages가 범위 요청을 지원하면(`Accept-Ranges: bytes`, `curl -r 0-99`에 206), DuckDB(httpfs)의 한 컬럼 집계가 받은 바이트는 파일 전체(rent_listing.parquet 480,288 B)보다 작다. 이 파일은 62,691행이라 pyarrow 기본값으로 행 그룹이 1개다. 그래서 줄어드는 몫은 행 그룹 건너뛰기가 아니라 컬럼 청크 고르기에서만 나온다. 받는 양은 푸터(스키마·통계) + monthly_rent_10k_won 컬럼 청크 정도로 본다.
+- 방법: 공개 URL `https://sozerong.github.io/home_in_seoul-data/v2026.11.16/rent_listing.parquet`. (1) `curl -sI`로 응답 머리글, (2) `curl -s -r 0-99 -o NUL -w "%{http_code} %{size_download}"`, (3) DuckDB에서 `EXPLAIN ANALYZE SELECT median(monthly_rent_10k_won) FROM '<URL>'`의 HTTP 통계(요청 수, 받은 바이트). 실행마다 새 프로세스라 DuckDB 캐시를 다시 쓰지 않는다. 3회. 대조로 모든 컬럼을 읽는 `SELECT count(*), max(build_year), max(dong_nm), max(deal_date), max(excl_area_m2), max(house_type) ...`도 3회.
+- 조건: 2026-11-22 13:56~14:10 KST, Ryzen 7 7800X3D, RAM 63GB, Windows 11, 집 회선. curl 8.9.0(Schannel). DuckDB 2.0.0(`.venv`) + httpfs 확장(`77392a7207`, 이 측정 때 `INSTALL httpfs`로 받음). 공개 버전 v2026.11.16, 데이터 레포 커밋 `ebba93e`. 실행마다 새 Python 프로세스. 시간은 `EXPLAIN ANALYZE` 호출 전후 벽시계(참고용).
+- 공개 파일 확인: 공개 URL에서 받은 8개 파일의 바이트 수와 sha256이 공개 manifest와 모두 같다.
+- 응답 머리글(`curl -sI`): `HTTP/1.1 200`, `Content-Length: 480288`, `Accept-Ranges: bytes`, `Cache-Control: max-age=600`, `Via: 1.1 varnish`, `X-Served-By: cache-icn...-ICN`, `X-Cache: HIT`. `Content-Encoding` 없음.
+- 범위 요청(`curl -r 0-99`): 3회 모두 `206`, 받은 100 B, `Content-Range: bytes 0-99/480288`. 끝에서부터 읽기(`-r -8`)도 Parquet 끝 표지 `PAR1`을 돌려준다.
+- 파일 구조(pyarrow 메타데이터): 480,288 B, 행 그룹 1개(62,691행), 푸터 메타데이터 2,851 B, 13개 컬럼 청크(SNAPPY). `monthly_rent_10k_won` 청크 71,930 B.
+
+| 질의 | DuckDB 설정 | 받은 바이트 (3회) | GET (HEAD) | 시간 ms |
+|---|---|---|---|---|
+| 한 컬럼 `median(monthly_rent_10k_won)` | 기본값 | 469.0 KiB, 469.0, 469.0 | 1 (1) | 132, 100, 101 |
+| 모든 컬럼 `sum(hash(COLUMNS(*)))` | 기본값 | 469.0 KiB, 469.0, 469.0 | 1 (1) | 87, 102, 102 |
+| 한 컬럼 | `enable_external_file_cache=false` | **86.2 KiB**, 86.2, 86.2 | 2 (1) | 115, 98, 93 |
+| 모든 컬럼 | `enable_external_file_cache=false` | 482.2 KiB, 482.2, 482.2 | 2 (1) | 134, 134, 116 |
+
+- 원인을 가른 1회 시험: `disable_parquet_prefetching=true`만 켜면 538.9 KiB/GET 6. 캐시를 끄고 프리페치도 끄면 74.0 KiB/GET 12. 캐시 블록 상한을 64 KiB로(`external_file_cache_remote_max_block_size=65536`) 줄이면 93.0 KiB/GET 3. 더 큰 commute_od.parquet(2,051,756 B = 1.96 MiB)도 기본값에서 한 컬럼, 모든 컬럼 모두 1.9 MiB/GET 1.
+- 처음 대조로 쓴 `max(COLUMNS(*))`는 캐시를 끄면 16.0 KiB/GET 1만 받았다. 최댓값을 푸터의 컬럼 통계(min/max)로 답해 데이터 페이지를 읽지 않은 것으로 본다. 그래서 대조 질의를 모든 값을 읽는 `sum(hash(...))`로 바꿨다.
+- **예측은 기본 설정에서 틀렸다.** GitHub Pages는 범위 요청을 지원하지만, DuckDB 2.0.0 기본값은 이 파일을 GET 한 번에 통째로 받는다(469.0 KiB = 480,288 B). 캐시를 끄면 예측대로 한 컬럼 집계가 파일의 18%(86.2 / 469.0 KiB)만 받는다.
+- 원인 세 단계:
+  - 현상: 기본값에서 받은 바이트 = 파일 크기, GET 1번. 캐시를 끄면 GET 2번에 86.2 KiB.
+  - 자료구조: Parquet는 끝에 푸터(스키마, 컬럼 청크 위치·크기, 통계)가 있다. 읽는 쪽은 먼저 끝부분을 받아 푸터를 읽고, 필요한 컬럼 청크의 바이트 구간만 받는다. 캐시를 끈 한 컬럼 집계의 86.2 KiB(약 88,270 B, DuckDB가 KiB 소수 한 자리로만 보여 줌)는 끝부분 첫 GET 16 KiB(통계만 쓰는 질의가 받은 16.0 KiB와 같은 크기)와 `monthly_rent_10k_won` 청크 71,930 B의 합(88,314 B)에 가깝다. 행 그룹이 1개라 행 그룹 건너뛰기는 없다.
+  - 운영체제·네트워크: 서버(GitHub Pages 앞의 Fastly varnish CDN)는 HTTP Range를 받아 206을 준다. DuckDB 2.0.0의 외부 파일 캐시는 원격 읽기를 최대 2 MiB(`external_file_cache_remote_max_block_size = 2097152`) 블록으로 맞춘다. 그래서 2 MiB보다 작은 파일은 첫 읽기에서 블록 하나로 통째로 받는다. 요청 수를 줄이는 대신 바이트를 더 받는 선택이다. 같은 질의를 같은 프로세스에서 다시 돌리면 다시 받지 않는다(이번에는 프로세스마다 새로 시작해 이 이득은 재지 않았다).
+- 한계: 파일 하나(2 MiB 아래)만 쟀다. 2 MiB보다 큰 공개 파일이 없어 기본값에서 범위 요청 이득이 보이는 크기는 재지 못했다. CDN 캐시 HIT 상태에서 쟀다. 브라우저 DuckDB-WASM(sql.html)의 요청은 이번에 재지 않았다.
+
+## 측정 57. 브라우저 SQL 엔진 후보별 첫 로딩과 예시 질의 (결정 116, handoff_portal.md Q6b, 2026-11-22)
+- 예측 (측정 전에 적음): jsDelivr의 두 판(1.33.1-dev57.0, 1.32.0)은 예시 질의가 모두 돌고, 첫 로딩 시간 차이는 반복 사이 흔들림보다 작다. unpkg는 `+esm` 변환이 없어 import부터 실패할 수 있다.
+- 방법:
+  - `python -m warehouse.publish_site --version v2026.11.16`으로 만든 사이트에 index.html 사본 3개(engine_dev57, engine_v132, engine_unpkg57.html)를 두었다.
+  - 각 사본은 module 앞에 `window.DUCKDB_ESM`만 다르게 넣었다:
+    - jsDelivr `@1.33.1-dev57.0/+esm`
+    - jsDelivr `@1.32.0/+esm`
+    - unpkg `@1.33.1-dev57.0/dist/duckdb-browser.mjs`
+  - 범위 요청을 지원하는 로컬 서버(표준 라이브러리 `http.server` 확장, 127.0.0.1:8766)로 냈다.
+  - headless Chrome을 node 24의 CDP 스크립트로 조종했다(새 프로필, `Network.setCacheDisabled`).
+  - `#/sql?q=SELECT 1`로 열어 첫 질의 상태 줄이 나올 때까지의 `performance.now()`를 "첫 질의까지"로 적었다. 엔진 내려받기, 초기화, 표 4개 뷰 생성(Parquet 푸터 읽기)이 들어 있다.
+  - 이어 예시 질의 8개를 차례로 돌려 화면에 표시된 질의 시간(ms)을 적었다.
+  - 순서는 dev57 → v132 → unpkg를 3바퀴 돌렸다.
+- 조건: 2026-11-22 15:39 KST, Ryzen 7 7800X3D, RAM 63GB, Windows 11, 집 회선, Chrome(설치본, headless=new), node v24.19.0. 엔진 파일은 실제 jsDelivr·unpkg CDN에서 받고, 데이터는 로컬에서 받았다.
+- 결과:
+
+| 후보 | 첫 질의까지 ms (3회) | 예시 질의 성공 | 예시 질의 ms (1회차, 8개) | 콘솔 오류 | 엔진 안 DuckDB |
+|---|---|---|---|---|---|
+| (가) jsDelivr 1.33.1-dev57.0 | 3,877 / 2,289 / 2,963 | 8/8, 8/8, 8/8 | 16, 109, 36, 6, 15, 7, 7, 3 | 0 | v1.5.4 |
+| (라) jsDelivr 1.32.0 | 3,811 / 3,020 / 3,251 | 8/8, 8/8, 8/8 | 16, 113, 35, 6, 20, 6, 7, 3 | 0 | v1.4.3 |
+| (나) unpkg 1.33.1-dev57.0 | 237 / 421 / 347 (실패까지) | 0/8 ×3 | - | 0 (오류는 화면 표시) | - |
+
+- unpkg 실패 글: `Failed to resolve module specifier "apache-arrow". Relative references must start with either "/", "./", or "../".` (3회 같음)
+- 예측과 비교: 맞았다. 두 jsDelivr 판의 첫 질의 시간은 3회 범위가 겹친다(2,289~3,877 vs 3,020~3,811). 질의 시간도 같은 수준이다(가장 느린 SUMMARIZE 109~123 ms vs 109~113 ms).
+- 원인 세 단계:
+  - 현상: 첫 질의까지 2.3~3.9초. 질의 자체는 3~123 ms.
+  - 자료구조: 첫 로딩의 대부분은 엔진 wasm(eh 판 약 34~36 MB, jsDelivr data API)을 받고 컴파일하는 시간이다. 표 뷰를 만들 때는 Parquet 푸터만 읽는다.
+  - 운영체제·네트워크: 엔진은 CDN에서, 데이터는 같은 PC에서 받았다. 그래서 첫 로딩의 흔들림은 CDN 응답과 회선 쪽이다.
+- 한계:
+  - 데이터를 로컬에서 받아, 실제 Pages(Fastly)에서 데이터를 받는 시간은 들어 있지 않다.
+  - 3회뿐이다.
+  - (다) 직접 호스팅은 재지 않았다. 로컬에서 재면 CDN 거리가 빠져 비교가 맞지 않고, 버린 이유가 크기와 관리 비용이기 때문이다.
