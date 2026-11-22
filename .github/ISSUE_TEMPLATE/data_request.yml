@@ -1,0 +1,43 @@
+# 공개 데이터 포털의 "문의·오류 신고" 링크가 여는 양식 (결정 121, handoff_delivery.md P2)
+name: 데이터 오류 신고·요청
+description: 공개 데이터(서울 행정동 주거 지표)의 오류를 알리거나 새 컬럼·테이블을 요청합니다
+title: "[데이터] "
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 종류
+      options:
+        - 오류 신고 (값이 틀리거나 설명과 다름)
+        - 새 요청 (컬럼, 테이블, 기간 추가)
+        - 질문
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 무엇을
+      description: 무엇이 이상한지, 또는 무엇이 필요한지 적어 주세요. 오류라면 기대한 값과 실제 값을 함께 적어 주세요
+    validations:
+      required: true
+  - type: input
+    id: table_column
+    attributes:
+      label: 테이블·컬럼
+      placeholder: "예: dong_profile.monthly_median_rent_10k_won"
+    validations:
+      required: true
+  - type: input
+    id: version_period
+    attributes:
+      label: 버전·기간
+      description: 포털 오른쪽 위의 버전, 그리고 관련 기간이 있으면 함께
+      placeholder: "예: v2026.11.16, 계약월 202608"
+    validations:
+      required: true
+  - type: textarea
+    id: sql
+    attributes:
+      label: 확인한 SQL (있으면)
+      description: SQL 편집기에서 돌린 질의를 붙이면 같은 결과를 바로 재현할 수 있습니다
+      render: sql

@@ -1345,3 +1345,115 @@
   - 출처 화면의 이용조건 글(예: SGIS 통합 이용약관 제15조)은 법적 근거라 원문 그대로 둔다.
   - 실제 Pages에서의 확인은 사용자 배포 뒤.
 
+
+## 결정 118. 사이트 변경은 코드 레포 Actions가 deploy key로 데이터 레포에 푸시해 배포한다 (handoff_deploy.md D2)
+사용자 위임(2026-11-22 지시), Claude Code가 고름
+- 상황:
+  - 코드 레포(sozerong/home_in_seoul)에서 사이트 문구를 고쳐도 공개 사이트(https://sozerong.github.io/home_in_seoul-data/)는 바뀌지 않는다. 사용자가 PC에서 `publish_site` 실행, `cd`, `git add/commit/push`를 손으로 해야 한다(README 5절). 2026-11-22에 코드 레포만 커밋하고 데이터 레포는 안 올라간 줄 몰랐던 일이 실제로 있었다.
+  - 사이트 파일을 만드는 데 필요한 입력(코드 레포 파일, 데이터 레포의 공개 버전 폴더)은 모두 GitHub에 있다. `product/`는 필요 없다(D1 `--site-only`).
+  - 2026-11-22 `gh api`로 확인한 레포 상태:
+    - 데이터 레포: 공개, Pages 소스는 `main` 루트(legacy 빌드), ruleset과 브랜치 보호 없음, Actions 켜짐, 기본 워크플로 권한 read.
+    - 코드 레포: main에 ruleset "PROTECT"(PR 필수, 상태 검사 `check` 필수, 강제 푸시·삭제 금지), 기본 워크플로 권한 read.
+- 선택지:
+
+| 후보 | 비밀 값 | 장점 | 단점 |
+|---|---|---|---|
+| (가) 그대로(README 순서를 손으로) | 없음 | 더하는 것 없음 | 2026-11-22에 실제로 빠뜨렸다. 머지할 때마다 사람이 기억해야 한다 |
+| (나) 코드 레포 Actions가 데이터 레포에 푸시, deploy key | deploy key 하나(데이터 레포 하나에만, git 쓰기만) | 머지 직후 바로 돈다. 워크플로 파일 1개가 코드와 같은 레포에 있어 같은 PR로 바뀐다 | 키에 만료가 없어 새면 사람이 지워야 한다. 키 등록이 사용자 몫(3곳 클릭) |
+| (나') 위와 같되 fine-grained PAT(데이터 레포 contents 쓰기만) | PAT 하나 | (나)와 같다 | 계정에 묶인 토큰이고 REST API까지 쓴다. 만료(1~366일 또는 없음)를 관리해야 한다 |
+| (다) 데이터 레포 Actions가 공개 코드 레포를 읽어 스스로 갱신(schedule), GITHUB_TOKEN으로 자기 레포에 푸시 | 없음 | 비밀 값이 없다 | **GITHUB_TOKEN으로 푸시한 커밋은 Pages 빌드를 일으키지 않는다**(공식 문서). 공개 레포의 schedule은 60일 활동이 없으면 꺼지고, 부하 때 늦어지거나 빠진다. 반영까지 schedule 간격만큼 늦다 |
+| (라) Pages 소스를 "GitHub Actions"로 바꾸고 사이트 파일은 아티팩트로만 | (다)와 같다(시작 신호를 코드 레포에서 주려면 비밀 값 필요) | Pages 빌드 제한(시간당 10회)이 없다 | Pages 설정을 바꿔야 하고, 데이터 레포만 clone한 사람에게 사이트 파일이 없다. 되돌리기가 설정 변경이다 |
+
+  - 근거로 읽은 공식 문서(2026-11-22 확인):
+    - GITHUB_TOKEN 권한은 워크플로가 든 레포로 한정: https://docs.github.com/en/actions/concepts/security/github_token
+    - GITHUB_TOKEN 푸시는 Pages 빌드를 일으키지 않음: https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site
+    - GITHUB_TOKEN 이벤트는 새 워크플로를 만들지 않음(workflow_dispatch, repository_dispatch 예외): https://docs.github.com/en/actions/using-workflows/triggering-a-workflow
+    - deploy key는 레포 하나, 쓰기 권한 선택 가능, 만료 없음: https://docs.github.com/en/authentication/connecting-to-github-with-ssh/managing-deploy-keys
+    - fine-grained PAT는 레포 하나·contents 쓰기로 좁힐 수 있고, 만료는 1~366일 또는 없음: https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens
+    - schedule은 공개 레포에서 60일 활동이 없으면 꺼지고 부하 때 늦어지거나 빠짐: https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#schedule
+    - Pages 사이트 1 GB, 시간당 빌드 10회(소프트), 배포 10분 시간 제한: https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
+    - actions/checkout의 `ssh-key`는 뒤의 git 명령에도 쓰이고 작업 끝에 지워짐: https://github.com/actions/checkout
+- 결정과 이유: **(나) deploy key.**
+  - (다)·(라)는 비밀 값이 없지만 (다)는 공식 문서상 Pages 빌드가 일어나지 않아 목적을 못 이룬다. (라)는 Pages 설정을 바꾸고 데이터 레포의 모습을 바꾼다.
+  - (나)와 (나') 중에서는 deploy key가 더 좁다. 레포 하나의 git 접근뿐이고 API를 못 쓰며 계정에 묶이지 않는다. 만료가 없는 대신 새면 데이터 레포 Settings에서 지우면 끝난다.
+  - 워크플로 `.github/workflows/deploy_site.yml` 하나를 더한다:
+    - 시작 조건: main 푸시 중 `--site-only`가 읽는 파일이 바뀐 것, 그리고 손으로 돌리기(workflow_dispatch).
+    - 같은 그룹은 한 번에 하나(`concurrency`, 앞 실행을 취소하지 않음).
+    - 코드 레포 권한은 `contents: read`.
+    - `--site-only`로 만들고, 바뀐 것이 없으면 커밋하지 않는다. 공개 버전 폴더에 git 변경이 하나라도 있으면 푸시하지 않고 실패한다. `.gitattributes`(* -text)가 적용됐는지 `git check-attr`로 본다.
+    - 커밋 메시지에 코드 레포 커밋 SHA를 넣는다.
+  - CI(`ci.yml`)에 `--selftest --site-only`를 더해, PR 단계에서 사이트 만들기가 깨지면 머지 전에 빨간 X가 뜬다(ruleset의 필수 검사 `check`).
+- 검증 (2026-11-22, 로컬. 측정 58):
+  - Windows와 Linux 컨테이너에서 `--site-only`로 만든 17개 파일과 데이터 레포(7884f26)의 17개 파일 sha256이 모두 같다. 그래서 첫 자동 실행은 바뀐 것이 없으면 커밋을 만들지 않을 것으로 본다.
+  - 워크플로의 커밋·푸시 단계를 로컬 bare 레포를 원격으로 두고 그대로 돌렸다. 바뀐 것 없음은 커밋 없이 exit 0, 사이트 파일 변경은 봇 커밋과 푸시, 공개 버전 폴더 변경은 exit 1이고 원격은 그대로였다.
+  - actionlint 1.7.12(Docker 이미지 rhysd/actionlint, shellcheck 포함): 두 워크플로 오류 0. 일부러 틀린 사본(`runs-onn`, `github.shaa`)은 오류 3개로 잡았다.
+- 결과와 남은 것:
+  - **deploy key로 푸시한 커밋이 Pages 빌드를 일으키는지는 공식 문서에 없다** [확인 필요]. 문서는 GITHUB_TOKEN만 제외한다. 사용자 머지 뒤 첫 실행(handoff_deploy.md 3절 5번)에서 확인한다. 안 되면 워크플로 끝에 Pages 빌드 요청을 더하거나 (나')로 바꾼다.
+  - 키 만들기·등록, 첫 실행 확인은 사용자 몫이다(README 5절).
+  - 비밀 값이 없으면 워크플로는 데이터 레포 checkout에서 실패한다(빨간 X). 조용히 넘어가지 않는다.
+
+## 결정 119. 새 데이터 버전 공개는 사람이 고른 버전만 손으로 한다 (handoff_deploy.md D3)
+사용자 위임(2026-11-22 지시), Claude Code가 고름
+- 상황:
+  - 새 상품 버전은 로컬 Airflow `wh_load`의 `export_product`가 `product/v{오늘}/`에 만든다(dags/wh_load.py 9, 40~41행). 일정이 아니라 스테이징 Asset 갱신으로 돌고, 같은 날 다시 돌면 그 폴더를 새로 만든다.
+  - `product/`는 사용자 PC에만 있다(.gitignore). Airflow 컨테이너에는 레포(`./:/opt/project`)만 마운트되고 데이터 레포 폴더는 없다(docker-compose.yml 22~29행).
+  - 공개 버전 폴더는 불변이라 한 번 올린 버전은 지울 수 없고 다음 버전으로만 덮는다.
+  - 2026-11-22 로컬 `product/`에는 2026-10-21~2026-11-16(27일)에 만든 버전이 12개 있다. 공개 버전 폴더 하나는 22 MB(v2026.11.16, `du -sh`)다.
+- 선택지:
+  - (가) 손으로 둔다: 공개할 버전을 사람이 골라 README 5절 순서로 올린다. 사이트 변경은 결정 118이 맡는다.
+    - 장점: 더하는 것이 없고, 불변 폴더에 들어가기 전에 사람이 한 번 본다.
+    - 단점: 명령 몇 줄을 사람이 친다.
+  - (나) Airflow 태스크가 공개까지: `export_product` 뒤 태스크가 publish, 커밋, 푸시.
+    - 장점: 손이 안 간다.
+    - 단점: 컨테이너에 git, 데이터 레포 마운트, `.env`에 쓰기 키가 필요하다. 내보낼 때마다 22 MB가 불변 폴더로 쌓인다. 지난 27일 속도(12개)면 한 달 약 290 MB이고, Pages 사이트 1 GB 한도(공식 문서)에 약 3~4달이면 닿는다. 같은 날 고쳐 다시 내보낸 버전은 이미 공개된 같은 이름과 달라 실패한다.
+  - (다) Airflow는 커밋까지, 푸시는 사람이: (나)의 마운트·git 문제는 같고, 사람이 하는 일은 (가)에서 한 줄 줄어들 뿐이다. 커밋이 쌓인 뒤 고르기도 어렵다.
+  - (라) 상품 파일을 GitHub Release에 올리고 결정 118의 워크플로가 받아 가기: 올리는 데 결국 토큰과 손이 필요하고, 고를 것이 Release로 옮겨 갈 뿐이다.
+- 결정과 이유: **(가).**
+  - 내보내기 빈도(27일에 12개)와 불변·1 GB 한도를 보면 모든 내보내기를 공개하는 것은 맞지 않고, 무엇을 공개할지는 사람이 고르는 일이다.
+  - 사용자가 겪은 문제(사이트 문구 변경이 안 올라감)는 결정 118이 없앤다. 남는 손일은 새 데이터 버전을 공개할 때뿐이다.
+  - `public_columns.json`의 `public` 값은 어느 경우든 사용자가 정한다. 계약 컬럼이 바뀌면 `check_public_columns`가 공개를 멈춘다.
+- 검증:
+  - 손으로 올리는 순서는 같은 날 실제로 쓴 순서다(측정 56, F-37). README 5절에 cmd와 PowerShell 명령을 함께 적었다.
+  - 사람이 올린 뒤 결정 118의 워크플로가 같은 사이트 파일을 다시 만들어도 Windows와 Linux 결과가 같은 바이트라 덮어쓰기 커밋이 생기지 않는다(측정 58).
+- 결과와 남은 것:
+  - 손으로 올리기 전에 `git pull`을 해야 한다. 그 사이 봇이 사이트 파일을 푸시했으면 그냥 푸시는 거절된다.
+  - 공개 빈도가 늘거나 1 GB에 가까워지면 옛 버전을 어떻게 할지 다시 정한다(지금은 1개, 22 MB).
+
+## 결정 120. 공개 데이터에 데이터 상품 카드와 변경 정책을 두고, 버전 간 컬럼 삭제·형 변경은 사유 표시가 없으면 공개하지 않는다 (handoff_delivery.md 1절, P1, P3, P5)
+사용자 위임(2026-11-22 지시), 카드 문구는 Claude Code가 지시서와 DAG 일정에서 옮김. 사용자 확정 필요
+- 상황:
+  - 포털에 주인, 문의 창구, 공개 주기, 버전 간 변경 내용이 없었다. 이용 안내 FAQ "데이터는 언제 갱신되나요?"는 수집 주기만 적어 "매주 새 버전이 나온다"로 읽혔는데, 실제 공개는 사람이 고른 버전만 한다(결정 119). 공개 버전은 v2026.11.16 하나다.
+  - 버전 기록 탭에는 행 수, 용량, sha256만 있었다. 다음 버전에서 컬럼이 빠지거나 형이 바뀌어도 받는 쪽이 알 길이 없었다.
+  - 정수 컬럼의 예시값이 "71.0"처럼 보였다(`example()`이 중앙값을 그대로 글자로 바꿈).
+- 선택지:
+  - 카드 값을 둘 곳
+    - (가) `docs/public_columns.json`의 `card`: 장점은 컬럼 사전·이용조건과 같은 파일 하나에서 오고, 이미 있는 `check_public_columns`가 필수 항목을 검사할 수 있다는 것. 단점은 사이트용 파일에 운영 문구가 섞인다는 것.
+    - (나) index.html에 직접: 장점은 파일이 하나 덜 바뀐다는 것. 단점은 catalog.json(기계가 읽는 쪽)과 정적 요약에 빠지고, 비어도 아무도 모른다는 것.
+  - 변경 기록을 만드는 곳
+    - (가) `publish_site`가 공개 버전 manifest끼리 비교: 장점은 공개된 것끼리 비교하고(비공개 컬럼 제외 후), 데이터 레포만 있으면 CI에서도 돈다는 것. 단점은 비교 코드가 하나 더 생긴다는 것.
+    - (나) 상품 manifest의 `schema_changes`를 그대로 보이기: 장점은 이미 있다는 것. 단점은 직전 "상품" 버전 대비라 공개하지 않은 버전들 사이 변화가 섞이고, 비공개 컬럼 변화까지 보인다는 것.
+- 결정과 이유: 둘 다 (가).
+  - 카드: `public_columns.json` `card`에 주인, 문의 주소와 이름, 수집 주기, 공개 주기, 변경 정책 3줄을 둔다. 하나라도 비면 `check_public_columns`가 공개를 멈춘다. catalog.json `card`, 포털 홈 맨 위 카드, 머리글 "문의·오류 신고" 링크, 정적 요약(JavaScript 없이 읽는 쪽)에 같은 값이 나온다. 수집 주기 문장은 `dags/molit_rent.py`(매주 월요일), `dags/seoul_api.py`(매주 월요일), `dags/file_sources.py`(생활이동 매월 21일 대기, 상가·경계는 일정 없음)에서 옮겼다. 공개 주기는 "비정기, 사람이 고른 버전만(결정 119), 날짜 약속 없음"이다. 지킬 수 없는 약속을 적지 않았다.
+  - 홈 카드에 "마지막 공개 vYYYY.MM.DD (날짜, n일 전)"과 직전 대비 변경 요약을 띄운다. 경과일은 catalog `versions[].created_at`으로 브라우저가 계산한다(새 데이터 필요 없음).
+  - 변경 기록: `version_changes`가 공개 버전마다 직전 공개 버전 manifest와 비교해 추가·삭제·형 변경 컬럼, 행 수, 품질 지표, 출처 기준일 변화를 catalog `versions[].changes`에 싣는다. 스키마 비교는 `export_product.schema_changes`를 다시 쓴다(그래서 배포 워크플로 대상 경로에 `warehouse/export_product.py`를 더했다). 표가 통째로 빠져도 잡히게 빈 목록을 깐다.
+  - 강제: 빠진 컬럼, 형이 바뀐 컬럼 집합이 `public_columns.json` `column_changes[버전]`의 `removed`/`changed` 표시(사유 포함)와 다르면 아무것도 쓰지 않고 실패한다. 직전 버전이 없는 버전(첫 공개)에 단 표시도 실패한다. 변경 정책 3번(지우지 않고 더한다, 꼭 지우면 미리 알린다)을 사람이 잊어도 공개 단계에서 멈춘다.
+  - 예시값: 컬럼 형이 smallint, integer, bigint면 중앙값을 내림한 정수로 보인다. 지금 정수 컬럼 중앙값은 모두 정수라 값은 그대로고 ".0"만 사라진다.
+- 검증:
+  - `python -m warehouse.publish_site --selftest --site-only --out ..\home_in_seoul-data` 통과(2026-11-22). S5: 실제 공개 버전에서 `dong_profile.laundry`를 뺀 가짜 다음 버전(v2099.12.31)으로 표시 없음, 사유 빈 표시, 첫 버전에 단 표시가 모두 실패하고 폴더가 그대로임, 사유를 달면 catalog에 사유와 함께 실림. S6: 카드 필수 항목(contact_url 빠짐, 변경 정책 빈 목록)이 비면 실패.
+  - 표 하나가 통째로 빠진 경우를 `version_changes`에 직접 넣어 실패하고, 표시하면 그 컬럼이 removed로 실림을 확인했다(일회성, 2026-11-22).
+  - headless Chrome으로 다시 만든 사이트의 홈, 버전 기록, 이용 안내, 스키마 화면을 열어 콘솔 오류 0, 문의 링크 주소가 양식 주소, 카드 "마지막 공개 v2026.11.16 (2026-11-16, 6일 전)"을 확인했다. `monthly_deals` 예시는 "71"이다.
+- 결과와 남은 것:
+  - 공개 버전이 하나뿐이라 실제 두 버전 비교는 시험 버전으로만 봤다. 다음 공개 때 버전 기록 탭에서 처음 보인다.
+  - 이름 변경은 삭제 + 추가로 보인다. 같은 이름에서 뜻이나 단위가 바뀐 것은 잡지 못한다(guarantees 2.7).
+  - 생활이동 검증 제외 행 31,935,758의 사유별 내역(P4)은 하지 않았다. 공개 manifest의 품질 지표는 불변이라 새 상품 버전이 필요하고, 그때 DB에서 규칙별 행 수를 세야 한다.
+  - 카드 문구와 변경 정책 문장은 봇 프로젝트와 같은 규격이어야 한다(지시서 1절). 봇 쪽 적용은 이 레포 범위 밖이다.
+
+## 결정 121. 문의와 오류 신고는 코드 레포(home_in_seoul) GitHub 이슈 양식으로 받는다 (handoff_delivery.md P2)
+사용자 위임(2026-11-22 지시), 지시서 추천안대로 Claude Code가 고름. 사용자 확정 필요
+- 상황: 포털 어디에도 문의, 담당, 이슈 링크가 없었다(`warehouse/site/index.html`에서 문의·담당 grep 0건). 오류를 발견한 사람이 알릴 곳이 없었다.
+- 선택지:
+  - (가) 코드 레포(sozerong/home_in_seoul) 이슈: 장점은 고칠 코드와 문서가 있는 곳이고, 요청은 결국 파이프라인 코드를 바꾼다는 것. 단점은 포털(데이터 레포)과 주소가 다르다는 것.
+  - (나) 데이터 레포(sozerong/home_in_seoul-data) 이슈: 장점은 포털과 같은 곳. 단점은 데이터 레포가 사이트 파일과 공개 버전만 담는 곳이라 고칠 것이 없고, 양식 파일을 그 레포에 따로 관리해야 한다는 것. 확인해 보니 `site_files`는 `.github`를 쓰지 않고 배포 워크플로의 `git add -A`도 지우지 않으므로 양식이 지워질 걱정은 없다.
+- 결정과 이유: **(가).** 주소가 다른 단점은 포털 머리글과 홈 카드에 링크를 두어 한 번 눌러 양식으로 가게 해서 줄였다. 양식(`.github/ISSUE_TEMPLATE/data_request.yml`) 항목은 종류(오류 신고, 새 요청, 질문), 무엇을, 테이블·컬럼, 버전·기간, 확인한 SQL(선택)이다. 링크 주소는 `public_columns.json` `card.contact_url` 하나에서 온다.
+- 검증: 양식 YAML을 파서로 읽어 확인했다. 포털 모든 화면 머리글에 "문의·오류 신고"가 보이고 주소가 `https://github.com/sozerong/home_in_seoul/issues/new?template=data_request.yml`임을 headless Chrome으로 확인했다. 양식이 GitHub에서 실제로 열리는지는 main에 머지된 뒤에야 볼 수 있다 [확인 필요].
+- 결과와 남은 것: 이슈를 받은 뒤 답하는 기한은 약속하지 않았다(1인 운영).

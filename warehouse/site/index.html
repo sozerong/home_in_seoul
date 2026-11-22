@@ -101,6 +101,7 @@ pre.code{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:8px;ov
 .lbl{font-weight:600}.eng{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
 .hint{background:#fff;border:1px dashed #f6c7c2;border-radius:6px;padding:8px 12px;font-size:12.5px;margin:0 0 8px}.hint ul{margin:4px 0 0;padding-left:18px}
 details.ref{display:inline-block;color:var(--muted);font-size:11.5px;margin-left:4px}details.ref summary{cursor:pointer;text-decoration:underline dotted}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0 6px}.pcard .kv{display:grid;grid-template-columns:7.5em 1fr;gap:6px 14px;margin:8px 0 0}.pcard dt{color:var(--muted);font-weight:600}.pcard dd{margin:0}.pcard ol{margin:0;padding-left:18px}
 .faq dt{font-weight:600;margin-top:12px}.faq dd{margin:4px 0 0 0;color:var(--text)}.faq .ref{color:var(--muted);font-size:11.5px}
 @media (max-width:860px){.layout{grid-template-columns:1fr}aside{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line)}header nav a{padding:6px 6px}header .brand{display:none}}
 </style>
@@ -113,6 +114,7 @@ details.ref{display:inline-block;color:var(--muted);font-size:11.5px;margin-left
     <a href="#/sql" data-nav="sql">SQL 편집기</a>
     <a href="#/sources" data-nav="sources">출처·이용조건</a>
     <a href="#/help" data-nav="help">이용 안내</a>
+    <a id="contact" href="#" target="_blank" rel="noopener" hidden>문의·오류 신고</a>
   </nav>
   <div class="right"><label for="ver">버전</label><select id="ver" aria-label="데이터 버전"></select><span id="latestBadge"></span></div>
 </header>
@@ -341,6 +343,20 @@ function renderSide(active) {
 }
 
 // ---------- 화면: 목록(홈) ----------
+// 데이터 상품 카드(handoff_delivery.md 1절). 값은 catalog.card(public_columns.json card)와 최신 버전 기록에서 온다
+function cardHtml() {
+  const c = S.catalog.card, v = S.catalog.versions.find((x) => x.version === S.catalog.latest);
+  const days = Math.max(0, Math.floor((Date.now() - Date.parse(v.created_at)) / 86400000));
+  const ch = v.changes;
+  const change = ch ? `직전 공개 버전 ${ch.previous} 대비 추가 컬럼 ${ch.added.length}개, 빠진 컬럼 ${Object.keys(ch.removed).length}개, 형 변경 ${ch.type_changed.length}개` : '첫 공개 버전이라 비교할 직전 버전이 없습니다';
+  return `<div class="pcard"><b>데이터 상품 카드</b><dl class="kv">
+    <dt>주인·문의</dt><dd>${esc(c.owner)} · <a href="${esc(c.contact_url)}" target="_blank" rel="noopener">${esc(c.contact_label)}</a></dd>
+    <dt>마지막 공개</dt><dd><b class="mono">${esc(v.version)}</b> (${esc(v.created_at.slice(0, 10))}, ${days}일 전). ${esc(change)}. <a href="#/t/dong_profile/versions">버전 기록</a></dd>
+    <dt>공개 주기</dt><dd>${esc(c.publication_cycle)}</dd>
+    <dt>수집 주기</dt><dd>${esc(c.collection_cycle)}</dd>
+    <dt>변경 정책</dt><dd><ol>${c.change_policy.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></dd>
+    <dt>컬럼 사전</dt><dd>테이블마다 <b>스키마</b> 탭에 한글 이름, 단위, 설명, 예시값이 있습니다.</dd></dl></div>`;
+}
 async function viewHome() {
   const m = await manifest();
   const c = S.catalog;
@@ -348,7 +364,7 @@ async function viewHome() {
   const cols = c.datasets.reduce((a, d) => a + d.columns.length, 0);
   const bytes = c.datasets.reduce((a, d) => a + (fileOf(d, 'parquet')?.bytes || 0), 0);
   const nsrc = Object.keys(m.licenses).length;
-  const html = [`<h1>${esc(c.title)}</h1><p class="sub">${esc(c.description)}</p>`,
+  const html = [`<h1>${esc(c.title)}</h1><p class="sub">${esc(c.description)}</p>`, cardHtml(),
     `<div class="kpis"><div class="kpi"><b>${c.datasets.length}</b><span>테이블</span></div><div class="kpi"><b>${nf.format(rows)}</b><span>전체 행 수</span></div><div class="kpi"><b>${cols}</b><span>공개 컬럼</span></div><div class="kpi"><b>${nsrc}</b><span>출처 데이터</span></div><div class="kpi"><b>${fmtBytes(bytes)}</b><span>Parquet 용량</span></div><div class="kpi"><b class="mono" style="font-size:15px">${esc(S.version)}</b><span>버전 · 생성 시각 ${esc(m.created_at.slice(0, 16).replace('T', ' '))}</span></div></div>`,
     `<div class="guide"><b>이용 방법</b><ol><li>아래에서 테이블을 선택합니다.</li><li><b>스키마</b> 탭에서 컬럼 설명을 확인합니다.</li><li><b>SQL 편집기</b>에서 필요한 행만 조회하거나 <b>내려받기</b> 탭에서 파일을 받습니다.</li></ol><div style="margin-top:6px"><a href="#/help">용어 설명과 자주 묻는 질문</a></div></div>`,
     '<h2>테이블</h2><div class="cards">'];
@@ -488,13 +504,32 @@ function tabAccess(d) {
     snippet('내려받기와 체크섬 확인 (셸)', `curl -O ${pq}\nsha256sum ${d.identifier}.parquet\n# 기대값: ${fp.sha256}`),
   ].join('');
 }
+// 직전 공개 버전 대비 이 테이블의 변경(catalog.versions[].changes, handoff_delivery.md P3)
+function changesHtml(v, table) {
+  const c = v.changes;
+  if (!c) return '<span class="note">첫 공개 버전(비교 대상 없음)</span>';
+  const mine = (k) => k.startsWith(table + '.');
+  const items = [...c.added.filter(mine).map((k) => `추가: ${k}`),
+    ...Object.entries(c.removed).filter(([k]) => mine(k)).map(([k, r]) => `삭제: ${k} (${r})`),
+    ...c.type_changed.filter((x) => mine(x.column)).map((x) => `형 변경: ${x.column} ${x.from} → ${x.to} (${x.reason})`),
+    ...(c.rows[table] ? [`행 수: ${nf.format(c.rows[table][0])} → ${nf.format(c.rows[table][1])}`] : [])];
+  return items.length ? '<ul style="margin:0;padding-left:16px">' + items.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<span class="note">바뀐 것 없음</span>';
+}
 async function tabVersions(d) {
-  const h = ['<table class="grid"><tr><th>버전</th><th>생성 시각</th><th class="num">행 수</th><th class="num">Parquet 용량</th><th>SHA-256 (Parquet)</th><th>manifest.json</th></tr>'];
+  const h = ['<table class="grid"><tr><th>버전</th><th>생성 시각</th><th class="num">행 수</th><th class="num">Parquet 용량</th><th>직전 공개 버전 대비 변경</th><th>SHA-256 (Parquet)</th><th>manifest.json</th></tr>'];
   for (const v of S.catalog.versions) {
     const f = fileOf(d, 'parquet', v.version);
-    h.push(`<tr><td class="mono">${esc(v.version)}${v.version === S.catalog.latest ? ' <span class="badge ok">최신</span>' : ''}</td><td>${esc(v.created_at.replace('T', ' ').slice(0, 19))}</td><td class="num">${f ? nf.format(f.rows) : '-'}</td><td class="num">${f ? fmtBytes(f.bytes) : '-'}</td><td class="mono note">${f ? esc(f.sha256.slice(0, 16)) + '…' : '-'}</td><td><a href="${esc(v.manifest)}">manifest.json</a></td></tr>`);
+    h.push(`<tr><td class="mono">${esc(v.version)}${v.version === S.catalog.latest ? ' <span class="badge ok">최신</span>' : ''}</td><td>${esc(v.created_at.replace('T', ' ').slice(0, 19))}</td><td class="num">${f ? nf.format(f.rows) : '-'}</td><td class="num">${f ? fmtBytes(f.bytes) : '-'}</td><td>${changesHtml(v, d.identifier)}</td><td class="mono note">${f ? esc(f.sha256.slice(0, 16)) + '…' : '-'}</td><td><a href="${esc(v.manifest)}">manifest.json</a></td></tr>`);
   }
-  h.push('</table><p class="note">공개한 버전 폴더는 수정하지 않습니다. 같은 버전 이름으로 다른 내용을 올리면 생성 단계에서 실패합니다.</p>');
+  h.push('</table>');
+  const wide = S.catalog.versions.filter((v) => v.changes && (Object.keys(v.changes.quality).length || Object.keys(v.changes.sources).length));
+  if (wide.length) {
+    h.push('<h3>버전 전체의 변화(품질 지표, 데이터 기준 시점)</h3><table class="grid"><tr><th>버전</th><th>항목</th><th>직전</th><th>이번</th></tr>');
+    for (const v of wide) for (const [k, [a, b]] of [...Object.entries(v.changes.quality), ...Object.entries(v.changes.sources)])
+      h.push(`<tr><td class="mono">${esc(v.version)}</td><td>${esc(LABELS.quality[k] || LABELS.sources[k] || k)} <span class="note mono">${esc(k)}</span></td><td class="mono">${esc(a ?? '-')}</td><td class="mono">${esc(b ?? '-')}</td></tr>`);
+    h.push('</table>');
+  }
+  h.push(`<p class="note">변경 정책: ${S.catalog.card.change_policy.map(esc).join(' ')} 공개한 버전 폴더는 수정하지 않습니다. 같은 버전 이름으로 다른 내용을 올리면 생성 단계에서 실패하고, 직전 버전에서 빠지거나 형이 바뀐 컬럼에 사유 표시가 없어도 실패합니다.</p>`);
   return h.join('');
 }
 
@@ -637,7 +672,7 @@ const FAQ = [
   ['강남구 행정동만 조회하려면 어떻게 하나요?', '자치구 이름 컬럼은 없고 통계청 자치구 코드(sgg_cd)가 있습니다. 강남구는 \'11230\'이므로 WHERE sgg_cd = \'11230\'으로 조회합니다. 25개 자치구의 코드는 dong_profile 스키마의 sgg_cd 코드 값에 있습니다. 행정안전부 코드(mois_dong_cd) 체계에서는 11230이 동대문구라 두 코드를 섞으면 다른 구가 조회됩니다.', 'data_contract.md 2절; docs/public_columns.json sgg_cd 근거'],
   ['출근 시간이 왜 길게 나오나요?', '생활이동의 이동 시간은 휴대전화 신호로 판단한 "체류지와 체류지 사이" 시간입니다. 아주 짧은 이동은 잡히지 않고 잠깐 들른 곳까지 이동에 포함돼, 가까운 행정동일수록 실제보다 길게 나옵니다. 대중교통 길찾기 시간이 아닙니다. 그래서 시간 한도와 직선거리(distance_km) 3km 이내 조건을 함께 쓰기를 권장합니다. 이동인구가 아주 적은 경로는 평균이 크게 흔들리므로 population_* 컬럼도 함께 확인하세요. 평일 오전 출근 방향만 있고 퇴근 방향은 없습니다.', 'data_contract.md 6절 1; decisions.md 결정 23; question.md 3절'],
   ['면적, 혼잡도 같은 컬럼은 왜 없나요?', '출처의 이용조건 때문에 공개 파일에서 제외했습니다. 행정동 면적과 면적당 업소 수는 통계청 SGIS 경계 데이터로 계산한 값이라 SGIS 이용약관상 제3자에게 제공할 수 없습니다. 혼잡도는 검토 당시 변경 금지 조건(공공누리 제3유형)이 붙어 있어 제외했습니다. 컬럼 목록과 사유는 출처·이용조건 화면에 있습니다.', 'data_contract.md 5절; NOTICE.md'],
-  ['데이터는 언제 갱신되나요?', '출처마다 갱신 주기가 다릅니다. 전월세는 주 1회, 생활이동은 월 1회, 상가정보는 분기 1회, 행정동 경계는 연 1회 수집합니다. 새로 공개하면 새 버전 폴더가 생기고 latest.json이 그 버전을 가리킵니다. 이미 공개한 버전의 파일은 수정하지 않습니다.', 'data_contract.md 1절 갱신 주기; README 5절 공개 사이트'],
+  ['데이터는 언제 갱신되나요?', () => `수집과 공개는 따로입니다. 수집: ${S.catalog.card.collection_cycle} 공개: ${S.catalog.card.publication_cycle} 마지막 공개 버전과 날짜는 데이터 목록 맨 위 카드에 있습니다. 새로 공개하면 새 버전 폴더가 생기고 latest.json이 그 버전을 가리킵니다. 이미 공개한 버전의 파일은 수정하지 않습니다.`, 'data_contract.md 1절 수집 주기·공개 주기; decisions.md 결정 119'],
   ['엑셀에서 코드가 숫자로 바뀝니다.', '엑셀은 dong_id 같은 코드를 숫자로 인식합니다. 이 데이터의 코드는 모두 11로 시작해 앞자리 0이 사라지지는 않지만, 숫자로 바뀐 코드는 다른 테이블의 문자열 코드와 조인할 때 맞지 않을 수 있습니다. 엑셀의 [데이터 가져오기]에서 코드 컬럼을 텍스트로 지정하거나, pandas에서는 dtype={"dong_id": str}처럼 문자열로 읽으세요.', '공개 파일의 dong_id, sgg_cd, mois_dong_cd 최솟값이 11로 시작(2026-11-22 질의); 내려받기 탭 pandas 예시'],
 ];
 async function viewHelp() {
@@ -645,7 +680,7 @@ async function viewHelp() {
     `<h2>데이터 소개</h2><p>${esc(S.catalog.description)} 서울에서 일하게 된 사회초년생이 살 동네를 고를 때 참고하도록 만들었습니다. 별도 서버 없이 파일로만 공개하며, SQL은 사용자의 브라우저에서 실행됩니다.</p>`,
     `<h2>이용 방법</h2><ol><li><b>테이블 선택</b>: <a href="#/">데이터 목록</a>에서 테이블을 선택합니다. 행정동마다 한 행씩인 테이블은 dong_profile입니다.</li><li><b>컬럼 확인</b>: <b>스키마</b> 탭에서 컬럼의 한글 이름, 단위, 설명을 확인합니다. <b>개요</b> 탭 맨 위의 "이용 시 유의사항"을 먼저 읽어 주세요.</li><li><b>조회·내려받기</b>: <a href="#/sql">SQL 편집기</a>에서 필요한 행만 조회해 CSV로 받거나, <b>내려받기</b> 탭에서 파일과 코드 예시를 확인합니다.</li></ol>`,
     '<h2>용어 설명</h2><table class="grid"><tr><th>용어</th><th>설명</th></tr>' + GLOSSARY.map(([k, v]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join('') + '</table>',
-    '<h2>자주 묻는 질문</h2><dl class="faq">' + FAQ.map(([q, a, r]) => `<dt>${esc(q)}</dt><dd>${esc(a)} ${refToggle(r)}</dd>`).join('') + '</dl>'];
+    '<h2>자주 묻는 질문</h2><dl class="faq">' + FAQ.map(([q, a, r]) => `<dt>${esc(q)}</dt><dd>${esc(typeof a === 'function' ? a() : a)} ${refToggle(r)}</dd>`).join('') + '</dl>'];
   $('#main').innerHTML = h.join('');
 }
 
@@ -683,6 +718,7 @@ window.addEventListener('hashchange', route);
 (async () => {
   try {
     S.catalog = await getJson('catalog.json');
+    Object.assign($('#contact'), {href: S.catalog.card.contact_url, title: S.catalog.card.contact_label, hidden: false});
     const want = new URLSearchParams(location.search).get('v');
     S.version = S.catalog.versions.some((v) => v.version === want) ? want : S.catalog.latest;
     $('#ver').innerHTML = S.catalog.versions.map((v) => `<option value="${esc(v.version)}" ${v.version === S.version ? 'selected' : ''}>${esc(v.version)}${v.version === S.catalog.latest ? ' (최신)' : ''}</option>`).join('');

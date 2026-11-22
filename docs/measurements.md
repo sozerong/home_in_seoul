@@ -1342,3 +1342,34 @@
   - 데이터를 로컬에서 받아, 실제 Pages(Fastly)에서 데이터를 받는 시간은 들어 있지 않다.
   - 3회뿐이다.
   - (다) 직접 호스팅은 재지 않았다. 로컬에서 재면 CDN 거리가 빠져 비교가 맞지 않고, 버린 이유가 크기와 관리 비용이기 때문이다.
+
+## 측정 58. 사이트만 다시 만들기의 플랫폼 간 바이트와 배포 단계 리허설 (결정 118, 119, handoff_deploy.md D1·D2, 2026-11-22 17:30~17:46 KST)
+- 예측(측정 전에 적음): `--site-only`는 JSON 키 정렬과 숫자 유효숫자 10자리 자르기(`_num`)를 쓰므로 Windows와 Linux 결과가 같은 바이트다. 데이터 레포에 올라간 사이트 파일도 같은 코드로 만들었으니 같다.
+- 방법:
+  1. 데이터 레포(`../home_in_seoul-data`, HEAD 7884f26)의 `v2026.11.16/`만 빈 폴더 두 곳에 복사했다.
+  2. 한 곳은 Windows `.venv`, 다른 곳은 Linux 컨테이너(`seoul-duckdb-job:2.0.0`, 레포 읽기 전용 마운트)에서 `python -m warehouse.publish_site --site-only --out <폴더>`로 만들었다.
+  3. 두 결과와 데이터 레포의 `git ls-files` 17개 파일을 sha256으로 비교했다.
+  4. 배포 워크플로(`.github/workflows/deploy_site.yml`)의 "바뀐 것만 커밋하고 푸시" 단계 셸을 그대로 떼어 냈다. 데이터 레포의 bare 복사본을 원격으로 둔 clone에서 세 경우를 돌렸다.
+  5. actionlint로 두 워크플로를 검사하고, 일부러 틀린 사본으로 잡는지도 봤다.
+- 조건:
+  - Windows 11, Ryzen 7 7800X3D, RAM 63GB. Python 3.12.8, pyarrow 26.0.0, git 2.46.0.windows.1.
+  - Linux: Python 3.12.16, pyarrow 26.0.0, Debian bookworm(glibc 2.36), WSL2 커널 5.15.167.4.
+  - actionlint 1.7.12 (`rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667`, shellcheck·pyflakes 포함).
+  - 공개 버전 1개(v2026.11.16), 각 1회.
+- 결과:
+
+| 비교 | 결과 |
+|---|---|
+| Windows `--site-only` vs Linux `--site-only` | 17개 파일 sha256 모두 같음 |
+| Windows `--site-only` vs 데이터 레포 커밋 | 17개 파일 sha256 모두 같음(사이트 파일 8개, 버전 폴더 9개) |
+| (a) 다시 만들었는데 바뀐 것 없음 | "바뀐 사이트 파일이 없어 커밋하지 않습니다", exit 0, 원격 HEAD 그대로(7884f26) |
+| (b) 사이트 파일(NOTICE.md) 한 줄 바뀜 | 커밋 `사이트 갱신: sozerong/home_in_seoul@<SHA>`, 작성자 github-actions[bot], 원격에 푸시됨 |
+| (c) 공개 버전 파일(dong_profile.csv) 바뀜 | `::error::공개 버전 폴더가 바뀌어 푸시하지 않습니다`, exit 1, 원격 그대로 |
+| actionlint `deploy_site.yml`, `ci.yml` | 오류 0 |
+| actionlint 일부러 틀린 사본(`runs-onn`, `github.shaa`) | 오류 3개, exit 1 |
+
+- 예측과 비교: 맞았다.
+- 한계:
+  - Linux는 GitHub 러너가 아니라 같은 PC의 컨테이너다. 러너의 Python 패치 버전은 setup-python이 고르는 3.12.x라 다를 수 있다 [확인 필요: 첫 실행의 "바뀐 것 없음" 여부로 확인].
+  - (c)는 셸 단계만 시험했다. 실제로는 그 앞의 `--site-only`가 manifest sha256 비교로 먼저 실패한다(selftest S4).
+  - 실제 GitHub에서의 푸시, deploy key, Pages 빌드는 시험하지 않았다(사용자 설정 뒤).

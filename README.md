@@ -166,16 +166,47 @@ python -m warehouse.export_product
 모델 사이의 관계 그림은 `dbt docs generate` 후 `dbt docs serve`로 볼 수 있다.
 결과: `product\vYYYY.MM.DD\` (파일 설명은 [docs/data_contract.md](docs/data_contract.md)).
 
-공개 사이트로 내보내기(결정 113, [docs/handoff_pages.md](docs/handoff_pages.md)). 공개할 컬럼과 이용조건은 [docs/public_columns.json](docs/public_columns.json) 하나로 정하고, 이용조건 근거는 [docs/data_contract.md](docs/data_contract.md) 5절에 있다. 데이터 레포(공개, GitHub Pages는 main 브랜치 루트)를 받아 둔 폴더를 `--out`으로 준다:
+공개 사이트(결정 113, 118, 119, [docs/handoff_deploy.md](docs/handoff_deploy.md)). 공개할 컬럼과 이용조건은 [docs/public_columns.json](docs/public_columns.json) 하나로 정하고, 이용조건 근거는 [docs/data_contract.md](docs/data_contract.md) 5절에 있다. 데이터 레포(sozerong/home_in_seoul-data, 공개, GitHub Pages는 main 브랜치 루트)에는 공개 버전 폴더(`vYYYY.MM.DD/`, 한 번 올리면 불변)와 사이트 파일(index.html 포털과 정적 요약, catalog.json, profiles/, latest.json, NOTICE.md, sql.html)이 있다. 컬럼 사전과 테이블마다 "이용 시 유의사항"은 [docs/public_columns.json](docs/public_columns.json)에서 온다(결정 115).
+
+**사이트 변경(화면 문구, 컬럼 설명, 출처 화면)은 손으로 올리지 않는다(결정 118).** 아래 파일이 바뀐 PR이 코드 레포 main에 머지되면 Actions의 `deploy-site` 워크플로([.github/workflows/deploy_site.yml](.github/workflows/deploy_site.yml))가 돈다.
+- 대상 파일: `warehouse/site/`, `warehouse/publish_site.py`, `warehouse/export_product.py`(스키마 비교를 가져다 씀), `docs/public_columns.json`, `docs/product_contract.json`, `docs/data_contract.md`, `common.py`, `requirements.txt`.
+- 하는 일: 데이터 레포를 받아 `publish_site --site-only`로 사이트 파일만 다시 만들고 푸시한다. 커밋 메시지에 코드 레포 커밋 SHA가 들어간다.
+- 바뀐 것이 없으면 커밋하지 않는다. 공개 버전 폴더가 하나라도 바뀌면 푸시하지 않고 실패한다(빨간 X).
+- 손으로 다시 돌리기: 코드 레포 Actions 탭 → deploy-site → Run workflow.
+- 같은 검사는 PR마다 CI(`ci.yml`)에서도 돈다. 로컬에서 돌리려면:
 ```
-python -m warehouse.publish_site --selftest
+python -m warehouse.publish_site --selftest --site-only --out ..\home_in_seoul-data
+```
+
+처음 한 번, 워크플로가 데이터 레포에 쓸 deploy key를 만든다. 키 값은 어디에도 적지 않는다.
+1. 키 만들기(cmd. PowerShell은 `%USERPROFILE%`을 `$env:USERPROFILE`로). 암호를 물으면 Enter 두 번:
+   ```
+   ssh-keygen -t ed25519 -C deploy-site -f %USERPROFILE%\deploy_site_key
+   ```
+2. 데이터 레포에 공개 키 등록: GitHub의 home_in_seoul-data → Settings → Deploy keys → Add deploy key.
+   - Title: `deploy-site`
+   - Key: `deploy_site_key.pub` 파일 내용
+   - **Allow write access** 체크 → Add key
+3. 코드 레포에 개인 키 등록: GitHub의 home_in_seoul → Settings → Secrets and variables → Actions → New repository secret.
+   - Name: `DATA_REPO_DEPLOY_KEY`
+   - Secret: `deploy_site_key` 파일 내용 전체(`-----BEGIN`으로 시작하는 줄부터 `KEY-----`로 끝나는 줄까지)
+4. 등록이 끝나면 PC의 `deploy_site_key`, `deploy_site_key.pub` 두 파일을 지운다.
+
+**새 데이터 버전 공개는 사람이 고른 버전만 손으로 한다(결정 119).** Airflow가 내보낸 `product\vYYYY.MM.DD\` 가운데 공개할 것을 골라, 코드 레포 폴더에서 아래를 차례로 친다. 먼저 `git pull`로 봇이 올린 사이트 커밋을 받아야 푸시가 거절되지 않는다.
+
+cmd(Cmder):
+```
+.venv\Scripts\activate.bat
+git -C ..\home_in_seoul-data pull
+python -m warehouse.publish_site --selftest --version vYYYY.MM.DD
 python -m warehouse.publish_site --version vYYYY.MM.DD --out ..\home_in_seoul-data
-cd ..\home_in_seoul-data
-git add -A
-git commit -m "vYYYY.MM.DD 공개"
-git push
+git -C ..\home_in_seoul-data add -A
+git -C ..\home_in_seoul-data commit -m "vYYYY.MM.DD 공개"
+git -C ..\home_in_seoul-data push
 ```
-사이트 파일(index.html 포털과 정적 요약, catalog.json, profiles/, latest.json, NOTICE.md, sql.html)은 매번 다시 만들고, 컬럼 사전과 테이블마다 "이용 시 유의사항"은 [docs/public_columns.json](docs/public_columns.json)에서 온다(결정 115). 한 번 공개한 버전 폴더는 바꾸지 않는다. 같은 버전을 다시 돌렸을 때 내용이 다르면 아무것도 쓰지 않고 실패한다. 이 순서를 몇 번 돌린 뒤 Airflow 태스크로 옮길지 다시 본다.
+PowerShell은 첫 줄만 `.venv\Scripts\Activate.ps1`이고 나머지는 같다.
+
+한 번 공개한 버전 폴더는 바꾸지 않는다. 같은 버전을 다시 돌렸을 때 내용이 다르면 아무것도 쓰지 않고 실패한다.
 
 ### 6. 운영 대시보드
 ```
@@ -236,6 +267,20 @@ docker compose exec -T db psql -U seoul -d seoul < warehouse\sql\demo.sql
 | SQL 에이전트는 운영을 바꾸지 않고, 해석 변경을 통과시키지 않는다 | 정답을 먼저 정한 사례(원천 변경 S1·M1·M7, 대조군 4, 사람이 고친 규칙 S3)로 에이전트를 돌리고, 실행마다 운영 표 49개 행 수·상품 sha256을 앞뒤로 비교 | 거짓 통과 0, 원인 적중 12/12, 판정 일치 16/17(S3는 단위 테스트가 먼저 잡아 fail). 해석이 바뀌는 수정은 G5가 needs_decision으로 멈춤(M7 3/3 + 끝까지 1회, S3b). 허용 밖 다섯 경로를 고치라고 시킨 실행(O1)에서 Edit 거절 4건, Write·Bash는 도구 없음, 허용 밖 바뀐 파일 0. 실제 PR 1건과 Slack 1건을 보냈고 main 직접 push는 룰셋이 거절. 28번 실행(A4 DAG 포함) 모두 운영 변화 0, 에이전트 컨테이너 최대 0.29GiB(측정 53, 54, 55) | `docker compose run --rm --no-deps agent-job python -m agent.run --data M1`<br>`python measure/ops_snapshot.py --compare <앞 스냅숏>` |
 
 한계: 대부분 1회 증명이다(guarantees 0절 강도 ①). 매 실행 강제(③)는 관문과 계약 검사뿐이다. 생활이동 처방(F-9)은 결과가 같고 셔플을 절반으로 줄였지만 실행 시간은 줄지 않았다(측정 42). 계산을 작업 컨테이너로 뺀 뒤 1회째는 11.3% 느렸고(측정 46) 2회째는 18.3% 빨라(측정 52), 같은 일인데 세 실행이 36% 벌어져 분리가 속도에 주는 영향은 말할 수 없다. 같은 SQL을 DuckDB로 돌리면 배치마다 새 프로세스로 16GiB 안에서 658.8초에 끝나 Spark(1,971~2,419초)보다 약 3.0~3.7배 빠르다(측정 51, 1회). 다만 배치 하나(202601)가 threads 12에서만 넘치는 원인은 확정하지 못했다(F-31). SQL 에이전트의 허용 밖 편집 차단은 실제 실행 1회(O1, 측정 55)로 봤고, 금지 도구(Write, Bash)는 "불렀는데 막힘"이 아니라 "도구가 주어지지 않음"으로만 확인됐다. 에이전트의 실제 PR·Slack(A5)은 손으로 돌린 1회뿐이고, 실데이터 신호를 받은 `agent_triage` DAG가 PR까지 보내는 경로는 아직 돈 적이 없다.
+
+## 다른 팀에 넘기는 방식
+공개 데이터 포털(https://sozerong.github.io/home_in_seoul-data/)을 받는 쪽(분석가, 부동산 플랫폼)이 쓰기 좋게 하려고 국내 회사들이 데이터를 넘길 때 한 일 6가지를 기준으로 삼았다([docs/handoff_delivery.md](docs/handoff_delivery.md) 0절, 결정 120, 121).
+
+| 기준 (사례) | 한 것 | 하지 않은 것 |
+|---|---|---|
+| 찾고 이해하기 (배민 데이터카탈로그: 컬럼 검색, 미리보기, 리니지 순서) | 테이블마다 스키마, 미리보기, 데이터 프로필(빈 값, 서로 다른 값 수, 범위, 분포), 내려받기, 버전 기록 탭. 왼쪽 검색이 테이블·컬럼 이름과 한글 이름을 찾는다 | 공개 포털 안의 리니지 화면. 컬럼 리니지는 파이프라인 안(`lineage` 지도, 결정 80)에만 있다 |
+| 설명이 곧 품질 (에이블리: 설명이 비면 잘못 해석한다) | 공개 컬럼마다 한글 이름, 설명, 근거, 예시값이 보이고, 한글 이름·설명·근거가 하나라도 비면 공개를 멈춘다(결정 115). 비공개 컬럼 10개도 이름과 빼는 이유를 쉬운 말로 공개한다. 정수 컬럼 예시는 소수점 없이 보인다 | |
+| 주인 (쏘카 테이블 오너십, 토스뱅크 쿼리 소유자) | 홈 맨 위 데이터 상품 카드에 주인과 문의 창구. 모든 화면 머리글의 "문의·오류 신고"가 이슈 양식(종류, 무엇을, 테이블·컬럼, 버전·기간, SQL)을 연다(결정 121) | 답변 기한 약속(1인 운영) |
+| 자주 오는 요청을 미리 (토스증권: 요청을 미리 처리한 테이블) | 원래 질문(직장이 역삼1동일 때 출퇴근과 월세)을 SQL 편집기 예시 쿼리로 바로 돌린다. 조인 키 경고(신사동은 강남구와 관악구에 둘), 시군구 코드 체계 경고(통계청 11230과 행정안전부 코드가 다름)를 홈의 테이블 연결 안내와 스키마 설명에 먼저 둔다 | |
+| 바꿔도 쿼리를 깨지 않기 (쏘카: v1과 v2가 같은지 확인 뒤 교체) | 변경 정책 3줄을 카드와 [docs/data_contract.md](docs/data_contract.md) 1절에 같은 말로. 버전 기록 탭에 직전 공개 버전 대비 추가·삭제·형 변경 컬럼, 행 수, 품질 지표, 출처 기준일 변화. 컬럼이 빠지거나 형이 바뀌었는데 사유 표시(`public_columns.json` `column_changes`)가 없으면 공개를 멈춘다(매 PR·매 배포 검사, guarantees 2.7). 공개 버전 폴더는 불변이고 `latest.json`과 버전 고정 주소가 있다 | 같은 이름에서 뜻·단위가 바뀐 것은 자동으로 잡지 못한다 |
+| 갱신 약속 (지킬 수 있는 약속을 공개) | 수집 주기(출처별 DAG 일정)와 공개 주기(비정기, 사람이 고른 버전만, 결정 119)를 나눠 카드, FAQ, 계약 문서에 같은 말로 적었다. 홈에 마지막 공개 버전과 경과일 | 공개 날짜 약속, 정기 공개(결정 119) |
+
+하지 않은 것과 이유: 권한 관리, 사용량 추적, DataHub 같은 카탈로그 도구, BigQuery 이식. 누구나 받는 정적 공개 단계라 권한이 필요 없고, 테이블 4개에 카탈로그 도구를 들이면 운영할 것만 늘어난다. 생활이동 검증 제외 행(31,935,758)의 규칙별 내역은 새 상품 버전을 낼 때 싣는다(결정 120 남은 것).
 
 ## 도구를 고른 이유
 | 도구 | 쓰나 | 이유 |

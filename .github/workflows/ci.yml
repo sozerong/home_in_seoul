@@ -22,6 +22,17 @@ jobs:
           for t in tests/test_*.py; do python -m "tests.$(basename "$t" .py)"; done
           python -m measure.rent_fingerprint --selftest
 
+      # 공개 사이트 만들기 확인(handoff_deploy.md D1). 러너에는 product/가 없어 공개 데이터 레포의 버전 폴더로 돈다.
+      # 데이터 레포는 공개라 비밀 값 없이 읽고, 임시 폴더에 복사해 만들므로 _data에는 쓰지 않는다
+      - uses: actions/checkout@v4
+        with:
+          repository: sozerong/home_in_seoul-data
+          path: _data
+          persist-credentials: false
+
+      - name: 공개 사이트 사이트만 모드 (두 번 같은 바이트, 버전 폴더 불변, 비공개 컬럼 노출 없음)
+        run: python -m warehouse.publish_site --selftest --site-only --out _data
+
       - name: dbt parse (ref 오타, YAML, 테스트 정의 오류)
         working-directory: warehouse/dbt
         env:
