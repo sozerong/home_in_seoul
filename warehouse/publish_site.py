@@ -8,7 +8,7 @@
   index.html       데이터 포털(warehouse/site/index.html). 아래 JSON만 읽고, SQL·미리보기는 브라우저 안 DuckDB-WASM이
                    공개 Parquet를 직접 읽는다. 서버가 없다. <!--STATIC_SUMMARY--> 자리에 JavaScript 없이도 읽히는
                    평범한 HTML 요약(표, 파일 링크, 컬럼 사전)을 넣는다(결정 114)
-  catalog.json     기계가 읽는 목록(DCAT 참고): 표 이름·뜻·쓰기 전에 알아 둘 것(notes), 컬럼과 쉬운 말 사전(label, help,
+  catalog.json     기계가 읽는 목록(DCAT 참고): 표 이름·뜻·이용 시 유의사항(notes), 컬럼과 쉬운 말 사전(label, help,
                    unit, values, example: docs/public_columns.json, 결정 115), 배포 파일, 버전, 조인 키, 이용조건
   profiles/<버전>.json  컬럼 프로필(결측, 고유값 수, 최소·최대·사분위, 히스토그램, 자주 나오는 값). 공개 버전 폴더는
                    불변이라 그 밖에 두고 매번 다시 만든다
@@ -49,21 +49,18 @@ DATA_CONTRACT = ROOT / "docs" / "data_contract.md"
 SITE_HTML = ROOT / "warehouse" / "site" / "index.html"
 VERSION_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}$")
 SUMMARY_MARK = "<!--STATIC_SUMMARY-->"
-# 비공개 이유 글(공개 manifest에 들어가 바꿀 수 없음)의 내부 용어 풀이. index.html의 같은 문구와 맞춘다
-EXCLUDED_TERMS = ("이유 글의 '결정 113'은 이 데이터를 만든 프로젝트의 설계 결정 번호, 'OA-12928'은 서울 열린데이터광장 자료 번호, "
-                  "'3유형'은 공공누리 제3유형(출처 표시, 변경 금지), '6a·6b'는 혼잡도와 면적의 공개 여부를 다시 판정할 다음 단계 이름, '약관 제15조'는 통계청 SGIS 통합 이용약관의 조항(사전 승낙 없는 타인 제공 금지)입니다")  # index.html에서 정적 요약이 들어갈 자리(결정 114)
 TITLES = {  # 포털에 보이는 표 이름. 뜻(grain)은 data_contract.md 3절에서 읽는다
     "dong_profile": "행정동 프로필",
-    "commute_od": "출근 이동 (출발 동 × 직장 동)",
+    "commute_od": "출근 이동 (출발 행정동 × 직장 행정동)",
     "rent_listing": "전월세 계약",
     "dong_mois_map": "행정동 코드 대응표 (행정안전부 → 통계청)",
 }
 # 표끼리 잇는 키. 모두 통계청 행정동 코드 8자리(dong_id)로 dong_profile에 붙는다
 RELATIONS = [
-    {"from": ["commute_od", "origin_dong_id"], "to": ["dong_profile", "dong_id"], "label": "출발 동"},
-    {"from": ["commute_od", "dest_dong_id"], "to": ["dong_profile", "dong_id"], "label": "직장 동"},
-    {"from": ["rent_listing", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "계약이 있는 동"},
-    {"from": ["dong_mois_map", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "통계청 동"},
+    {"from": ["commute_od", "origin_dong_id"], "to": ["dong_profile", "dong_id"], "label": "출발 행정동"},
+    {"from": ["commute_od", "dest_dong_id"], "to": ["dong_profile", "dong_id"], "label": "직장 행정동"},
+    {"from": ["rent_listing", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "계약 주택이 있는 행정동"},
+    {"from": ["dong_mois_map", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "통계청 행정동"},
 ]
 # 표마다 한 줄을 구분하는 컬럼(키). selftest가 이 버전에서 값이 비지 않고 겹치지 않는지 확인한다.
 # rent_listing은 동·호를 주지 않아 거래 고유 키가 없다(CLAUDE.md 7절)
@@ -103,8 +100,10 @@ def check_public_columns(cfg, contract):
                 raise SystemExit(f"{table}.{col}의 원천 {missing}이 public_columns.json sources에 없습니다")
             if v["public"] and not all(v.get(k) for k in ("label", "help", "source_ref")):
                 raise SystemExit(f"{table}.{col}: 공개 컬럼인데 쉬운 말 사전(label, help, source_ref)이 비어 있습니다")
+            if not v["public"] and not v.get("display_reason"):
+                raise SystemExit(f"{table}.{col}: 비공개 컬럼인데 화면에 보일 사유(display_reason)가 비어 있습니다")
     if set(cfg.get("table_notes", {})) != set(contract) or not all(cfg["table_notes"].values()):
-        raise SystemExit("public_columns.json table_notes에 표마다 '쓰기 전에 알아 둘 것'이 있어야 합니다")
+        raise SystemExit("public_columns.json table_notes에 표마다 '이용 시 유의사항'이 있어야 합니다")
 
 
 def contract_docs():
@@ -276,20 +275,20 @@ def static_summary(catalog, m):
     JavaScript가 돌면 포털 화면이 덮어쓴다. catalog와 공개 manifest의 값만 쓴다(비공개 컬럼은 이름과 이유만)."""
     h = [f"<h1>{escape(catalog['title'])}</h1>", f"<p>{escape(catalog['description'])}</p>",
          f"<p>최신 버전 <b>{escape(catalog['latest'])}</b> (만든 시각 {escape(m['created_at'])}). "
-         "버전 폴더의 파일은 한 번 올리면 바뀌지 않습니다. 기계가 읽는 목록은 "
+         "공개한 버전 폴더의 파일은 수정하지 않습니다. 기계 판독용 데이터 목록은 "
          '<a href="catalog.json">catalog.json</a>, 최신 버전 주소는 <a href="latest.json">latest.json</a>, '
-         '출처와 이용조건은 <a href="NOTICE.md">NOTICE.md</a>입니다. 이 페이지는 JavaScript가 돌면 표 탐색·SQL 편집기 화면으로 바뀝니다.</p>',
-         "<p>모든 표는 통계청 행정동 코드 8자리(dong_id)로 dong_profile에 이어집니다. 같은 이름의 동이 있으므로(신사동: 강남구·관악구) "
-         "동 이름으로 표를 잇지 마세요.</p>"]
+         '출처와 이용조건은 <a href="NOTICE.md">NOTICE.md</a>에 있습니다. JavaScript를 켜면 테이블 탐색과 SQL 편집기를 쓸 수 있습니다.</p>',
+         "<p>모든 테이블은 통계청 행정동 코드 8자리(dong_id)로 dong_profile과 조인합니다. 같은 이름의 행정동이 있으므로(신사동: 강남구·관악구) "
+         "행정동 이름으로 조인하지 마세요.</p>"]
     for d in catalog["datasets"]:
         files = [x for x in d["distributions"] if x["version"] == catalog["latest"]]
         grain = re.sub(r", [\d,]+행$", "", d["grain"].removeprefix("한 행 = "))  # index.html grainText와 같은 규칙
-        h.append(f'<section><h2>{escape(d["title"])} ({escape(d["identifier"])})</h2><p>이 표의 한 줄은 {escape(grain)}입니다.</p>')
+        h.append(f'<section><h2>{escape(d["title"])} ({escape(d["identifier"])})</h2><p>행 단위: {escape(grain)}</p>')
         h.append("<ul>" + "".join(f'<li><a href="{escape(x["url"])}">{escape(x["url"])}</a> ({x["format"]}, {x["rows"]}행, '
                                   f'{x["bytes"]}바이트, sha256 {x["sha256"]})</li>' for x in files) + "</ul>")
-        key = ", ".join(d["primary_key"]) or "없음(거래 고유 키가 없다. 동·호를 주지 않음)"
-        h.append(f"<p>한 줄을 구분하는 값(키): {escape(key)}</p>")
-        h.append("<p>쓰기 전에 알아 둘 것:</p><ul>" + "".join(f"<li>{escape(n['text'])}</li>" for n in d["notes"]) + "</ul>")
+        key = ", ".join(d["primary_key"]) or "없음(출처가 동·호수를 제공하지 않아 거래 고유 키가 없음)"
+        h.append(f"<p>기본 키: {escape(key)}</p>")
+        h.append("<p>이용 시 유의사항:</p><ul>" + "".join(f"<li>{escape(n['text'])}</li>" for n in d["notes"]) + "</ul>")
         h.append("<table><tr><th>컬럼</th><th>한글 이름</th><th>단위</th><th>타입</th><th>설명</th><th>코드 값</th></tr>")
         for c in d["columns"]:
             vals = "; ".join(f"{k} = {v}" for k, v in c.get("values", {}).items())
@@ -297,10 +296,10 @@ def static_summary(catalog, m):
                      f"<td>{escape(c['type'])}</td><td>{escape(c['help'])}</td><td>{escape(vals)}</td></tr>")
         h.append("</table>")
         if d["excluded_columns"]:
-            h.append(f'<p>공개하지 않는 컬럼(이용조건, 값 없음). {escape(EXCLUDED_TERMS)}</p><ul class="excluded">' + "".join(
+            h.append('<p>비공개 컬럼(출처의 이용조건에 따라 제외, 값 미공개):</p><ul class="excluded">' + "".join(
                 f"<li>{escape(c)}: {escape(r)}</li>" for c, r in d["excluded_columns"].items()) + "</ul>")
         h.append("</section>")
-    h.append(f'<p>설명의 근거로 적은 파일(data_contract.md, decisions.md 등)은 코드 레포 <a href="{REPOSITORY}">{REPOSITORY}</a>에 있습니다.</p>')
+    h.append(f'<p>설명의 근거 문서(data_contract.md, decisions.md 등)는 코드 저장소 <a href="{REPOSITORY}">{REPOSITORY}</a>에 있습니다.</p>')
     return "\n".join(h)
 
 
@@ -321,6 +320,8 @@ def site_files(out, cfg, contract):
     for v in versions:
         write_text(out / "profiles" / f"{v}.json", dumps(profiles[v]))
 
+    # 화면용 출처 이름·문구. 공개 manifest의 licenses 원문은 그대로 두고 source_display만 덮어쓴다
+    licenses = {k: {**s, **cfg.get("source_display", {}).get(k, {})} for k, s in m["licenses"].items()}
     datasets = []
     for table in contract:
         datasets.append({
@@ -331,37 +332,37 @@ def site_files(out, cfg, contract):
             "primary_key": KEYS[table],
             "columns": [column_entry(docs, table, c, t, cfg["tables"][table][c], m["column_sources"][table][c],
                                      profiles[latest][table][c]) for c, t in m["schema"][table]],
-            "excluded_columns": m["excluded_columns"][table],
+            # 공개 manifest의 사유 원문은 바꿀 수 없어(불변) 화면에는 public_columns.json의 display_reason을 쓴다
+            "excluded_columns": {c: cfg["tables"][table][c]["display_reason"] for c in m["excluded_columns"][table]},
             "distributions": [{"version": v, "format": ext, "url": f"{v}/{table}.{ext}",
                                **manifests[v]["files"][f"{table}.{ext}"]}
                               for v in reversed(versions) for ext in ("parquet", "csv")],
         })
     catalog = {
         "title": "서울 행정동 주거 지표",
-        "description": "서울 426개 행정동의 전월세 시세, 출근 이동 시간, 가장 가까운 역, 생활 편의 업소 수. 공공데이터를 행정동 기준으로 맞춘 결과",
+        "description": "서울 426개 행정동의 전월세 시세, 출근 이동 시간, 가장 가까운 역, 생활 편의 업소 수를 공공데이터로 집계한 데이터입니다.",
         "latest": latest,
         "versions": [{"version": v, "manifest": f"{v}/manifest.json", "created_at": manifests[v]["created_at"],
                       "sources": manifests[v]["sources"]} for v in reversed(versions)],
         "datasets": datasets,
         "relations": RELATIONS,
         "profiles": {v: f"profiles/{v}.json" for v in reversed(versions)},
-        "licenses": m["licenses"],
+        "licenses": licenses,
         "terms_checked_date": m["terms_checked_date"],
         "notice": "NOTICE.md",
         "legal_note": cfg["note"],
         "repository": REPOSITORY,
-        "excluded_terms": EXCLUDED_TERMS,
     }
     write_text(out / "catalog.json", dumps(catalog))
 
     notice = ["# 출처와 이용조건", "",
-              f"확인 날짜: {cfg['checked_date']}. {cfg['note']}. 공공기관이 이 데이터를 후원하거나 보증하지 않는다.", ""]
-    for key, s in sorted(m["licenses"].items()):
+              f"확인일: {cfg['checked_date']}. {cfg['note']}. 공공기관이 이 데이터를 후원하거나 보증하지 않습니다.", ""]
+    for key, s in sorted(licenses.items()):
         notice += [f"## {s['name']}", f"- 이용조건: {s['license']}"]
-        notice += [f"- 출처 문구: {s['attribution']}"] if s["attribution"] else []
+        notice += [f"- 출처 표시 문구: {s['attribution']}"] if s["attribution"] else []
         notice += [f"- 링크: {u}" for u in s["urls"]] + [""]
-    notice += ["## 공개하지 않는 컬럼", "", EXCLUDED_TERMS + ".", ""]
-    notice += [f"- {t}.{c}: {r}" for t, cols in m["excluded_columns"].items() for c, r in cols.items()]
+    notice += ["## 비공개 컬럼", "", "출처의 이용조건에 따라 공개 파일에서 제외한 컬럼입니다.", ""]
+    notice += [f"- {d['identifier']}.{c}: {r}" for d in datasets for c, r in d["excluded_columns"].items()]
     write_text(out / "NOTICE.md", "\n".join(notice) + "\n")
 
     if not SITE_HTML.exists():
@@ -492,7 +493,8 @@ def selftest(version):
                          (lambda c: c["tables"]["rent_listing"].update(extra={"public": True, "sources": [], "reason": ""}),
                           "계약과 다릅니다"),
                          (lambda c: c["tables"]["commute_od"]["avg_minutes"].pop("help"), "쉬운 말 사전"),
-                         (lambda c: c["table_notes"].pop("commute_od"), "table_notes")]:
+                         (lambda c: c["table_notes"].pop("commute_od"), "table_notes"),
+                         (lambda c: c["tables"]["dong_profile"]["area_km2"].pop("display_reason"), "display_reason")]:
         bad = copy.deepcopy(cfg)
         mutate(bad)
         try:
@@ -500,7 +502,7 @@ def selftest(version):
             raise AssertionError(f"잘못된 public_columns.json이 통과했습니다: {word}")
         except SystemExit as err:
             assert word in str(err), err
-    print("6. public_columns.json = 계약 컬럼 집합, 키 제외·컬럼 빠짐·남음·사전 빠짐·notes 빠짐은 실패")
+    print("6. public_columns.json = 계약 컬럼 집합, 키 제외·컬럼 빠짐·남음·사전 빠짐·notes 빠짐·비공개 사유 빠짐은 실패")
 
     docs = contract_docs()
     for table, cols in contract.items():

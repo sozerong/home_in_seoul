@@ -175,7 +175,7 @@ git add -A
 git commit -m "vYYYY.MM.DD 공개"
 git push
 ```
-사이트 파일(index.html 포털과 정적 요약, catalog.json, profiles/, latest.json, NOTICE.md, sql.html)은 매번 다시 만들고, 컬럼 사전과 표마다 "쓰기 전에 알아 둘 것"은 [docs/public_columns.json](docs/public_columns.json)에서 온다(결정 115). 한 번 공개한 버전 폴더는 바꾸지 않는다. 같은 버전을 다시 돌렸을 때 내용이 다르면 아무것도 쓰지 않고 실패한다. 이 순서를 몇 번 돌린 뒤 Airflow 태스크로 옮길지 다시 본다.
+사이트 파일(index.html 포털과 정적 요약, catalog.json, profiles/, latest.json, NOTICE.md, sql.html)은 매번 다시 만들고, 컬럼 사전과 테이블마다 "이용 시 유의사항"은 [docs/public_columns.json](docs/public_columns.json)에서 온다(결정 115). 한 번 공개한 버전 폴더는 바꾸지 않는다. 같은 버전을 다시 돌렸을 때 내용이 다르면 아무것도 쓰지 않고 실패한다. 이 순서를 몇 번 돌린 뒤 Airflow 태스크로 옮길지 다시 본다.
 
 ### 6. 운영 대시보드
 ```
