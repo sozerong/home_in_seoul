@@ -100,6 +100,8 @@ pre.code{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:8px;ov
 .guide{background:var(--accent-bg);border:1px solid #c9d8f7;border-radius:10px;padding:14px 16px;margin:10px 0 6px}.guide ol{margin:6px 0 0;padding-left:20px}
 .lbl{font-weight:600}.eng{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
 .hint{background:#fff;border:1px dashed #f6c7c2;border-radius:6px;padding:8px 12px;font-size:12.5px;margin:0 0 8px}.hint ul{margin:4px 0 0;padding-left:18px}
+details.ref{display:inline-block;color:var(--muted);font-size:11.5px;margin-left:4px}details.ref summary{cursor:pointer;text-decoration:underline dotted}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:10px 0 6px}.pcard .kv{display:grid;grid-template-columns:7.5em 1fr;gap:6px 14px;margin:8px 0 0}.pcard dt{color:var(--muted);font-weight:600}.pcard dd{margin:0}.pcard ol{margin:0;padding-left:18px}
 .faq dt{font-weight:600;margin-top:12px}.faq dd{margin:4px 0 0 0;color:var(--text)}.faq .ref{color:var(--muted);font-size:11.5px}
 @media (max-width:860px){.layout{grid-template-columns:1fr}aside{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line)}header nav a{padding:6px 6px}header .brand{display:none}}
 </style>
@@ -111,13 +113,14 @@ pre.code{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:8px;ov
     <a href="#/" data-nav="home">데이터 목록</a>
     <a href="#/sql" data-nav="sql">SQL 편집기</a>
     <a href="#/sources" data-nav="sources">출처·이용조건</a>
-    <a href="#/help" data-nav="help">처음 오셨나요</a>
+    <a href="#/help" data-nav="help">이용 안내</a>
+    <a id="contact" href="#" target="_blank" rel="noopener" hidden>문의·오류 신고</a>
   </nav>
   <div class="right"><label for="ver">버전</label><select id="ver" aria-label="데이터 버전"></select><span id="latestBadge"></span></div>
 </header>
 <div class="layout">
   <aside>
-    <input id="q" type="search" placeholder="표·컬럼·뜻 검색 (예: 월세, 출근, dong_id)" aria-label="표와 컬럼 검색" autocomplete="off">
+    <input id="q" type="search" placeholder="테이블·컬럼 검색 (예: 월세, 출근, dong_id)" aria-label="테이블과 컬럼 검색" autocomplete="off">
     <div id="side"></div>
   </aside>
   <main id="main">
@@ -125,7 +128,7 @@ pre.code{background:#0f172a;color:#e2e8f0;padding:12px 14px;border-radius:8px;ov
 </main>
 </div>
 <div class="toast" id="toast"></div>
-<noscript><p style="padding:20px">JavaScript가 꺼져 있어 위의 요약만 보입니다. 미리보기·프로필·SQL 편집기는 JavaScript가 필요합니다.</p></noscript>
+<noscript><p style="padding:20px">JavaScript가 꺼져 있어 요약만 표시됩니다. 미리보기, 데이터 프로필, SQL 편집기를 쓰려면 JavaScript를 켜 주세요.</p></noscript>
 
 <script type="module">
 // 서버 없는 데이터 포털: catalog.json·manifest·profiles/<버전>.json만 읽고, SQL과 미리보기는 브라우저 안 DuckDB-WASM이
@@ -136,33 +139,33 @@ const KEEP_ROWS = 20000;     // 정렬을 위해 브라우저 메모리에 꺼�
 
 const LABELS = {
   sources: {rent_months: '전월세 계약월', rent_collected_date: '전월세 수집일', commute_months: '생활이동 대상월',
-    congestion_collected_date: '혼잡도 수집일(혼잡도 컬럼은 이용조건 때문에 공개 파일에서 뺐고, 이 날짜만 남김)', store_collected_date: '상가정보 수집일', boundary_base_date: '행정동 경계 기준일'},
-  quality: {rent_quarantine_rows: '전월세: 검사에서 걸러 따로 둔 행', commute_quarantine_rows: '생활이동: 검사에서 걸러 따로 둔 행', dongs_without_mois_code: '행정안전부 코드가 없는 동',
-    commute_pairs_age20_34_basis: '20~34세 값으로 낸 출근 쌍', commute_pairs_all_ages_basis: '전체 나이 값으로 대신한 출근 쌍',
-    dongs_without_monthly_rent_deal: '월세 계약이 없는 동'},
-  // 품질 지표마다 "이 숫자가 뜻하는 것". 근거: data_contract.md 3·4절, docs/public_columns.json의 컬럼 설명
+    congestion_collected_date: '혼잡도 수집일(혼잡도 컬럼은 비공개)', store_collected_date: '상가정보 수집일', boundary_base_date: '행정동 경계 기준일'},
+  quality: {rent_quarantine_rows: '전월세 검증 제외 행', commute_quarantine_rows: '생활이동 검증 제외 행', dongs_without_mois_code: '행정안전부 코드가 없는 행정동',
+    commute_pairs_age20_34_basis: '20~34세 기준 출근 경로', commute_pairs_all_ages_basis: '전체 연령으로 대체한 출근 경로',
+    dongs_without_monthly_rent_deal: '월세 계약이 없는 행정동'},
+  // 품질 지표 설명. 근거: data_contract.md 3·4절, docs/public_columns.json의 컬럼 설명
   qualityMeaning: {
-    rent_quarantine_rows: (v) => `전월세 원천 행 가운데 검증 규칙을 어겨 상품에서 뺀 행이 ${v}개입니다. 상품 파일에는 들어 있지 않습니다.`,
-    commute_quarantine_rows: (v) => `생활이동 원천 행 가운데 검사에서 걸러 따로 둔 행이 ${v}개입니다. 출근 표가 쓰지 않는 행(출근이 아닌 이동유형, 주말, 아침 7~9시 밖)과, 위반 비율이 기준을 넘어 그 달 전체를 받지 않은 달의 행도 함께 세므로, 출근 표 계산에서 빠진 행 수와 같지 않습니다. 사유별 내역은 이 사이트에 없습니다.`,
-    dongs_without_mois_code: (v) => `행정안전부 동 코드(mois_dong_cd)를 정하지 못한 동이 ${v}곳입니다.`,
-    commute_pairs_age20_34_basis: (v) => `commute_od에서 권장 시간(avg_minutes)을 20~34세 값으로 낸 출발·직장 쌍이 ${v}개입니다(basis = age20_34).`,
-    commute_pairs_all_ages_basis: (v) => `20~34세 이동인구(6개월 동안 더한 이동 횟수)가 30보다 적어 전체 나이 값으로 대신한 쌍이 ${v}개입니다(basis = all_ages).`,
-    dongs_without_monthly_rent_deal: (v) => `기간 안에 신규 월세 계약이 없는 동이 ${v}곳입니다. 이 동들은 dong_profile의 월세 계약 수와 월세 중앙값이 0이 아니라 비어 있습니다.`,
+    rent_quarantine_rows: '검증 규칙을 통과하지 못해 제외한 전월세 원본 행 수입니다. 공개 파일에는 포함되지 않습니다.',
+    commute_quarantine_rows: '검증에서 제외한 생활이동 원본 행 수입니다. 출근 분석에 쓰지 않는 행(출근 외 이동 유형, 주말, 오전 7~9시 외 도착)과 오류 비율이 기준을 넘어 통째로 받지 않은 달의 행이 함께 포함돼 있어, commute_od 계산에서 빠진 행 수와는 다릅니다. 사유별 내역은 제공하지 않습니다.',
+    dongs_without_mois_code: '행정안전부 행정동 코드(mois_dong_cd)를 대응하지 못한 행정동 수입니다.',
+    commute_pairs_age20_34_basis: 'commute_od에서 권장 평균 이동 시간(avg_minutes)을 20~34세 값으로 계산한 경로 수입니다(basis = age20_34).',
+    commute_pairs_all_ages_basis: '20~34세 이동인구가 30 미만이라 전체 연령 값으로 대체한 경로 수입니다(basis = all_ages).',
+    dongs_without_monthly_rent_deal: '기간 내 신규 월세 계약이 없는 행정동 수입니다. 이 행정동은 dong_profile의 월세 계약 수와 월세 중앙값이 0이 아니라 NULL입니다.',
   },
 };
 const EXAMPLES = [
-  ['표별 행 수', '표마다 몇 줄이 들어 있나', `-- 표 네 개의 줄 수를 한 번에 센다
+  ['테이블별 행 수', '테이블 4개의 행 수', `-- 테이블 4개의 행 수
 SELECT 'dong_profile' AS table_name, count(*) AS rows FROM dong_profile
 UNION ALL SELECT 'commute_od', count(*) FROM commute_od
 UNION ALL SELECT 'rent_listing', count(*) FROM rent_listing
 UNION ALL SELECT 'dong_mois_map', count(*) FROM dong_mois_map;`],
-  ['컬럼 요약 통계 (SUMMARIZE)', '전월세 계약 표의 컬럼마다 최솟값·최댓값·비어 있는 비율은', `-- SUMMARIZE는 컬럼마다 최솟값, 최댓값, 서로 다른 값 수, 비어 있는 비율을 보여 준다
+  ['컬럼 요약 통계 (SUMMARIZE)', '전월세 계약 컬럼별 최솟값·최댓값·NULL 비율', `-- 컬럼별 최솟값, 최댓값, 고유값 수, NULL 비율
 SUMMARIZE rent_listing;`],
-  ['구별 오피스텔 월세 중앙값', '구마다 오피스텔 월세가 가운데쯤 얼마인가', `-- 구(sgg_cd)마다 오피스텔 월세 계약의 월세 가운데 값(만원)
--- rent_listing에는 구 코드가 없어서 dong_id로 dong_profile과 잇는다
+  ['자치구별 오피스텔 월세 중앙값', '자치구별 오피스텔 신규 월세 계약의 월세 중앙값', `-- 자치구(sgg_cd)별 오피스텔 월세 중앙값(만원)
+-- rent_listing에는 자치구 코드가 없어 dong_id로 dong_profile과 조인
 SELECT p.sgg_cd,
        count(*) AS deals,                                         -- 계약 수
-       quantile_cont(r.monthly_rent_10k_won, 0.5) AS median_rent_10k_won  -- 월세 가운데 값(만원)
+       quantile_cont(r.monthly_rent_10k_won, 0.5) AS median_rent_10k_won  -- 월세 중앙값(만원)
 FROM rent_listing r
 JOIN dong_profile p USING (dong_id)
 WHERE r.source_type = 'offi'          -- 오피스텔만
@@ -170,18 +173,18 @@ WHERE r.source_type = 'offi'          -- 오피스텔만
   AND r.monthly_rent_10k_won > 0
 GROUP BY p.sgg_cd
 ORDER BY median_rent_10k_won DESC;`],
-  ['강남구 동 목록', '강남구에는 어떤 동이 있나', `-- 강남구의 통계청 구 코드는 '11230'(글자). 행정안전부식 11680과 다르다
+  ['강남구 행정동 목록', '강남구 행정동과 월세 중앙값', `-- 강남구의 통계청 자치구 코드는 문자열 '11230'(행정안전부 코드 11680과 다름)
 SELECT dong_id, dong_nm, monthly_deals, monthly_median_rent_10k_won
 FROM dong_profile
 WHERE sgg_cd = '11230'
 ORDER BY dong_nm;`],
-  ['역삼1동 출근 60분 이내 또는 3km 이내 + 월세', '역삼1동으로 출근하기 괜찮은 동과 그 동의 월세는', `-- 직장이 역삼1동일 때 출발 동별 20~34세 평균 이동 시간과 그 동의 월세 가운데 값.
--- 생활이동의 이동 시간은 머문 곳 사이 시간이라 가까운 동일수록 실제보다 길게 나온다(계약 6절 1).
--- 그래서 시간 한도 또는 직선거리 3km 이내를 함께 쓴다.
+  ['역삼1동 출근 60분 또는 3km 이내 + 월세', '역삼1동으로 출근하기 좋은 행정동과 월세 중앙값', `-- 직장이 역삼1동일 때 출발 행정동별 20~34세 평균 이동 시간과 월세 중앙값
+-- 생활이동 이동 시간은 체류지 사이 시간이라 가까운 동일수록 실제보다 길게 나옴
+-- 그래서 직선거리 3km 이내 조건을 함께 사용
 SELECT o.dong_nm AS origin_dong_nm,
        c.avg_minutes_age20_34,             -- 20~34세 평균 이동 시간(분)
-       c.distance_km,                      -- 두 동 사이 직선거리(km)
-       o.monthly_median_rent_10k_won,      -- 출발 동의 월세 가운데 값(만원)
+       c.distance_km,                      -- 두 행정동 대표점 사이 직선거리(km)
+       o.monthly_median_rent_10k_won,      -- 출발 행정동 월세 중앙값(만원)
        o.monthly_median_deposit_10k_won,
        o.nearest_station_nm
 FROM commute_od c
@@ -189,17 +192,17 @@ JOIN dong_profile o ON o.dong_id = c.origin_dong_id
 WHERE c.dest_dong_id = (SELECT dong_id FROM dong_profile WHERE dong_nm = '역삼1동')
   AND (c.avg_minutes_age20_34 <= 60 OR c.distance_km <= 3)
 ORDER BY o.monthly_median_rent_10k_won NULLS LAST;`],
-  ['계약월별 전세·월세 건수', '달마다 전세와 월세 계약이 몇 건인가', `-- 계약년월(deal_ymd)과 전세·월세별 계약 수. 최근 달은 신고가 덜 들어와 적을 수 있다
+  ['계약월별 전세·월세 건수', '계약월별 전세·월세 계약 수', `-- 계약년월(deal_ymd)별 전세·월세 계약 수. 최근 달은 신고 기한(계약 후 30일)이 남아 적을 수 있음
 SELECT deal_ymd, lease_type, count(*) AS deals
 FROM rent_listing
 GROUP BY ALL
 ORDER BY deal_ymd, lease_type;`],
-  ['편의점이 많은 동 20개', '편의점이 가장 많은 동은 어디인가', `-- 동 경계 안 업소 수(곳). 면적으로 나눈 밀도는 이용조건 때문에 공개하지 않는다
+  ['편의점 수 상위 20개 행정동', '편의점이 많은 행정동 20곳', `-- 행정동 경계 안 업소 수(곳). 면적당 밀도는 이용조건상 비공개
 SELECT dong_nm, sgg_cd, convenience_store, pharmacy, laundry
 FROM dong_profile
 ORDER BY convenience_store DESC
 LIMIT 20;`],
-  ['스키마 보기 (DESCRIBE)', '출근 이동 표에는 어떤 컬럼이 있나', `-- 컬럼 이름과 타입
+  ['스키마 보기 (DESCRIBE)', 'commute_od의 컬럼 이름과 타입', `-- 컬럼 이름과 타입
 DESCRIBE commute_od;`],
 ];
 
@@ -209,7 +212,7 @@ const nf = new Intl.NumberFormat('ko-KR');
 const fmtNum = (v, d = 2) => v == null ? '' : (Number.isInteger(v) ? nf.format(v) : new Intl.NumberFormat('ko-KR', {maximumFractionDigits: d}).format(v));
 const fmtBytes = (b) => b >= 1048576 ? (b / 1048576).toFixed(2) + ' MB' : b >= 1024 ? (b / 1024).toFixed(1) + ' KB' : b + ' B';
 const pct = (a, b) => b ? (100 * a / b) : 0;
-const grainText = (g) => '이 표의 한 줄은 ' + g.replace(/^한 행 = /, '').replace(/, [\d,]+행$/, '') + '입니다';
+const grainText = (g) => '행 단위: ' + g.replace(/^한 행 = /, '').replace(/, [\d,]+행$/, '');
 const colOf = (table, name) => ds(table)?.columns.find((c) => c.name === name);
 const labelCell = (c) => `<div class="lbl">${esc(c.label)}</div><div class="eng">${esc(c.name)}</div>`;
 const valuesHtml = (c) => c.values ? '<div class="note">' + Object.entries(c.values).map(([k, v]) => `<span class="mono">${esc(k)}</span> = ${esc(v)}`).join(' · ') + '</div>' : '';
@@ -221,9 +224,9 @@ function refHtml(ref) {
     return repo ? `<a href="${esc(repo)}/blob/main/${path}" target="_blank" rel="noopener">${m}</a>` : m;
   });
 }
-// 비공개 이유 글(공개 manifest라 바꿀 수 없음)의 내부 용어 풀이. publish_site.py EXCLUDED_TERMS와 같은 문구
-const EXCLUDED_TERMS = "이유 글의 '결정 113'은 이 데이터를 만든 프로젝트의 설계 결정 번호, 'OA-12928'은 서울 열린데이터광장 자료 번호, '3유형'은 공공누리 제3유형(출처 표시, 변경 금지), '6a·6b'는 혼잡도와 면적의 공개 여부를 다시 판정할 다음 단계 이름, '약관 제15조'는 통계청 SGIS 통합 이용약관의 조항(사전 승낙 없는 타인 제공 금지)입니다";
-function notesHtml(d) { return `<div class="notes"><b>쓰기 전에 알아 둘 것</b><ul>${d.notes.map((n) => `<li>${esc(n.text)} <span class="ref">(근거: ${refHtml(n.source_ref)})</span></li>`).join('')}</ul></div>`; }
+// 근거는 접어 두고 필요할 때만 펼친다
+const refToggle = (ref) => ref ? `<details class="ref"><summary>근거</summary>${refHtml(ref)}</details>` : '';
+function notesHtml(d) { return `<div class="notes"><b>이용 시 유의사항</b><ul>${d.notes.map((n) => `<li>${esc(n.text)} ${refToggle(n.source_ref)}</li>`).join('')}</ul></div>`; }
 const pgType = (t) => t.replace('double precision', 'double').replace('character', 'char');
 
 const S = {catalog: null, version: null, manifests: {}, profiles: {}, conn: null, engine: null, viewsFor: null, last: null, sort: null};
@@ -243,7 +246,7 @@ function sourceNames(srcs) { return srcs.map((s) => S.catalog.licenses[s]?.name 
 // ---------- DuckDB-WASM ----------
 async function getConn(status) {
   if (S.conn) return S.conn;
-  status?.('SQL 엔진(DuckDB-WASM)을 내려받는 중... 처음 한 번만 몇 초 걸립니다');
+  status?.('SQL 엔진(DuckDB-WASM)을 불러오는 중입니다. 처음 한 번은 몇 초 걸릴 수 있습니다.');
   const duckdb = await import(DUCKDB_ESM);
   const bundle = await duckdb.selectBundle(window.DUCKDB_BUNDLES || duckdb.getJsDelivrBundles());
   // CDN의 워커 스크립트는 다른 출처라 바로 못 띄운다: 같은 출처의 Blob URL로 감싼다
@@ -312,15 +315,15 @@ function renderSide(active) {
   const q = $('#q').value.trim().toLowerCase();
   const html = [];
   if (active === 'sql') {
-    html.push('<h4>표와 컬럼 (눌러서 넣기)</h4><div class="tree">');
+    html.push('<h4>테이블과 컬럼 (클릭해 삽입)</h4><div class="tree">');
     for (const d of S.catalog.datasets) {
       const cols = d.columns.filter((c) => !q || d.identifier.includes(q) || c.name.toLowerCase().includes(q) || (c.label + ' ' + c.help).toLowerCase().includes(q));
       if (!cols.length && q) continue;
-      html.push(`<details ${q || d.identifier === 'dong_profile' ? 'open' : ''}><summary data-ins="${esc(d.identifier)}" title="두 번 누르면 SELECT 문을 넣습니다">${esc(d.identifier)} <span class="note">${esc(d.title)}</span></summary>`);
+      html.push(`<details ${q || d.identifier === 'dong_profile' ? 'open' : ''}><summary data-ins="${esc(d.identifier)}" title="더블클릭하면 SELECT 문을 삽입합니다">${esc(d.identifier)} <span class="note">${esc(d.title)}</span></summary>`);
       html.push(cols.map((c) => `<div class="col" data-ins="${esc(c.name)}" title="${esc(c.name + ' · ' + c.label + '\n' + c.help)}"><span>${esc(c.label)} <span class="eng">${esc(c.name)}</span></span><em>${esc(pgType(c.type))}</em></div>`).join(''));
       html.push('</details>');
     }
-    html.push('</div><h4>최근 질의</h4><div class="hist-list" id="hist"></div>');
+    html.push('</div><h4>최근 실행한 쿼리</h4><div class="hist-list" id="hist"></div>');
     $('#side').innerHTML = html.join('');
     renderHistory();
     return;
@@ -334,12 +337,26 @@ function renderSide(active) {
     html.push(`<a class="dslink ${active === d.identifier ? 'on' : ''}" href="#/t/${d.identifier}"><div class="t">${esc(d.title)}</div><div class="s"><span class="mono">${esc(d.identifier)}</span> · ${f ? nf.format(f.rows) + '행' : '이 버전에 없음'} · 컬럼 ${d.columns.length}</div></a>`);
     for (const c of hits.slice(0, 8)) html.push(`<a class="hit" href="#/t/${d.identifier}/schema?col=${encodeURIComponent(c.name)}" title="${esc(c.help)}">↳ ${esc(c.label)} <span class="eng">${esc(c.name)}</span></a>`);
   }
-  if (html.length === 1) html.push('<p class="note">찾는 표나 컬럼이 없습니다.</p>');
-  html.push('<h4>바로 가기</h4><a class="dslink" href="#/help"><div class="t">처음 오셨나요</div><div class="s">쓰는 순서, 용어 풀이, 자주 묻는 질문</div></a><a class="dslink" href="#/sql"><div class="t">SQL 편집기</div><div class="s">브라우저에서 바로 질의</div></a><a class="dslink" href="catalog.json"><div class="t">catalog.json</div><div class="s">기계가 읽는 목록</div></a>');
+  if (html.length === 1) html.push('<p class="note">검색 결과가 없습니다.</p>');
+  html.push('<h4>바로 가기</h4><a class="dslink" href="#/help"><div class="t">이용 안내</div><div class="s">이용 방법, 용어 설명, 자주 묻는 질문</div></a><a class="dslink" href="#/sql"><div class="t">SQL 편집기</div><div class="s">브라우저에서 바로 쿼리 실행</div></a><a class="dslink" href="catalog.json"><div class="t">catalog.json</div><div class="s">기계 판독용 데이터 목록</div></a>');
   $('#side').innerHTML = html.join('');
 }
 
 // ---------- 화면: 목록(홈) ----------
+// 데이터 상품 카드(handoff_delivery.md 1절). 값은 catalog.card(public_columns.json card)와 최신 버전 기록에서 온다
+function cardHtml() {
+  const c = S.catalog.card, v = S.catalog.versions.find((x) => x.version === S.catalog.latest);
+  const days = Math.max(0, Math.floor((Date.now() - Date.parse(v.created_at)) / 86400000));
+  const ch = v.changes;
+  const change = ch ? `직전 공개 버전 ${ch.previous} 대비 추가 컬럼 ${ch.added.length}개, 빠진 컬럼 ${Object.keys(ch.removed).length}개, 형 변경 ${ch.type_changed.length}개` : '첫 공개 버전이라 비교할 직전 버전이 없습니다';
+  return `<div class="pcard"><b>데이터 상품 카드</b><dl class="kv">
+    <dt>주인·문의</dt><dd>${esc(c.owner)} · <a href="${esc(c.contact_url)}" target="_blank" rel="noopener">${esc(c.contact_label)}</a></dd>
+    <dt>마지막 공개</dt><dd><b class="mono">${esc(v.version)}</b> (${esc(v.created_at.slice(0, 10))}, ${days}일 전). ${esc(change)}. <a href="#/t/dong_profile/versions">버전 기록</a></dd>
+    <dt>공개 주기</dt><dd>${esc(c.publication_cycle)}</dd>
+    <dt>수집 주기</dt><dd>${esc(c.collection_cycle)}</dd>
+    <dt>변경 정책</dt><dd><ol>${c.change_policy.map((x) => `<li>${esc(x)}</li>`).join('')}</ol></dd>
+    <dt>컬럼 사전</dt><dd>테이블마다 <b>스키마</b> 탭에 한글 이름, 단위, 설명, 예시값이 있습니다.</dd></dl></div>`;
+}
 async function viewHome() {
   const m = await manifest();
   const c = S.catalog;
@@ -347,37 +364,37 @@ async function viewHome() {
   const cols = c.datasets.reduce((a, d) => a + d.columns.length, 0);
   const bytes = c.datasets.reduce((a, d) => a + (fileOf(d, 'parquet')?.bytes || 0), 0);
   const nsrc = Object.keys(m.licenses).length;
-  const html = [`<h1>${esc(c.title)}</h1><p class="sub">${esc(c.description)}</p>`,
-    `<div class="kpis"><div class="kpi"><b>${c.datasets.length}</b><span>표</span></div><div class="kpi"><b>${nf.format(rows)}</b><span>행 (이 버전 합계)</span></div><div class="kpi"><b>${cols}</b><span>공개 컬럼</span></div><div class="kpi"><b>${nsrc}</b><span>원천 기관 데이터</span></div><div class="kpi"><b>${fmtBytes(bytes)}</b><span>Parquet 합계</span></div><div class="kpi"><b class="mono" style="font-size:15px">${esc(S.version)}</b><span>버전 · 만든 시각 ${esc(m.created_at.slice(0, 16).replace('T', ' '))}</span></div></div>`,
-    `<div class="guide"><b>처음 오셨나요?</b> 서울 426개 행정동마다 전월세 시세, 출근 이동 시간, 가까운 역, 생활 편의 업소 수를 공공데이터로 계산해 둔 표입니다.<ol><li>아래에서 표를 고릅니다.</li><li>표의 <b>스키마</b> 탭에서 컬럼 뜻을 봅니다.</li><li><b>SQL 편집기</b>로 필요한 줄만 뽑거나, <b>가져가기</b> 탭에서 파일을 내려받습니다.</li></ol><div style="margin-top:6px"><a href="#/help">용어 풀이와 자주 묻는 질문 보기</a></div></div>`,
-    '<h2>표</h2><div class="cards">'];
+  const html = [`<h1>${esc(c.title)}</h1><p class="sub">${esc(c.description)}</p>`, cardHtml(),
+    `<div class="kpis"><div class="kpi"><b>${c.datasets.length}</b><span>테이블</span></div><div class="kpi"><b>${nf.format(rows)}</b><span>전체 행 수</span></div><div class="kpi"><b>${cols}</b><span>공개 컬럼</span></div><div class="kpi"><b>${nsrc}</b><span>출처 데이터</span></div><div class="kpi"><b>${fmtBytes(bytes)}</b><span>Parquet 용량</span></div><div class="kpi"><b class="mono" style="font-size:15px">${esc(S.version)}</b><span>버전 · 생성 시각 ${esc(m.created_at.slice(0, 16).replace('T', ' '))}</span></div></div>`,
+    `<div class="guide"><b>이용 방법</b><ol><li>아래에서 테이블을 선택합니다.</li><li><b>스키마</b> 탭에서 컬럼 설명을 확인합니다.</li><li><b>SQL 편집기</b>에서 필요한 행만 조회하거나 <b>내려받기</b> 탭에서 파일을 받습니다.</li></ol><div style="margin-top:6px"><a href="#/help">용어 설명과 자주 묻는 질문</a></div></div>`,
+    '<h2>테이블</h2><div class="cards">'];
   for (const d of c.datasets) {
     const f = fileOf(d, 'parquet');
     const srcs = [...new Set(d.columns.flatMap((x) => x.sources))];
-    html.push(`<a class="card" href="#/t/${d.identifier}"><div class="t">${esc(d.title)}</div><div class="id">${esc(d.identifier)}</div><div class="g">${esc(grainText(d.grain))}</div><div class="row"><span class="badge">${f ? nf.format(f.rows) : 0}행</span><span class="badge gray">컬럼 ${d.columns.length}</span><span class="badge gray">${f ? fmtBytes(f.bytes) : ''}</span>${Object.keys(d.excluded_columns).length ? `<span class="badge warn">비공개 컬럼 ${Object.keys(d.excluded_columns).length}</span>` : ''}</div><div class="note" style="margin-top:6px">원천: ${esc(sourceNames(srcs).join(', '))}</div></a>`);
+    html.push(`<a class="card" href="#/t/${d.identifier}"><div class="t">${esc(d.title)}</div><div class="id">${esc(d.identifier)}</div><div class="g">${esc(grainText(d.grain))}</div><div class="row"><span class="badge">${f ? nf.format(f.rows) : 0}행</span><span class="badge gray">컬럼 ${d.columns.length}</span><span class="badge gray">${f ? fmtBytes(f.bytes) : ''}</span>${Object.keys(d.excluded_columns).length ? `<span class="badge warn">비공개 컬럼 ${Object.keys(d.excluded_columns).length}</span>` : ''}</div><div class="note" style="margin-top:6px">출처: ${esc(sourceNames(srcs).join(', '))}</div></a>`);
   }
   html.push('</div>');
-  html.push('<h2>신선도</h2><p class="note">값이 어느 시점의 원천에서 왔는지입니다. 버전 폴더의 파일은 한 번 올리면 바뀌지 않습니다.</p><table class="grid"><tr><th>항목</th><th>값</th></tr>');
+  html.push('<h2>데이터 기준 시점</h2><p class="note">각 값의 바탕이 된 출처 데이터의 기간과 수집일입니다. 공개한 버전의 파일은 수정하지 않습니다.</p><table class="grid"><tr><th>항목</th><th>값</th></tr>');
   for (const [k, v] of Object.entries(m.sources)) html.push(`<tr><td>${esc(LABELS.sources[k] || k)} <span class="note mono">${esc(k)}</span></td><td class="mono">${esc(String(v).replaceAll(',', ', '))}</td></tr>`);
   html.push('</table>');
-  html.push('<h2>표끼리 잇기</h2><p class="note">모든 표는 통계청 행정동 코드 8자리(dong_id)로 dong_profile에 붙습니다. 동 이름은 서울 안에서도 겹치므로(예: 신사동이 강남구와 관악구에 있음) 이름으로 잇지 마세요.</p><div class="card"><div class="rel">');
+  html.push('<h2>테이블 연결(조인 키)</h2><p class="note">모든 테이블은 통계청 행정동 코드 8자리(dong_id)로 dong_profile과 조인합니다. 행정동 이름은 서울 안에서도 겹치므로(예: 신사동은 강남구와 관악구에 있음) 이름으로 조인하지 마세요.</p><div class="card"><div class="rel">');
   for (const r of c.relations) html.push(`<span class="mono">${esc(r.from[0])}.${esc(r.from[1])}</span><span>→</span><span><span class="mono">${esc(r.to[0])}.${esc(r.to[1])}</span> <span class="note">(${esc(r.label)})</span></span>`);
   html.push('</div></div>');
-  html.push('<h2>품질 지표</h2><table class="grid"><tr><th>지표</th><th class="num">값</th><th>이 숫자가 뜻하는 것</th></tr>');
-  for (const [k, v] of Object.entries(m.quality)) html.push(`<tr><td>${esc(LABELS.quality[k] || k)} <span class="note mono">${esc(k)}</span></td><td class="num">${fmtNum(Number(v))}</td><td>${esc(LABELS.qualityMeaning[k] ? LABELS.qualityMeaning[k](fmtNum(Number(v))) : '')}</td></tr>`);
-  html.push('</table><p class="note">"검사에서 걸러 따로 둔 행"(격리 행)은 검증 규칙을 어겨 따로 둔 원천 행입니다. 상품 파일에는 없습니다.</p>');
-  html.push(`<h2>바로 시작</h2><div class="row"><a class="btn" href="#/sql">SQL 편집기 열기</a><a class="btn" href="#/t/dong_profile/access">파일·코드로 가져가기</a><a class="btn" href="#/sources">출처·이용조건</a></div>`);
+  html.push('<h2>데이터 품질</h2><table class="grid"><tr><th>지표</th><th class="num">값</th><th>설명</th></tr>');
+  for (const [k, v] of Object.entries(m.quality)) html.push(`<tr><td>${esc(LABELS.quality[k] || k)} <span class="note mono">${esc(k)}</span></td><td class="num">${fmtNum(Number(v))}</td><td>${esc(LABELS.qualityMeaning[k] || '')}</td></tr>`);
+  html.push('</table>');
+  html.push(`<h2>바로 가기</h2><div class="row"><a class="btn" href="#/sql">SQL 편집기 열기</a><a class="btn" href="#/t/dong_profile/access">파일 내려받기·코드 예시</a><a class="btn" href="#/sources">출처·이용조건</a></div>`);
   $('#main').innerHTML = html.join('');
 }
 
-// ---------- 화면: 표 ----------
-const TABS = [['overview', '개요'], ['schema', '스키마(컬럼 뜻)'], ['preview', '미리보기'], ['profile', '프로필(값 분포)'], ['access', '가져가기'], ['versions', '버전']];
+// ---------- 화면: 테이블 ----------
+const TABS = [['overview', '개요'], ['schema', '스키마'], ['preview', '미리보기'], ['profile', '데이터 프로필'], ['access', '내려받기'], ['versions', '버전 기록']];
 async function viewTable(name, tab, params) {
   const d = ds(name);
-  if (!d) { $('#main').innerHTML = `<p class="err">표 ${esc(name)}이 없습니다.</p>`; return; }
+  if (!d) { $('#main').innerHTML = `<p class="err">${esc(name)} 테이블이 없습니다.</p>`; return; }
   tab = TABS.some(([k]) => k === tab) ? tab : 'overview';
   const f = fileOf(d, 'parquet');
-  const head = `<p class="note"><a href="#/">데이터 목록</a> / ${esc(d.identifier)}</p><h1>${esc(d.title)} <span class="mono note" style="font-size:14px">${esc(d.identifier)}</span></h1><p class="sub">${esc(grainText(d.grain))}</p><div class="row"><span class="badge">${f ? nf.format(f.rows) : 0}행</span><span class="badge gray">컬럼 ${d.columns.length}</span><span class="badge gray">${esc(S.version)}</span><a class="btn" href="#/sql?q=${encodeURIComponent(`SELECT *\nFROM ${d.identifier}\nLIMIT 100;`)}">SQL로 열기</a></div><div class="tabs">${TABS.map(([k, l]) => `<a class="${k === tab ? 'on' : ''}" href="#/t/${name}/${k}">${l}</a>`).join('')}</div><div id="tab"><p class="loading">불러오는 중...</p></div>`;
+  const head = `<p class="note"><a href="#/">데이터 목록</a> / ${esc(d.identifier)}</p><h1>${esc(d.title)} <span class="mono note" style="font-size:14px">${esc(d.identifier)}</span></h1><p class="sub">${esc(grainText(d.grain))}</p><div class="row"><span class="badge">${f ? nf.format(f.rows) : 0}행</span><span class="badge gray">컬럼 ${d.columns.length}</span><span class="badge gray">${esc(S.version)}</span><a class="btn" href="#/sql?q=${encodeURIComponent(`SELECT *\nFROM ${d.identifier}\nLIMIT 100;`)}">SQL 편집기에서 열기</a></div><div class="tabs">${TABS.map(([k, l]) => `<a class="${k === tab ? 'on' : ''}" href="#/t/${name}/${k}">${l}</a>`).join('')}</div><div id="tab"><p class="loading">불러오는 중...</p></div>`;
   $('#main').innerHTML = head;
   const el = $('#tab');
   try {
@@ -396,38 +413,38 @@ async function tabOverview(d) {
   const rels = S.catalog.relations.filter((r) => r.from[0] === d.identifier || r.to[0] === d.identifier);
   const keys = d.primary_key || [];
   const h = [notesHtml(d), '<div class="cards">'];
-  h.push(`<div class="card"><div class="t">파일</div>${['parquet', 'csv'].map((fmt) => { const f = fileOf(d, fmt); return f ? `<div class="row" style="justify-content:space-between;margin-top:6px"><a href="${esc(f.url)}" download>${esc(d.identifier)}.${fmt}</a><span class="note">${fmtBytes(f.bytes)}</span></div>` : ''; }).join('')}<div class="note" style="margin-top:6px">Parquet: 분석 도구용(타입이 유지되고 작음). CSV: 엑셀용(UTF-8 BOM이라 한글이 깨지지 않음). 코드 컬럼은 글자로 불러오세요.</div></div>`);
-  h.push(`<div class="card"><div class="t">한 줄을 구분하는 값(키)</div><div style="margin-top:6px">${keys.length ? keys.map((k) => `<span class="badge" title="${esc(colOf(d.identifier, k)?.label || '')}">${esc(k)}</span>`).join(' + ') : '<span class="note">없음. 같은 값의 줄이 여럿일 수 있습니다(거래 고유 키가 없음: 동·호를 주지 않음).</span>'}</div><div class="note" style="margin-top:6px">${keys.length > 1 ? '이 컬럼들을 함께 보면 한 줄이 정해집니다. ' : ''}${keys.length ? '이 버전에서 비어 있지 않고 겹치지 않음을 만들 때 확인했습니다.' : ''}</div></div>`);
-  h.push(`<div class="card"><div class="t">원천</div>${srcs.map((s) => `<div style="margin-top:6px">${esc(S.catalog.licenses[s]?.name || s)}<div class="note">${esc(S.catalog.licenses[s]?.license || '')}</div></div>`).join('')}</div>`);
+  h.push(`<div class="card"><div class="t">파일</div>${['parquet', 'csv'].map((fmt) => { const f = fileOf(d, fmt); return f ? `<div class="row" style="justify-content:space-between;margin-top:6px"><a href="${esc(f.url)}" download>${esc(d.identifier)}.${fmt}</a><span class="note">${fmtBytes(f.bytes)}</span></div>` : ''; }).join('')}<div class="note" style="margin-top:6px">Parquet는 컬럼 타입이 유지되고 용량이 작아 분석 도구에 적합합니다. CSV는 UTF-8(BOM)이라 엑셀에서 한글이 깨지지 않습니다. 코드 컬럼은 텍스트로 불러오세요.</div></div>`);
+  h.push(`<div class="card"><div class="t">기본 키</div><div style="margin-top:6px">${keys.length ? keys.map((k) => `<span class="badge" title="${esc(colOf(d.identifier, k)?.label || '')}">${esc(k)}</span>`).join(' + ') : '<span class="note">없음. 같은 값을 가진 행이 여러 개일 수 있습니다(출처가 동·호수를 제공하지 않아 거래 고유 키가 없음).</span>'}</div><div class="note" style="margin-top:6px">${keys.length > 1 ? '복합 키: 이 컬럼들을 함께 써야 행 하나가 정해집니다. ' : ''}${keys.length ? '이 버전에서 NULL과 중복이 없음을 확인했습니다.' : ''}</div></div>`);
+  h.push(`<div class="card"><div class="t">출처</div>${srcs.map((s) => `<div style="margin-top:6px">${esc(S.catalog.licenses[s]?.name || s)}<div class="note">${esc(S.catalog.licenses[s]?.license || '')}</div></div>`).join('')}</div>`);
   h.push('</div>');
   if (rels.length) {
-    h.push('<h2>이어지는 표</h2><table class="grid"><tr><th>이 표 컬럼</th><th>잇는 곳</th><th>뜻</th><th></th></tr>');
+    h.push('<h2>연결된 테이블</h2><table class="grid"><tr><th>이 테이블 컬럼</th><th>연결 대상</th><th>설명</th><th></th></tr>');
     for (const r of rels) {
       const [mine, other] = r.from[0] === d.identifier ? [r.from, r.to] : [r.to, r.from];
       const sql = `SELECT a.*, b.*\nFROM ${r.from[0]} a\nJOIN ${r.to[0]} b ON a.${r.from[1]} = b.${r.to[1]}\nLIMIT 100;`;
-      h.push(`<tr><td class="mono">${esc(mine[1])}</td><td class="mono"><a href="#/t/${other[0]}">${esc(other[0])}</a>.${esc(other[1])}</td><td>${esc(r.label)}</td><td><a href="#/sql?q=${encodeURIComponent(sql)}">조인 SQL</a></td></tr>`);
+      h.push(`<tr><td class="mono">${esc(mine[1])}</td><td class="mono"><a href="#/t/${other[0]}">${esc(other[0])}</a>.${esc(other[1])}</td><td>${esc(r.label)}</td><td><a href="#/sql?q=${encodeURIComponent(sql)}">조인 쿼리</a></td></tr>`);
     }
     h.push('</table>');
   }
   const ex = Object.entries(d.excluded_columns);
   if (ex.length) {
-    h.push('<h2>공개하지 않는 컬럼</h2><p class="note">원본 상품에는 있지만 이용조건 때문에 공개 파일에서 뺀 컬럼입니다. 값은 어디에도 없습니다. ${esc(EXCLUDED_TERMS)}.</p><table class="grid"><tr><th>컬럼</th><th>이유</th></tr>');
+    h.push('<h2>비공개 컬럼</h2><p class="note">원본에는 있지만 출처의 이용조건 때문에 공개 파일에서 제외한 컬럼입니다. 값은 공개하지 않습니다.</p><table class="grid"><tr><th>컬럼</th><th>사유</th></tr>');
     for (const [c, why] of ex) h.push(`<tr><td class="mono">${esc(c)}</td><td>${esc(why)}</td></tr>`);
     h.push('</table>');
   }
-  h.push('<h2>컬럼 한눈에</h2>' + await tabSchema(d, null, true));
+  h.push('<h2>컬럼 요약</h2>' + await tabSchema(d, null, true));
   return h.join('');
 }
 async function tabSchema(d, focus, compact) {
   const p = (await profile())[d.identifier] || {};
-  const h = [compact ? '' : '<div class="row" style="margin-bottom:10px"><input id="colq" type="search" placeholder="컬럼 이름·뜻으로 거르기" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;min-width:260px"><span class="note">비어 있는 값(결측) 비율, 서로 다른 값 수, 범위는 이 버전 전체 줄로 계산한 정확한 값입니다. 맨 오른쪽 "근거"는 이 값을 만든 코드·문서 위치라 확인하고 싶을 때만 보면 됩니다.</span></div>',
-    '<table class="grid" id="schemaT"><tr><th>#</th><th>컬럼</th><th>단위</th><th>설명</th>' + (compact ? '' : '<th class="num">비어 있음</th><th class="num">서로 다른 값 수</th><th>범위·자주 나오는 값</th><th>타입</th><th>원천</th>') + '</tr>'];
+  const h = [compact ? '' : '<div class="row" style="margin-bottom:10px"><input id="colq" type="search" placeholder="컬럼 이름·설명으로 필터" style="padding:6px 9px;border:1px solid var(--line);border-radius:6px;min-width:260px"><span class="note">NULL 비율, 고유값 수, 범위는 이 버전 전체 행으로 계산한 정확한 값입니다.</span></div>',
+    '<table class="grid" id="schemaT"><tr><th>#</th><th>컬럼</th><th>단위</th><th>설명</th>' + (compact ? '' : '<th class="num">NULL 비율</th><th class="num">고유값 수</th><th>범위·주요 값</th><th>타입</th><th>출처</th>') + '</tr>'];
   d.columns.forEach((c, i) => {
     const pr = p[c.name] || {};
     const range = pr.kind === 'number' ? `${fmtNum(pr.min, 4)} ~ ${fmtNum(pr.max, 4)}` : pr.kind === 'date' ? `${esc(pr.min)} ~ ${esc(pr.max)}` : (pr.top || []).slice(0, 3).map(([v]) => `<span class="badge gray">${esc(v.length > 18 ? v.slice(0, 18) + '…' : v)}</span>`).join(' ');
     const style = focus === c.name ? ' style="background:#fff8db"' : '';
-    h.push(`<tr id="col-${esc(c.name)}"${style} data-s="${esc((c.name + ' ' + c.label + ' ' + c.help).toLowerCase())}"><td class="num note">${i + 1}</td><td>${labelCell(c)}</td><td class="note">${esc(c.unit)}</td><td>${esc(c.help)}${valuesHtml(c)}<div class="note">예: <span class="mono">${esc(c.example)}</span></div></td>` + (compact ? '' :
-      `<td class="num">${pr.rows ? fmtNum(pct(pr.nulls, pr.rows), 1) + '%' : ''}</td><td class="num">${pr.distinct != null ? nf.format(pr.distinct) : ''}</td><td class="mono">${range}</td><td class="mono note">${esc(c.type)}</td><td class="note">${esc(sourceNames(c.sources).join(', '))}<div title="${esc(c.description)}">근거: ${refHtml(c.source_ref)}</div></td>`) + '</tr>');
+    h.push(`<tr id="col-${esc(c.name)}"${style} data-s="${esc((c.name + ' ' + c.label + ' ' + c.help).toLowerCase())}"><td class="num note">${i + 1}</td><td>${labelCell(c)}</td><td class="note">${esc(c.unit)}</td><td>${esc(c.help)}${valuesHtml(c)}<div class="note">예시: <span class="mono">${esc(c.example)}</span></div></td>` + (compact ? '' :
+      `<td class="num">${pr.rows ? fmtNum(pct(pr.nulls, pr.rows), 1) + '%' : ''}</td><td class="num">${pr.distinct != null ? nf.format(pr.distinct) : ''}</td><td class="mono">${range}</td><td class="mono note">${esc(c.type)}</td><td class="note">${esc(sourceNames(c.sources).join(', '))}${refToggle(c.source_ref)}</td>`) + '</tr>');
   });
   h.push('</table>');
   if (focus) setTimeout(() => document.getElementById('col-' + focus)?.scrollIntoView({block: 'center'}), 0);
@@ -444,25 +461,25 @@ async function tabPreview(d, el) {
   const t0 = performance.now();
   const table = await conn.query(`SELECT * FROM "${d.identifier}" LIMIT 100`);
   const res = arrowToRows(table, 100);
-  el.innerHTML = `<div class="row" style="margin-bottom:8px"><span class="status">앞 100행 · ${Math.round(performance.now() - t0)} ms · 브라우저 안 DuckDB-WASM ${esc(S.engine)}</span><a class="btn" href="#/sql?q=${encodeURIComponent(`SELECT *\nFROM ${d.identifier}\nLIMIT 100;`)}">SQL 편집기에서 열기</a></div><div class="result">${gridHtml(res, false)}</div>`;
+  el.innerHTML = `<div class="row" style="margin-bottom:8px"><span class="status">상위 100행 · ${Math.round(performance.now() - t0)} ms · DuckDB-WASM ${esc(S.engine)}</span><a class="btn" href="#/sql?q=${encodeURIComponent(`SELECT *\nFROM ${d.identifier}\nLIMIT 100;`)}">SQL 편집기에서 열기</a></div><div class="result">${gridHtml(res, false)}</div>`;
 }
 async function tabProfile(d) {
   const p = (await profile())[d.identifier] || {};
-  const h = ['<p class="note">이 버전 전체 줄로 미리 계산한 값입니다(근사 없음). 숫자 컬럼은 값 분포(히스토그램: 같은 너비 구간 12개에 몇 줄씩 있는지), 글자·날짜 컬럼은 자주 나오는 값 8개입니다.</p><div class="profile">'];
+  const h = ['<p class="note">이 버전 전체 행으로 미리 계산한 정확한 값입니다(샘플링 없음). 숫자 컬럼은 히스토그램(같은 너비 구간 12개), 문자·날짜 컬럼은 상위 8개 값을 보여 줍니다.</p><div class="profile">'];
   for (const c of d.columns) {
     const pr = p[c.name]; if (!pr) continue;
     const miss = pct(pr.nulls, pr.rows);
-    h.push(`<div class="pcard"><div class="row" style="justify-content:space-between"><span>${labelCell(c)}</span><span class="badge gray">${esc(c.type)}</span></div><div class="note">${esc(c.help)}</div>${valuesHtml(c)}<div class="miss" title="비어 있는 값 ${fmtNum(miss, 1)}%"><i style="width:${miss}%"></i></div><div class="stats"><span>줄 수</span><span>${nf.format(pr.rows)}</span><span>비어 있는 값</span><span>${nf.format(pr.nulls)} (${fmtNum(miss, 1)}%)</span><span>서로 다른 값 수</span><span>${nf.format(pr.distinct)}</span>`);
+    h.push(`<div class="pcard"><div class="row" style="justify-content:space-between"><span>${labelCell(c)}</span><span class="badge gray">${esc(c.type)}</span></div><div class="note">${esc(c.help)}</div>${valuesHtml(c)}<div class="miss" title="NULL ${fmtNum(miss, 1)}%"><i style="width:${miss}%"></i></div><div class="stats"><span>행 수</span><span>${nf.format(pr.rows)}</span><span>NULL</span><span>${nf.format(pr.nulls)} (${fmtNum(miss, 1)}%)</span><span>고유값 수</span><span>${nf.format(pr.distinct)}</span>`);
     if (pr.kind === 'number') {
-      h.push(`<span>최소 · 최대</span><span>${fmtNum(pr.min, 4)} · ${fmtNum(pr.max, 4)}</span><span>평균</span><span>${fmtNum(pr.mean, 4)}</span><span>하위 25% · 가운데 · 상위 25% 값</span><span>${fmtNum(pr.q25, 4)} · ${fmtNum(pr.median, 4)} · ${fmtNum(pr.q75, 4)}</span></div>`);
+      h.push(`<span>최솟값 · 최댓값</span><span>${fmtNum(pr.min, 4)} · ${fmtNum(pr.max, 4)}</span><span>평균</span><span>${fmtNum(pr.mean, 4)}</span><span>1사분위 · 중앙값 · 3사분위</span><span>${fmtNum(pr.q25, 4)} · ${fmtNum(pr.median, 4)} · ${fmtNum(pr.q75, 4)}</span></div>`);
       const hs = pr.histogram, mx = Math.max(...hs.counts, 1);
-      h.push('<div class="hist">' + hs.counts.map((n, i) => { const lo = hs.min + i * hs.width; return `<div style="height:${Math.max(1, 100 * n / mx)}%" title="${fmtNum(lo, 3)} ~ ${fmtNum(lo + hs.width, 3)}${c.unit ? ' ' + c.unit : ''}: ${nf.format(n)}줄"></div>`; }).join('') + `</div><div class="hl"><span>${fmtNum(hs.min, 3)}</span><span>${fmtNum(hs.min + hs.width * hs.counts.length, 3)}</span></div>`);
+      h.push('<div class="hist">' + hs.counts.map((n, i) => { const lo = hs.min + i * hs.width; return `<div style="height:${Math.max(1, 100 * n / mx)}%" title="${fmtNum(lo, 3)} ~ ${fmtNum(lo + hs.width, 3)}${c.unit ? ' ' + c.unit : ''}: ${nf.format(n)}행"></div>`; }).join('') + `</div><div class="hl"><span>${fmtNum(hs.min, 3)}</span><span>${fmtNum(hs.min + hs.width * hs.counts.length, 3)}</span></div>`);
     } else {
-      if (pr.kind === 'date') h.push(`<span>처음 · 마지막</span><span>${esc(pr.min)} · ${esc(pr.max)}</span>`);
+      if (pr.kind === 'date') h.push(`<span>최솟값 · 최댓값</span><span>${esc(pr.min)} · ${esc(pr.max)}</span>`);
       h.push('</div><div style="margin-top:8px">');
       const nn = pr.rows - pr.nulls || 1;
       for (const [v, n] of pr.top || []) h.push(`<div class="bar"><div class="b" title="${esc(v)}"><i style="width:${100 * n / nn}%"></i><span>${esc(v)}</span></div><div class="c">${fmtNum(100 * n / nn, 1)}%</div></div>`);
-      if (pr.distinct > (pr.top || []).length) h.push(`<div class="note">그 밖 ${nf.format(pr.distinct - pr.top.length)}개 값</div>`);
+      if (pr.distinct > (pr.top || []).length) h.push(`<div class="note">외 ${nf.format(pr.distinct - pr.top.length)}개 값</div>`);
       h.push('</div>');
     }
     h.push('</div>');
@@ -476,24 +493,43 @@ function tabAccess(d) {
   const strCols = d.columns.filter((c) => /character|text/.test(c.type) && /(_id|_cd)$/.test(c.name)).map((c) => `"${c.name}": str`).join(', ');
   const fp = fileOf(d, 'parquet'), fc = fileOf(d, 'csv');
   return [
-    `<p class="note">Parquet: 분석 도구용(타입이 유지되고 작음). CSV: 엑셀용. 파일 지문(sha256)은 내려받은 파일이 원본과 같은지 확인하는 값입니다.</p><table class="grid"><tr><th>파일</th><th class="num">크기</th><th class="num">줄 수</th><th>파일 지문(sha256)</th><th></th></tr>`,
+    `<p class="note">SHA-256 체크섬으로 내려받은 파일이 원본과 같은지 확인할 수 있습니다.</p><table class="grid"><tr><th>파일</th><th class="num">크기</th><th class="num">행 수</th><th>SHA-256</th><th></th></tr>`,
     ...[fp, fc].map((f) => `<tr><td><a href="${esc(f.url)}" download class="mono">${esc(f.url)}</a></td><td class="num">${fmtBytes(f.bytes)}</td><td class="num">${nf.format(f.rows)}</td><td class="mono note" title="${esc(f.sha256)}">${esc(f.sha256.slice(0, 16))}…</td><td><button class="copy" data-copy="${esc(absUrl(f.url))}">URL 복사</button></td></tr>`),
-    '</table><p class="note">버전 폴더의 파일은 바뀌지 않습니다. 늘 최신을 쓰려면 latest.json에서 버전을 읽으세요. 엑셀에서 CSV를 열 때는 코드 컬럼(dong_id 등)을 글자로 불러와야 다른 표의 코드와 맞습니다.</p>',
-    snippet('Python (pandas)', `import pandas as pd\n\n# Parquet: 타입이 그대로 온다 (pyarrow 필요)\ndf = pd.read_parquet("${pq}")\n\n# CSV: 코드 컬럼은 앞자리 0이 빠지지 않게 글자로 읽는다\ndf = pd.read_csv("${csv}"${strCols ? `, dtype={${strCols}}` : ''})`),
+    '</table><p class="note">공개한 버전 폴더의 파일은 수정하지 않습니다. 항상 최신 버전을 쓰려면 latest.json에서 버전을 읽으세요. 엑셀에서 CSV를 열 때는 코드 컬럼(dong_id 등)을 텍스트로 지정해야 다른 테이블의 코드와 맞습니다.</p>',
+    snippet('Python (pandas)', `import pandas as pd\n\n# Parquet: 컬럼 타입 유지 (pyarrow 필요)\ndf = pd.read_parquet("${pq}")\n\n# CSV: 코드 컬럼은 문자열로 읽기\ndf = pd.read_csv("${csv}"${strCols ? `, dtype={${strCols}}` : ''})`),
     snippet('Python (DuckDB)', `import duckdb\n\ncon = duckdb.connect()\ncon.sql("INSTALL httpfs; LOAD httpfs;")\ndf = con.sql("""\n    SELECT *\n    FROM '${pq}'\n    LIMIT 100\n""").df()`),
     snippet('DuckDB CLI', `INSTALL httpfs; LOAD httpfs;\nCREATE VIEW ${d.identifier} AS SELECT * FROM '${pq}';\nDESCRIBE ${d.identifier};\nSELECT count(*) FROM ${d.identifier};`),
     snippet('R (arrow)', `library(arrow)\ndf <- read_parquet("${pq}")`),
-    snippet('늘 최신 버전 쓰기 (Python)', `import json, urllib.request\n\nBASE = "${base}"\nlatest = json.load(urllib.request.urlopen(BASE + "latest.json"))["version"]\nurl = f"{BASE}{latest}/${d.identifier}.parquet"`),
-    snippet('내려받고 검증하기 (셸)', `curl -O ${pq}\nsha256sum ${d.identifier}.parquet\n# 기대값: ${fp.sha256}`),
+    snippet('항상 최신 버전 받기 (Python)', `import json, urllib.request\n\nBASE = "${base}"\nlatest = json.load(urllib.request.urlopen(BASE + "latest.json"))["version"]\nurl = f"{BASE}{latest}/${d.identifier}.parquet"`),
+    snippet('내려받기와 체크섬 확인 (셸)', `curl -O ${pq}\nsha256sum ${d.identifier}.parquet\n# 기대값: ${fp.sha256}`),
   ].join('');
 }
+// 직전 공개 버전 대비 이 테이블의 변경(catalog.versions[].changes, handoff_delivery.md P3)
+function changesHtml(v, table) {
+  const c = v.changes;
+  if (!c) return '<span class="note">첫 공개 버전(비교 대상 없음)</span>';
+  const mine = (k) => k.startsWith(table + '.');
+  const items = [...c.added.filter(mine).map((k) => `추가: ${k}`),
+    ...Object.entries(c.removed).filter(([k]) => mine(k)).map(([k, r]) => `삭제: ${k} (${r})`),
+    ...c.type_changed.filter((x) => mine(x.column)).map((x) => `형 변경: ${x.column} ${x.from} → ${x.to} (${x.reason})`),
+    ...(c.rows[table] ? [`행 수: ${nf.format(c.rows[table][0])} → ${nf.format(c.rows[table][1])}`] : [])];
+  return items.length ? '<ul style="margin:0;padding-left:16px">' + items.map((x) => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<span class="note">바뀐 것 없음</span>';
+}
 async function tabVersions(d) {
-  const h = ['<table class="grid"><tr><th>버전</th><th>만든 시각</th><th class="num">행</th><th class="num">Parquet</th><th>파일 지문(sha256, Parquet)</th><th>버전 설명서(manifest.json)</th></tr>'];
+  const h = ['<table class="grid"><tr><th>버전</th><th>생성 시각</th><th class="num">행 수</th><th class="num">Parquet 용량</th><th>직전 공개 버전 대비 변경</th><th>SHA-256 (Parquet)</th><th>manifest.json</th></tr>'];
   for (const v of S.catalog.versions) {
     const f = fileOf(d, 'parquet', v.version);
-    h.push(`<tr><td class="mono">${esc(v.version)}${v.version === S.catalog.latest ? ' <span class="badge ok">최신</span>' : ''}</td><td>${esc(v.created_at.replace('T', ' ').slice(0, 19))}</td><td class="num">${f ? nf.format(f.rows) : '-'}</td><td class="num">${f ? fmtBytes(f.bytes) : '-'}</td><td class="mono note">${f ? esc(f.sha256.slice(0, 16)) + '…' : '-'}</td><td><a href="${esc(v.manifest)}">manifest.json</a></td></tr>`);
+    h.push(`<tr><td class="mono">${esc(v.version)}${v.version === S.catalog.latest ? ' <span class="badge ok">최신</span>' : ''}</td><td>${esc(v.created_at.replace('T', ' ').slice(0, 19))}</td><td class="num">${f ? nf.format(f.rows) : '-'}</td><td class="num">${f ? fmtBytes(f.bytes) : '-'}</td><td>${changesHtml(v, d.identifier)}</td><td class="mono note">${f ? esc(f.sha256.slice(0, 16)) + '…' : '-'}</td><td><a href="${esc(v.manifest)}">manifest.json</a></td></tr>`);
   }
-  h.push('</table><p class="note">공개 버전 폴더는 한 번 올리면 바뀌지 않습니다. 같은 버전 이름으로 다른 내용을 올리려 하면 만드는 단계에서 실패합니다.</p>');
+  h.push('</table>');
+  const wide = S.catalog.versions.filter((v) => v.changes && (Object.keys(v.changes.quality).length || Object.keys(v.changes.sources).length));
+  if (wide.length) {
+    h.push('<h3>버전 전체의 변화(품질 지표, 데이터 기준 시점)</h3><table class="grid"><tr><th>버전</th><th>항목</th><th>직전</th><th>이번</th></tr>');
+    for (const v of wide) for (const [k, [a, b]] of [...Object.entries(v.changes.quality), ...Object.entries(v.changes.sources)])
+      h.push(`<tr><td class="mono">${esc(v.version)}</td><td>${esc(LABELS.quality[k] || LABELS.sources[k] || k)} <span class="note mono">${esc(k)}</span></td><td class="mono">${esc(a ?? '-')}</td><td class="mono">${esc(b ?? '-')}</td></tr>`);
+    h.push('</table>');
+  }
+  h.push(`<p class="note">변경 정책: ${S.catalog.card.change_policy.map(esc).join(' ')} 공개한 버전 폴더는 수정하지 않습니다. 같은 버전 이름으로 다른 내용을 올리면 생성 단계에서 실패하고, 직전 버전에서 빠지거나 형이 바뀐 컬럼에 사유 표시가 없어도 실패합니다.</p>`);
   return h.join('');
 }
 
@@ -501,19 +537,19 @@ async function tabVersions(d) {
 function renderHistory() {
   const el = $('#hist'); if (!el) return;
   const hs = store.get('hs_sql_history', []);
-  el.innerHTML = hs.length ? hs.map((q, i) => `<a href="#" data-h="${i}" title="${esc(q)}">${esc(q.replace(/\s+/g, ' ').slice(0, 60))}</a>`).join('') : '<span class="note">아직 없습니다. 이 브라우저에만 저장됩니다.</span>';
+  el.innerHTML = hs.length ? hs.map((q, i) => `<a href="#" data-h="${i}" title="${esc(q)}">${esc(q.replace(/\s+/g, ' ').slice(0, 60))}</a>`).join('') : '<span class="note">실행 기록이 없습니다. 기록은 이 브라우저에만 저장됩니다.</span>';
 }
 function pushHistory(q) { const hs = store.get('hs_sql_history', []).filter((x) => x !== q); hs.unshift(q); store.set('hs_sql_history', hs.slice(0, 25)); renderHistory(); }
 function viewSql(params) {
   const initial = params.get('q') || store.get('hs_sql_draft', null) || EXAMPLES[2][2];
   $('#main').innerHTML = `<div class="sqlwrap">
-  <div><h1>SQL 편집기</h1><p class="sub">표 이름(dong_profile, commute_od, rent_listing, dong_mois_map)으로 바로 질의합니다. DuckDB SQL 문법이고, 이 브라우저가 공개 Parquet를 직접 읽습니다. 질의와 결과는 서버로 보내지 않습니다. 왼쪽 목록에서 컬럼을 누르면 영문 이름이 들어가고, 마우스를 올리면 뜻이 보입니다.</p></div>
+  <div><h1>SQL 편집기</h1><p class="sub">테이블 이름(dong_profile, commute_od, rent_listing, dong_mois_map)으로 바로 쿼리할 수 있습니다. DuckDB SQL 문법을 쓰며, 브라우저가 공개 Parquet 파일을 직접 읽습니다. 쿼리와 결과는 서버로 전송되지 않습니다. 왼쪽 목록에서 컬럼을 클릭하면 이름이 삽입되고, 마우스를 올리면 설명이 표시됩니다.</p></div>
   <div class="row"><button class="primary" id="run">실행 <span class="note" style="color:#dfe7fb">Ctrl+Enter</span></button>
-    <select id="ex" aria-label="예시 질의"><option value="">예시 질의 고르기</option>${EXAMPLES.map(([l, qn], i) => `<option value="${i}">${esc(qn)} (${esc(l)})</option>`).join('')}</select>
-    <button id="explain" title="EXPLAIN ANALYZE: 질의를 실제로 돌리고 단계마다 걸린 시간을 보여 줍니다">실행 계획(어디서 시간이 걸렸는지)</button>
-    <button id="chart" disabled title="결과의 첫 글자 컬럼을 이름, 첫 숫자 컬럼을 값으로 막대 그래프">차트로 보기</button><button id="share">링크 복사</button><button id="csv" disabled>결과 CSV 내려받기</button></div>
+    <select id="ex" aria-label="예시 쿼리"><option value="">예시 쿼리 선택</option>${EXAMPLES.map(([l, qn], i) => `<option value="${i}" title="${esc(qn)}">${esc(l)}</option>`).join('')}</select>
+    <button id="explain" title="EXPLAIN ANALYZE: 쿼리를 실행하고 단계별 소요 시간을 보여 줍니다">실행 계획</button>
+    <button id="chart" disabled title="결과의 첫 문자 컬럼을 라벨, 첫 숫자 컬럼을 값으로 막대 차트를 그립니다">차트로 보기</button><button id="share">링크 복사</button><button id="csv" disabled>결과 CSV 내려받기</button></div>
   <textarea id="sql" spellcheck="false" aria-label="SQL">${esc(initial)}</textarea>
-  <div><div class="status" id="st">선택한 부분만 실행하려면 그 부분을 고른 뒤 Ctrl+Enter. 결과 머리글을 누르면 정렬됩니다.</div><div id="err"></div><div class="result" id="res" style="margin-top:8px"><p class="note" style="padding:10px">결과가 여기에 나옵니다.</p></div></div>
+  <div><div class="status" id="st">일부를 선택하고 Ctrl+Enter를 누르면 선택한 부분만 실행합니다. 결과의 열 이름을 클릭하면 정렬됩니다.</div><div id="err"></div><div class="result" id="res" style="margin-top:8px"><p class="note" style="padding:10px">쿼리를 실행하면 결과가 여기에 표시됩니다.</p></div></div>
 </div>`;
   const ta = $('#sql');
   ta.addEventListener('keydown', (e) => {
@@ -525,7 +561,7 @@ function viewSql(params) {
   $('#explain').onclick = () => runSql('EXPLAIN ANALYZE ');
   $('#ex').onchange = (e) => { if (e.target.value !== '') { ta.value = EXAMPLES[+e.target.value][2]; store.set('hs_sql_draft', ta.value); runSql(); e.target.value = ''; } };
   $('#share').onclick = () => copy(location.href.split('#')[0] + '#/sql?q=' + encodeURIComponent(ta.value));
-  $('#chart').onclick = () => { if (!S.last) return; S.chart = !S.chart; $('#chart').textContent = S.chart ? '표로 보기' : '차트로 보기'; drawResult(); };
+  $('#chart').onclick = () => { if (!S.last) return; S.chart = !S.chart; $('#chart').textContent = S.chart ? '테이블로 보기' : '차트로 보기'; drawResult(); };
   $('#csv').onclick = () => S.last && download(`query_${S.version}.csv`, toCsv(S.last.table), 'text/csv;charset=utf-8');
   $('#res').addEventListener('click', (e) => {
     const th = e.target.closest('th[data-j]'); if (!th || !S.last) return;
@@ -558,7 +594,7 @@ async function runSql(prefix = '') {
     const r = arrowToRows(table, KEEP_ROWS);
     S.last = {table, res: r};
     drawResult();
-    const more = r.total > SHOW_ROWS ? ` · 앞 ${nf.format(SHOW_ROWS)}행만 표시(정렬은 앞 ${nf.format(Math.min(r.total, KEEP_ROWS))}행 안에서, CSV는 전체)` : '';
+    const more = r.total > SHOW_ROWS ? ` · 상위 ${nf.format(SHOW_ROWS)}행만 표시(정렬은 상위 ${nf.format(Math.min(r.total, KEEP_ROWS))}행 기준, CSV는 전체 행)` : '';
     st.textContent = `${nf.format(r.total)}행 · 컬럼 ${r.fields.length} · ${ms} ms · 버전 ${S.version} · DuckDB-WASM ${S.engine}${more}`;
     $('#csv').disabled = !r.total;
     $('#chart').disabled = !r.total || !r.fields.some(isNumField);
@@ -574,12 +610,12 @@ const isNumField = (f) => /Int|Float|Decimal|Double/.test(f.type);
 function sqlHint(msg) {
   const tips = [
     // 따옴표 없이 쓴 한글 값(= 역삼1동)은 DuckDB가 "Referenced column ... not found"로 알린다: 따옴표 안내를 먼저
-    [/Parser Error|syntax error|column "[^"]*[가-힣][^"]*" not found/i, "글자 값은 작은따옴표로 감쌉니다. 예: dong_nm = '역삼1동', lease_type = '월세'"],
-    [/does not exist|not found|Referenced column|Catalog Error|Binder Error/i, '표·컬럼 이름 오타일 수 있습니다. 왼쪽 목록에서 컬럼을 누르면 정확한 이름이 들어갑니다.'],
-    [/Conversion Error|Could not convert|No function matches|Cannot compare/i, "코드 컬럼(dong_id, sgg_cd 등)은 글자 타입입니다. '11230'처럼 작은따옴표로 씁니다."],
+    [/Parser Error|syntax error|column "[^"]*[가-힣][^"]*" not found/i, "문자열 값은 작은따옴표로 감쌉니다. 예: dong_nm = '역삼1동', lease_type = '월세'"],
+    [/does not exist|not found|Referenced column|Catalog Error|Binder Error/i, '테이블·컬럼 이름에 오타가 있을 수 있습니다. 왼쪽 목록에서 컬럼을 클릭하면 정확한 이름이 삽입됩니다.'],
+    [/Conversion Error|Could not convert|No function matches|Cannot compare/i, "코드 컬럼(dong_id, sgg_cd 등)은 문자열 타입입니다. '11230'처럼 작은따옴표로 감싸 주세요."],
   ];
   const hit = tips.filter(([re]) => re.test(msg)), rest = tips.filter((t) => !hit.includes(t));
-  return `<div class="hint"><b>흔한 원인</b><ul>${[...hit, ...rest].map(([, t]) => `<li>${esc(t)}</li>`).join('')}</ul></div>`;
+  return `<div class="hint"><b>자주 발생하는 원인</b><ul>${[...hit, ...rest].map(([, t]) => `<li>${esc(t)}</li>`).join('')}</ul></div>`;
 }
 function drawResult() {
   const r = S.last?.res, el = $('#res'); if (!r) return;
@@ -587,65 +623,64 @@ function drawResult() {
   if (!S.chart || !r.fields.some(isNumField)) { el.innerHTML = gridHtml(r, true); return; }
   const vj = r.fields.findIndex(isNumField), lj = r.fields.findIndex((f) => !isNumField(f));
   const rows = r.rows.slice(0, 60), vals = rows.map((x) => x[vj] ?? 0), mx = Math.max(...vals.map(Math.abs), 1e-12);
-  el.innerHTML = `<div class="chart"><p class="note">값: <b class="mono">${esc(r.fields[vj].name)}</b> · 이름: <b class="mono">${lj >= 0 ? esc(r.fields[lj].name) : '행 번호'}</b> · 앞 ${rows.length}행 (머리글 정렬 순서대로)</p>` +
+  el.innerHTML = `<div class="chart"><p class="note">값: <b class="mono">${esc(r.fields[vj].name)}</b> · 라벨: <b class="mono">${lj >= 0 ? esc(r.fields[lj].name) : '행 번호'}</b> · 상위 ${rows.length}행 (현재 정렬 순서)</p>` +
     rows.map((x, i) => `<div class="bar"><div class="lab" title="${esc(lj >= 0 ? x[lj] : i + 1)}">${esc(lj >= 0 ? (x[lj] ?? 'NULL') : i + 1)}</div><div class="b"><i style="width:${100 * Math.abs(vals[i]) / mx}%"></i><span>&nbsp;</span></div><div class="c">${x[vj] === null ? 'NULL' : fmtNum(x[vj], 3)}</div></div>`).join('') + '</div>';
 }
 
 // ---------- 화면: 출처·이용조건 ----------
 async function viewSources() {
-  const m = await manifest();
-  const h = [`<h1>출처·이용조건</h1><p class="sub">이용조건 확인 날짜 ${esc(m.terms_checked_date)}. ${esc(S.catalog.legal_note)}. 공공기관이 이 데이터를 후원하거나 보증하지 않습니다.</p>`,
-    '<p>이 데이터를 쓰거나 다시 배포할 때는 아래 출처 문구를 함께 표시해 주세요. 원문은 <a href="NOTICE.md">NOTICE.md</a>에도 있습니다.</p><div class="cards">'];
-  for (const [k, s] of Object.entries(m.licenses)) {
+  const h = [`<h1>출처·이용조건</h1><p class="sub">이용조건 확인일 ${esc(S.catalog.terms_checked_date)}. ${esc(S.catalog.legal_note)}. 공공기관이 이 데이터를 후원하거나 보증하지 않습니다.</p>`,
+    '<p>이 데이터를 이용하거나 재배포할 때는 아래 출처 표시 문구를 함께 적어 주세요. 같은 내용이 <a href="NOTICE.md">NOTICE.md</a>에도 있습니다.</p><div class="cards">'];
+  for (const [k, s] of Object.entries(S.catalog.licenses)) {
     const used = S.catalog.datasets.flatMap((d) => d.columns.filter((c) => c.sources.includes(k)).map((c) => `${d.identifier}.${c.name}`));
-    h.push(`<div class="card"><div class="t">${esc(s.name)}</div><div class="note" style="margin:4px 0">${esc(s.license)}</div>${s.attribution ? `<div style="margin:6px 0">출처 문구: ${esc(s.attribution)} <button class="copy" data-copy="${esc(s.attribution)}">복사</button></div>` : ''}<div>${s.urls.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(new URL(u).hostname)}</a>`).join(' · ')}</div><details style="margin-top:6px"><summary class="note">이 원천을 쓰는 컬럼 ${used.length}개</summary><div class="mono note">${esc(used.join(', '))}</div></details></div>`);
+    h.push(`<div class="card"><div class="t">${esc(s.name)}</div><div class="note" style="margin:4px 0">${esc(s.license)}</div>${s.attribution ? `<div style="margin:6px 0">출처 표시 문구: ${esc(s.attribution)} <button class="copy" data-copy="${esc(s.attribution)}">복사</button></div>` : ''}<div>${s.urls.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(new URL(u).hostname)}</a>`).join(' · ')}</div><details style="margin-top:6px"><summary class="note">이 출처를 쓰는 컬럼 ${used.length}개</summary><div class="mono note">${esc(used.join(', '))}</div></details></div>`);
   }
-  h.push(`</div><h2>공개하지 않는 컬럼</h2><p class="note">${esc(EXCLUDED_TERMS)}.</p><table class="grid">` + '<tr><th>표.컬럼</th><th>이유</th></tr>');
+  h.push('</div><h2>비공개 컬럼</h2><p class="note">출처의 이용조건 때문에 공개 파일에서 제외한 컬럼입니다.</p><table class="grid"><tr><th>테이블.컬럼</th><th>사유</th></tr>');
   for (const d of S.catalog.datasets) for (const [c, why] of Object.entries(d.excluded_columns)) h.push(`<tr><td class="mono">${esc(d.identifier)}.${esc(c)}</td><td>${esc(why)}</td></tr>`);
   h.push('</table>');
   $('#main').innerHTML = h.join('');
 }
 
-// ---------- 화면: 처음 오셨나요 ----------
-// 답은 data_contract.md, decisions.md, public_columns.json에 있는 내용만 쓴다. 근거는 각 답 끝에 적는다.
+// ---------- 화면: 이용 안내 ----------
+// 답은 data_contract.md, decisions.md, public_columns.json에 있는 내용만 쓴다. 근거는 각 답에 접어 둔다.
 const GLOSSARY = [
-  ['dong_id', '통계청 행정동 코드 8자리. 모든 표를 잇는 키입니다. 행정안전부 코드(mois_dong_cd), 구 코드(sgg_cd)와 다릅니다.'],
-  ['한 줄을 구분하는 값(키)', '표에서 한 줄을 하나로 정하는 컬럼. 예: dong_profile의 dong_id.'],
-  ['중앙값(가운데 값)', '값을 크기순으로 세웠을 때 가운데 값. 몇몇 큰 값에 평균보다 덜 흔들립니다.'],
-  ['비어 있는 값(결측)', '값이 없는 칸. SQL에서는 NULL, CSV에서는 빈 칸입니다. 0과 다릅니다.'],
-  ['서로 다른 값 수(고유값)', '컬럼에 나오는 값이 몇 가지인지.'],
-  ['하위 25% · 가운데 · 상위 25% 값(사분위)', '값을 크기순으로 세워 4등분하는 경계 값.'],
-  ['값 분포(히스토그램)', '값 범위를 같은 너비로 나눠 구간마다 몇 줄이 있는지 그린 막대.'],
-  ['버전', '데이터를 내보낸 날짜(vYYYY.MM.DD). 한 번 올린 버전의 파일은 바뀌지 않습니다.'],
-  ['버전 설명서(manifest.json)', '버전마다 파일 목록, 줄 수, 파일 지문, 원천 기준일, 품질 지표를 적은 파일.'],
-  ['파일 지문(sha256)', '내려받은 파일이 원본과 같은지 확인하는 값. 한 글자만 달라도 바뀝니다.'],
-  ['검사에서 걸러 따로 둔 행(격리 행)', '검증 규칙을 어겨 따로 둔 원천 행. 상품 파일에는 없습니다.'],
-  ['Parquet / CSV', 'Parquet는 분석 도구용(타입이 유지되고 작음), CSV는 엑셀용입니다.'],
-  ['신규 계약', '새로 맺은 전월세 계약. 기존 계약을 이어 가는 갱신 계약은 뺐습니다. 지금 집을 구하는 사람이 받을 수 있는 가격에 가깝게 하려는 것입니다.'],
-  ['필지', '지번 하나로 나뉜 땅 한 덩어리. 전월세 계약은 지번으로 필지를 찾아 행정동을 정했습니다.'],
-  ['동 안쪽 대표점', '동 도형 안에 반드시 들어가는 점(PostGIS ST_PointOnSurface). 무게중심은 모양에 따라 동 밖에 떨어질 수 있어 쓰지 않았습니다. 가장 가까운 역과 두 동 사이 직선거리를 이 점에서 잽니다.'],
-  ['이동인구(보정한 추정치), 보정계수', '이동인구 값은 사람 수가 아니라 이동 횟수를 더한 값이다. 원천이 한 달의 같은 요일(예: 그달 모든 월요일)을 더해 주고, 이 표는 그것을 최근 6개 대상월의 평일(월~금), 도착 7·8·9시, 성별을 모두 더했다. 그래서 30이나 10은 약 6개월 동안 더한 이동 횟수다. 값은 KT 휴대폰 신호로 잡은 이동을 KT 시장점유율 등으로 나눠 전체 인구로 키운 값. 그래서 소수점이 있고, 3명 이하는 원천에서 가려져 있습니다.'],
+  ['dong_id', '통계청 행정동 코드 8자리. 모든 테이블을 조인하는 키입니다. 행정안전부 행정동 코드(mois_dong_cd), 자치구 코드(sgg_cd)와 다릅니다.'],
+  ['기본 키', '행 하나를 고유하게 식별하는 컬럼. 예: dong_profile의 dong_id.'],
+  ['중앙값', '값을 크기순으로 정렬했을 때 가운데 값. 평균보다 극단값의 영향을 덜 받습니다.'],
+  ['NULL(빈 값)', '값이 없는 칸. CSV에서는 빈 칸으로 저장됩니다. 0과 다릅니다.'],
+  ['고유값 수', '컬럼에 나타나는 서로 다른 값의 개수.'],
+  ['사분위수', '값을 크기순으로 정렬해 4등분하는 경계값. 1사분위(하위 25%), 중앙값, 3사분위(상위 25%)를 보여 줍니다.'],
+  ['히스토그램', '값의 범위를 같은 너비의 구간으로 나눠 구간별 행 수를 막대로 나타낸 그래프.'],
+  ['버전', '데이터를 공개한 날짜(vYYYY.MM.DD). 공개한 버전의 파일은 수정하지 않습니다.'],
+  ['manifest.json', '버전별 파일 목록, 행 수, SHA-256 체크섬, 출처 기준일, 품질 지표를 담은 파일.'],
+  ['SHA-256 체크섬', '파일이 원본과 같은지 확인하는 값. 내용이 한 글자만 달라도 값이 바뀝니다.'],
+  ['검증 제외 행', '검증 규칙을 통과하지 못해 공개 파일에서 제외한 원본 행.'],
+  ['Parquet / CSV', 'Parquet는 컬럼 타입이 유지되고 용량이 작아 분석 도구에 적합합니다. CSV는 엑셀 등에서 바로 열 수 있습니다.'],
+  ['신규 계약', '새로 체결한 전월세 계약. 갱신 계약은 제외했습니다. 지금 집을 구하는 사람이 마주하는 시세에 가깝게 보기 위해서입니다.'],
+  ['필지', '지번 하나로 구분되는 토지 단위. 전월세 계약은 지번으로 필지를 찾아 행정동을 정했습니다.'],
+  ['행정동 대표점', '행정동 경계 안에 반드시 위치하는 점(PostGIS ST_PointOnSurface). 무게중심은 경계 모양에 따라 행정동 밖에 찍힐 수 있어 쓰지 않았습니다. 가장 가까운 역까지의 거리와 행정동 간 직선거리를 이 점에서 계산합니다.'],
+  ['이동인구', '서울 생활이동의 이동 건수 추정치. 사람 수가 아니라 이동 횟수입니다. KT 휴대전화 신호로 잡은 이동을 시장점유율 등으로 보정해 전체 인구 기준으로 추정한 값이라 소수점이 있고, 3명 이하는 출처에서 비공개 처리합니다. commute_od는 최근 6개월의 평일 오전 7·8·9시 도착 이동을 합산했습니다.'],
   ['업종 코드(G20405 등)', '소상공인시장진흥공단 상가(상권)정보의 업종 소분류 코드. G20405 편의점, G20404 슈퍼마켓, G21501 약국, Q10201 내과·소아과 의원, S20901 세탁소, S20902 셀프 빨래방.'],
-  ['공공누리 제1유형', '출처를 표시하면 공공저작물을 쓸 수 있다는 표시. 제3유형은 출처 표시에 더해 변경을 금지합니다.'],
-  ['근거, 결정 번호', '설명 끝의 "근거"는 이 데이터를 만든 코드 레포의 문서와 코드 위치입니다(누르면 열림). "결정 23"처럼 적힌 번호는 그 레포 docs/decisions.md의 설계 결정 번호입니다.'],
-  ['DuckDB-WASM', '브라우저 안에서 도는 DuckDB(SQL 엔진). 처음 한 번 엔진 파일을 내려받고, 그 뒤 질의는 이 컴퓨터 안에서 돕니다.'],
-  ['SUMMARIZE, DESCRIBE', 'DuckDB 명령. SUMMARIZE 표이름은 컬럼마다 최솟값·최댓값·비어 있는 비율을, DESCRIBE 표이름은 컬럼 이름과 타입을 보여 줍니다.'],
-  ['실행 계획(EXPLAIN ANALYZE)', '질의를 실제로 돌리고 단계마다 걸린 시간과 줄 수를 보여 줍니다. 느린 질의를 고칠 때 봅니다.'],
+  ['공공누리 제1유형', '출처를 표시하면 상업적 이용과 변경까지 자유롭게 쓸 수 있는 공공저작물 표시. 제3유형은 출처 표시에 더해 변경을 금지합니다.'],
+  ['근거', '설명과 유의사항 옆 "근거"를 펼치면 이 데이터를 만든 코드 저장소의 문서·코드 위치가 나옵니다(클릭하면 열림). "결정 23" 같은 번호는 그 저장소 docs/decisions.md의 설계 결정 번호입니다.'],
+  ['DuckDB-WASM', '브라우저에서 실행되는 SQL 엔진. 처음 한 번 엔진 파일을 내려받고, 이후 쿼리는 이 컴퓨터 안에서 실행됩니다.'],
+  ['SUMMARIZE, DESCRIBE', 'DuckDB 명령어. SUMMARIZE는 컬럼별 최솟값·최댓값·NULL 비율 등을, DESCRIBE는 컬럼 이름과 타입을 보여 줍니다.'],
+  ['실행 계획(EXPLAIN ANALYZE)', '쿼리를 실제로 실행하고 단계별 소요 시간과 행 수를 보여 줍니다. 느린 쿼리를 개선할 때 씁니다.'],
 ];
 const FAQ = [
-  ['왜 동 이름으로 표를 이으면 안 되나요?', '서울 안에도 같은 이름의 동이 있습니다. 신사동이 강남구(11230510)와 관악구(11210680)에 하나씩 있어, 이름으로 이으면 두 동의 값이 섞입니다. 표끼리는 dong_id로 잇습니다.', 'dong_profile에서 dong_nm = \'신사동\' 2줄; catalog.json relations'],
-  ['강남구 동만 뽑으려면 어떻게 하나요?', '구 이름 컬럼은 없고 통계청 구 코드(sgg_cd)가 있습니다. 강남구는 \'11230\'입니다: WHERE sgg_cd = \'11230\'. 25개 구의 코드는 dong_profile 스키마의 sgg_cd 코드 값 풀이에 있습니다. 행정안전부 코드(mois_dong_cd)에서는 11230이 동대문구라서, 두 코드를 섞으면 다른 구가 나옵니다.', 'data_contract.md 2절; docs/public_columns.json sgg_cd 근거'],
-  ['출근 시간이 왜 이렇게 길게 나오나요?', '생활이동의 이동 시간은 휴대폰 신호로 본 "머문 곳과 머문 곳 사이" 시간입니다. 아주 가까운 이동은 빠지고 짧게 들른 곳은 이동에 포함돼, 가까운 동일수록 실제보다 길게 나옵니다. 대중교통 길찾기 시간이 아닙니다. 그래서 시간 한도 이하 또는 직선거리(distance_km) 3km 이내를 함께 쓰기를 권합니다. 이동인구가 아주 적은 쌍은 평균이 크게 흔들리니 population_* 컬럼도 함께 보세요. 평일 아침 출근 방향만 있고 퇴근 방향은 없습니다.', 'data_contract.md 6절 1; decisions.md 결정 23; question.md 3절'],
-  ['일부 컬럼(면적, 혼잡도)은 왜 없나요?', '원천의 이용조건 때문에 공개 파일에서 뺐습니다. 행정동 면적과 면적당 업소 수는 SGIS 경계 도형을 직접 잰 값이라, 혼잡도는 판정 당시 변경 금지 표시가 있어 1차 공개에서 뺐습니다. 이름과 이유는 출처·이용조건 화면에 있습니다.', 'data_contract.md 5절; NOTICE.md'],
-  ['데이터는 언제 바뀌나요?', '원천마다 주기가 다릅니다. 전월세는 주 1회 수집, 출퇴근(생활이동)은 월 1회, 편의 업소는 분기, 경계는 연 1회입니다. 새로 내보내면 새 버전 폴더가 생기고 latest.json이 그 버전을 가리킵니다. 이미 올린 버전의 파일은 바뀌지 않습니다.', 'data_contract.md 1절 갱신 주기; README 5절 공개 사이트'],
-  ['엑셀에서 코드가 숫자로 바뀌어요.', '엑셀은 dong_id 같은 코드를 숫자로 바꿔 읽습니다. 이 데이터의 코드는 모두 11로 시작해 앞자리 0이 사라지지는 않지만, 숫자가 된 코드는 다른 표의 글자 코드와 이을 때 맞지 않을 수 있습니다. 엑셀의 데이터 가져오기에서 코드 컬럼을 텍스트로 지정하거나, pandas에서는 dtype={"dong_id": str}처럼 글자로 읽습니다.', '공개 파일의 dong_id, sgg_cd, mois_dong_cd 최솟값이 11로 시작(2026-11-22 질의); 가져가기 탭 pandas 예시'],
+  ['행정동 이름으로 테이블을 조인하면 안 되나요?', '서울 안에도 같은 이름의 행정동이 있습니다. 신사동이 강남구(11230510)와 관악구(11210680)에 하나씩 있어, 이름으로 조인하면 두 행정동의 값이 섞입니다. 테이블은 dong_id로 조인하세요.', 'dong_profile에서 dong_nm = \'신사동\' 2행; catalog.json relations'],
+  ['강남구 행정동만 조회하려면 어떻게 하나요?', '자치구 이름 컬럼은 없고 통계청 자치구 코드(sgg_cd)가 있습니다. 강남구는 \'11230\'이므로 WHERE sgg_cd = \'11230\'으로 조회합니다. 25개 자치구의 코드는 dong_profile 스키마의 sgg_cd 코드 값에 있습니다. 행정안전부 코드(mois_dong_cd) 체계에서는 11230이 동대문구라 두 코드를 섞으면 다른 구가 조회됩니다.', 'data_contract.md 2절; docs/public_columns.json sgg_cd 근거'],
+  ['출근 시간이 왜 길게 나오나요?', '생활이동의 이동 시간은 휴대전화 신호로 판단한 "체류지와 체류지 사이" 시간입니다. 아주 짧은 이동은 잡히지 않고 잠깐 들른 곳까지 이동에 포함돼, 가까운 행정동일수록 실제보다 길게 나옵니다. 대중교통 길찾기 시간이 아닙니다. 그래서 시간 한도와 직선거리(distance_km) 3km 이내 조건을 함께 쓰기를 권장합니다. 이동인구가 아주 적은 경로는 평균이 크게 흔들리므로 population_* 컬럼도 함께 확인하세요. 평일 오전 출근 방향만 있고 퇴근 방향은 없습니다.', 'data_contract.md 6절 1; decisions.md 결정 23; question.md 3절'],
+  ['면적, 혼잡도 같은 컬럼은 왜 없나요?', '출처의 이용조건 때문에 공개 파일에서 제외했습니다. 행정동 면적과 면적당 업소 수는 통계청 SGIS 경계 데이터로 계산한 값이라 SGIS 이용약관상 제3자에게 제공할 수 없습니다. 혼잡도는 검토 당시 변경 금지 조건(공공누리 제3유형)이 붙어 있어 제외했습니다. 컬럼 목록과 사유는 출처·이용조건 화면에 있습니다.', 'data_contract.md 5절; NOTICE.md'],
+  ['데이터는 언제 갱신되나요?', () => `수집과 공개는 따로입니다. 수집: ${S.catalog.card.collection_cycle} 공개: ${S.catalog.card.publication_cycle} 마지막 공개 버전과 날짜는 데이터 목록 맨 위 카드에 있습니다. 새로 공개하면 새 버전 폴더가 생기고 latest.json이 그 버전을 가리킵니다. 이미 공개한 버전의 파일은 수정하지 않습니다.`, 'data_contract.md 1절 수집 주기·공개 주기; decisions.md 결정 119'],
+  ['엑셀에서 코드가 숫자로 바뀝니다.', '엑셀은 dong_id 같은 코드를 숫자로 인식합니다. 이 데이터의 코드는 모두 11로 시작해 앞자리 0이 사라지지는 않지만, 숫자로 바뀐 코드는 다른 테이블의 문자열 코드와 조인할 때 맞지 않을 수 있습니다. 엑셀의 [데이터 가져오기]에서 코드 컬럼을 텍스트로 지정하거나, pandas에서는 dtype={"dong_id": str}처럼 문자열로 읽으세요.', '공개 파일의 dong_id, sgg_cd, mois_dong_cd 최솟값이 11로 시작(2026-11-22 질의); 내려받기 탭 pandas 예시'],
 ];
 async function viewHelp() {
-  const h = [`<h1>처음 오셨나요</h1><p class="sub">이 사이트가 무엇이고 어떻게 쓰는지 한 쪽에 모았습니다.</p>`,
-    `<h2>이 데이터는</h2><p>${esc(S.catalog.description)}. 서울에서 일하게 된 사회초년생이 살 동네를 고를 때 보는 값(월세·전세 시세, 직장까지 이동 시간, 가까운 역, 편의점·약국 같은 업소 수)을 행정동 426곳마다 미리 계산해 둔 것입니다. 서버 없이 파일로만 공개하고, SQL은 여러분의 브라우저 안에서 돕니다.</p>`,
-    `<h2>쓰는 순서</h2><ol><li><b>표 고르기</b>: <a href="#/">데이터 목록</a>에서 표를 고릅니다. 동마다 한 줄인 표는 dong_profile입니다.</li><li><b>컬럼 뜻 보기</b>: 표의 <b>스키마</b> 탭에서 한글 이름, 단위, 설명을 봅니다. 맨 위 "쓰기 전에 알아 둘 것"을 먼저 읽습니다.</li><li><b>뽑거나 내려받기</b>: <a href="#/sql">SQL 편집기</a>에서 필요한 줄만 뽑아 CSV로 받거나, 표의 <b>가져가기</b> 탭에서 파일과 코드 예시를 씁니다.</li></ol>`,
-    '<h2>용어 풀이</h2><table class="grid"><tr><th>말</th><th>뜻</th></tr>' + GLOSSARY.map(([k, v]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join('') + '</table>',
-    '<h2>자주 묻는 질문</h2><dl class="faq">' + FAQ.map(([q, a, r]) => `<dt>${esc(q)}</dt><dd>${esc(a)} <span class="ref">(근거: ${refHtml(r)})</span></dd>`).join('') + '</dl>'];
+  const h = [`<h1>이용 안내</h1><p class="sub">데이터 소개, 이용 방법, 용어 설명, 자주 묻는 질문을 모았습니다.</p>`,
+    `<h2>데이터 소개</h2><p>${esc(S.catalog.description)} 서울에서 일하게 된 사회초년생이 살 동네를 고를 때 참고하도록 만들었습니다. 별도 서버 없이 파일로만 공개하며, SQL은 사용자의 브라우저에서 실행됩니다.</p>`,
+    `<h2>이용 방법</h2><ol><li><b>테이블 선택</b>: <a href="#/">데이터 목록</a>에서 테이블을 선택합니다. 행정동마다 한 행씩인 테이블은 dong_profile입니다.</li><li><b>컬럼 확인</b>: <b>스키마</b> 탭에서 컬럼의 한글 이름, 단위, 설명을 확인합니다. <b>개요</b> 탭 맨 위의 "이용 시 유의사항"을 먼저 읽어 주세요.</li><li><b>조회·내려받기</b>: <a href="#/sql">SQL 편집기</a>에서 필요한 행만 조회해 CSV로 받거나, <b>내려받기</b> 탭에서 파일과 코드 예시를 확인합니다.</li></ol>`,
+    '<h2>용어 설명</h2><table class="grid"><tr><th>용어</th><th>설명</th></tr>' + GLOSSARY.map(([k, v]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(v)}</td></tr>`).join('') + '</table>',
+    '<h2>자주 묻는 질문</h2><dl class="faq">' + FAQ.map(([q, a, r]) => `<dt>${esc(q)}</dt><dd>${esc(typeof a === 'function' ? a() : a)} ${refToggle(r)}</dd>`).join('') + '</dl>'];
   $('#main').innerHTML = h.join('');
 }
 
@@ -683,12 +718,13 @@ window.addEventListener('hashchange', route);
 (async () => {
   try {
     S.catalog = await getJson('catalog.json');
+    Object.assign($('#contact'), {href: S.catalog.card.contact_url, title: S.catalog.card.contact_label, hidden: false});
     const want = new URLSearchParams(location.search).get('v');
     S.version = S.catalog.versions.some((v) => v.version === want) ? want : S.catalog.latest;
     $('#ver').innerHTML = S.catalog.versions.map((v) => `<option value="${esc(v.version)}" ${v.version === S.version ? 'selected' : ''}>${esc(v.version)}${v.version === S.catalog.latest ? ' (최신)' : ''}</option>`).join('');
     $('#ver').onchange = (e) => { S.version = e.target.value; route(); };
     await route();
-  } catch (e) { $('#main').innerHTML = `<p class="err">목록(catalog.json)을 읽지 못했습니다: ${esc(e.message || e)}</p>`; }
+  } catch (e) { $('#main').innerHTML = `<p class="err">데이터 목록(catalog.json)을 불러오지 못했습니다: ${esc(e.message || e)}</p>`; }
 })();
 </script>
 </body>
