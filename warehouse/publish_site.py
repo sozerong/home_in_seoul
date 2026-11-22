@@ -1,0 +1,528 @@
+"""데이터 상품 버전 하나를 공개 정적 사이트(GitHub Pages) 폴더로 만든다 (결정 113, docs/handoff_pages.md 단계 P1).
+
+입력: product/<버전>/ (읽기만 한다), docs/public_columns.json(컬럼별 공개 여부와 이용조건의 원본), docs/product_contract.json,
+      docs/data_contract.md 3절(표의 grain과 컬럼 뜻), warehouse/site/index.html(데이터 포털 화면, 그대로 복사).
+출력(--out, 사용자가 받아 둔 데이터 레포 폴더):
+  <버전>/          표마다 공개 .parquet, .csv와 공개 manifest.json. 한 번 만든 공개 버전은 불변이다:
+                   이미 있는 폴더와 바이트가 하나라도 다르면 아무것도 쓰지 않고 실패한다.
+  index.html       데이터 포털(warehouse/site/index.html). 아래 JSON만 읽고, SQL·미리보기는 브라우저 안 DuckDB-WASM이
+                   공개 Parquet를 직접 읽는다. 서버가 없다. <!--STATIC_SUMMARY--> 자리에 JavaScript 없이도 읽히는
+                   평범한 HTML 요약(표, 파일 링크, 컬럼 사전)을 넣는다(결정 114)
+  catalog.json     기계가 읽는 목록(DCAT 참고): 표 이름·뜻·쓰기 전에 알아 둘 것(notes), 컬럼과 쉬운 말 사전(label, help,
+                   unit, values, example: docs/public_columns.json, 결정 115), 배포 파일, 버전, 조인 키, 이용조건
+  profiles/<버전>.json  컬럼 프로필(결측, 고유값 수, 최소·최대·사분위, 히스토그램, 자주 나오는 값). 공개 버전 폴더는
+                   불변이라 그 밖에 두고 매번 다시 만든다
+  latest.json      최신 공개 버전을 가리키는 고정 주소
+  NOTICE.md        원천별 출처·이용조건
+  sql.html         예전 주소용. index.html#/sql로 넘긴다
+  .nojekyll        Pages가 파일을 바꾸지 않고 그대로 내보내게 하는 빈 파일
+  .gitattributes   git이 줄바꿈을 바꾸지 않게(* -text). 없으면 core.autocrlf가 CSV 바이트를 바꾼다
+  위 파일들은 --out에 있는 공개 버전 폴더 전체로 매번 다시 만든다.
+같은 입력이면 같은 바이트를 낸다: JSON 키 정렬, 새 시각을 찍지 않음(created_at은 원본 manifest 값), 행 순서는 원본 그대로.
+CSV는 원본 CSV에서 빠진 컬럼만 지워 다시 쓴다(값의 글자 표기를 원본과 같게 두려고). Parquet는 pyarrow로 컬럼만 골라 다시 쓴다.
+사용법:
+  python -m warehouse.publish_site --version v2026.11.16 --out ../home_in_seoul-data
+  python -m warehouse.publish_site --selftest [--version v2026.11.16]
+"""
+import argparse
+import csv
+import copy
+import hashlib
+import json
+import re
+import shutil
+import sys
+import tempfile
+from html import escape
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.compute as pc
+import pyarrow.parquet as pq
+
+from common import ROOT
+
+PRODUCT = ROOT / "product"
+PUBLIC_COLUMNS = ROOT / "docs" / "public_columns.json"
+CONTRACT = ROOT / "docs" / "product_contract.json"
+DATA_CONTRACT = ROOT / "docs" / "data_contract.md"
+SITE_HTML = ROOT / "warehouse" / "site" / "index.html"
+VERSION_RE = re.compile(r"^v\d{4}\.\d{2}\.\d{2}$")
+SUMMARY_MARK = "<!--STATIC_SUMMARY-->"
+# 비공개 이유 글(공개 manifest에 들어가 바꿀 수 없음)의 내부 용어 풀이. index.html의 같은 문구와 맞춘다
+EXCLUDED_TERMS = ("이유 글의 '결정 113'은 이 데이터를 만든 프로젝트의 설계 결정 번호, 'OA-12928'은 서울 열린데이터광장 자료 번호, "
+                  "'3유형'은 공공누리 제3유형(출처 표시, 변경 금지), '6a·6b'는 혼잡도와 면적의 공개 여부를 다시 판정할 다음 단계 이름, '약관 제15조'는 통계청 SGIS 통합 이용약관의 조항(사전 승낙 없는 타인 제공 금지)입니다")  # index.html에서 정적 요약이 들어갈 자리(결정 114)
+TITLES = {  # 포털에 보이는 표 이름. 뜻(grain)은 data_contract.md 3절에서 읽는다
+    "dong_profile": "행정동 프로필",
+    "commute_od": "출근 이동 (출발 동 × 직장 동)",
+    "rent_listing": "전월세 계약",
+    "dong_mois_map": "행정동 코드 대응표 (행정안전부 → 통계청)",
+}
+# 표끼리 잇는 키. 모두 통계청 행정동 코드 8자리(dong_id)로 dong_profile에 붙는다
+RELATIONS = [
+    {"from": ["commute_od", "origin_dong_id"], "to": ["dong_profile", "dong_id"], "label": "출발 동"},
+    {"from": ["commute_od", "dest_dong_id"], "to": ["dong_profile", "dong_id"], "label": "직장 동"},
+    {"from": ["rent_listing", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "계약이 있는 동"},
+    {"from": ["dong_mois_map", "dong_id"], "to": ["dong_profile", "dong_id"], "label": "통계청 동"},
+]
+# 표마다 한 줄을 구분하는 컬럼(키). selftest가 이 버전에서 값이 비지 않고 겹치지 않는지 확인한다.
+# rent_listing은 동·호를 주지 않아 거래 고유 키가 없다(CLAUDE.md 7절)
+KEYS = {"dong_profile": ["dong_id"], "commute_od": ["origin_dong_id", "dest_dong_id"],
+        "rent_listing": [], "dong_mois_map": ["mois_dong_cd"]}
+REPOSITORY = "https://github.com/sozerong/home_in_seoul"  # 이 데이터를 만든 코드 레포(공개). 근거(source_ref)의 파일이 여기 있다
+HIST_BINS = 12
+TOP_VALUES = 8
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def dumps(obj):
+    return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def write_text(path, text):
+    path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def check_public_columns(cfg, contract):
+    """public_columns.json이 계약의 컬럼 집합과 정확히 같고, 키·이름 컬럼이 제외로 표시되지 않았는지 본다."""
+    if set(cfg["tables"]) != set(contract):
+        raise SystemExit(f"public_columns.json의 표 {sorted(cfg['tables'])}가 계약 {sorted(contract)}와 다릅니다")
+    for table, cols in contract.items():
+        want, got = [c for c, _ in cols], list(cfg["tables"][table])
+        if sorted(want) != sorted(got):
+            raise SystemExit(f"{table}: public_columns.json 컬럼이 계약과 다릅니다. 빠짐 {sorted(set(want) - set(got))}, "
+                             f"남음 {sorted(set(got) - set(want))}")
+        for col, v in cfg["tables"][table].items():
+            if v.get("key") and not v["public"]:  # 키가 빠지면 상품을 못 쓴다: 빼지 않고 공개를 멈춘다(handoff 2절)
+                raise SystemExit(f"{table}.{col}은 키·이름 컬럼인데 제외로 표시돼 공개를 멈춥니다")
+            missing = [s for s in v["sources"] if s not in cfg["sources"]]
+            if missing:
+                raise SystemExit(f"{table}.{col}의 원천 {missing}이 public_columns.json sources에 없습니다")
+            if v["public"] and not all(v.get(k) for k in ("label", "help", "source_ref")):
+                raise SystemExit(f"{table}.{col}: 공개 컬럼인데 쉬운 말 사전(label, help, source_ref)이 비어 있습니다")
+    if set(cfg.get("table_notes", {})) != set(contract) or not all(cfg["table_notes"].values()):
+        raise SystemExit("public_columns.json table_notes에 표마다 '쓰기 전에 알아 둘 것'이 있어야 합니다")
+
+
+def contract_docs():
+    """data_contract.md 3절에서 표마다 grain(제목의 괄호)과 컬럼 뜻(표의 행)을 읽는다.
+    행의 첫 칸은 'a, b, c' 또는 '*_per_km2', 'nearest_congestion_station_*' 같은 와일드카드다."""
+    text = DATA_CONTRACT.read_text(encoding="utf-8")
+    section = text[text.index("## 3. 파일별 스키마"):text.index("## 4. 품질")]
+    docs = {}
+    for block in re.split(r"^### ", section, flags=re.M)[1:]:
+        m = re.match(r"(\w+) \((.*)\)\s*$", block.splitlines()[0])  # 괄호 안 괄호가 있어 바깥 괄호까지
+        rows = []
+        for line in block.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if line.startswith("|") and len(cells) == 2 and cells[0] not in ("컬럼", "---"):
+                rows.append(([p.strip() for p in cells[0].split(",")], cells[1]))
+        docs[m.group(1)] = {"grain": m.group(2), "rows": rows}
+    return docs
+
+
+def describe(docs, table, col):
+    for names, meaning in docs[table]["rows"]:
+        if any(n == col or ("*" in n and re.fullmatch(re.escape(n).replace(r"\*", ".*"), col)) for n in names):
+            meaning = meaning.replace("**", "")
+            return f"{meaning} (한 줄로 함께 설명: {', '.join(names)})" if len(names) > 1 else meaning
+    raise SystemExit(f"data_contract.md 3절에 {table}.{col}의 뜻이 없습니다")
+
+
+def build_version(src, dst, cfg, contract):
+    """src(product 버전 폴더)에서 공개 파일과 공개 manifest를 dst에 쓴다."""
+    manifest = json.loads((src / "manifest.json").read_text(encoding="utf-8"))
+    for name, info in manifest["files"].items():  # 원본이 manifest와 다르면 무엇을 공개하는지 모른다
+        if sha256(src / name) != info["sha256"]:
+            raise SystemExit(f"{src / name}의 sha256이 원본 manifest와 다릅니다")
+    if manifest["schema"] != contract:
+        raise SystemExit(f"{src.name} manifest의 schema가 지금 계약(product_contract.json)과 다릅니다")
+    dst.mkdir(parents=True)
+    files, schema, excluded, column_sources = {}, {}, {}, {}
+    for table, cols in contract.items():
+        spec = cfg["tables"][table]
+        keep = [c for c, _ in cols if spec[c]["public"]]
+        schema[table] = [[c, t] for c, t in cols if spec[c]["public"]]
+        excluded[table] = {c: spec[c]["reason"] for c, _ in cols if not spec[c]["public"]}
+        column_sources[table] = {c: spec[c]["sources"] for c in keep}
+
+        pq.write_table(pq.read_table(src / f"{table}.parquet", columns=keep), dst / f"{table}.parquet")
+        with open(src / f"{table}.csv", encoding="utf-8-sig", newline="") as f_in, \
+                open(dst / f"{table}.csv", "w", encoding="utf-8-sig", newline="") as f_out:
+            reader, writer = csv.reader(f_in), csv.writer(f_out)
+            header = next(reader)
+            if header != [c for c, _ in cols]:
+                raise SystemExit(f"{table}.csv 머리글이 계약과 다릅니다")
+            idx = [header.index(c) for c in keep]
+            writer.writerow(keep)
+            rows = 0
+            for row in reader:
+                writer.writerow([row[i] for i in idx])
+                rows += 1
+        for ext in ("parquet", "csv"):
+            p = dst / f"{table}.{ext}"
+            n = pq.read_metadata(p).num_rows if ext == "parquet" else rows
+            if n != manifest["files"][f"{table}.{ext}"]["rows"]:
+                raise SystemExit(f"{p.name} 행 수 {n}가 원본 manifest와 다릅니다")
+            files[p.name] = {"rows": n, "sha256": sha256(p), "bytes": p.stat().st_size}
+
+    used = sorted({s for t in column_sources.values() for v in t.values() for s in v})
+    public = {
+        "version": manifest["version"],
+        "created_at": manifest["created_at"],
+        "source_manifest_sha256": sha256(src / "manifest.json"),
+        "files": files,
+        "schema": schema,
+        "excluded_columns": excluded,
+        "column_sources": column_sources,
+        "licenses": {s: cfg["sources"][s] for s in used},
+        "terms_checked_date": cfg["checked_date"],
+        "sources": manifest["sources"],
+        "quality": manifest["quality"],
+    }
+    write_text(dst / "manifest.json", dumps(public))
+
+
+def publish_version(version, out, cfg, contract):
+    """공개 버전 폴더를 만든다. 이미 있으면 새로 만든 것과 바이트가 같을 때만 그대로 두고, 다르면 실패한다(불변)."""
+    src = PRODUCT / version
+    if not VERSION_RE.match(version) or not (src / "manifest.json").exists():
+        raise SystemExit(f"상품 버전 폴더가 없습니다: {src}")
+    out.mkdir(parents=True, exist_ok=True)
+    tmp = Path(tempfile.mkdtemp(prefix=f".{version}-", dir=out))
+    try:
+        build_version(src, tmp / version, cfg, contract)
+        new = {p.name: sha256(p) for p in (tmp / version).iterdir()}
+        dst = out / version
+        if dst.exists():
+            old = {p.name: sha256(p) for p in dst.iterdir()}
+            if old != new:
+                diff = sorted(n for n in new.keys() | old.keys() if old.get(n) != new.get(n))
+                raise SystemExit(f"공개 버전 {version}이 이미 있고 내용이 다릅니다(공개 버전은 불변): {diff}")
+            return False
+        (tmp / version).rename(dst)
+        return True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _num(v):
+    """JSON에 쓸 숫자. 플랫폼마다 마지막 자리가 달라지지 않게 유효숫자 10자리로 자른다."""
+    if v is None:
+        return None
+    if isinstance(v, int) and not isinstance(v, bool):
+        return v
+    return float(f"{float(v):.10g}")
+
+
+def profile_column(col):
+    """컬럼 하나의 프로필. 모두 정확한 값(근사 없음)이라 같은 파일이면 같은 결과가 나온다."""
+    n, nulls = len(col), col.null_count
+    p = {"rows": n, "nulls": nulls, "distinct": pc.count_distinct(col, mode="only_valid").as_py()}
+    t = col.type
+    if pa.types.is_decimal(t):
+        col, t = col.cast(pa.float64()), pa.float64()
+    if (pa.types.is_integer(t) or pa.types.is_floating(t)) and n > nulls:
+        mm = pc.min_max(col).as_py()
+        q = pc.quantile(col, q=[0.25, 0.5, 0.75], interpolation="linear").to_pylist()
+        p.update(kind="number", min=_num(mm["min"]), max=_num(mm["max"]), mean=_num(pc.mean(col).as_py()),
+                 q25=_num(q[0]), median=_num(q[1]), q75=_num(q[2]))
+        lo, hi = float(mm["min"]), float(mm["max"])
+        counts = [0] * HIST_BINS
+        width = (hi - lo) / HIST_BINS or 1.0
+        for v in col.drop_null().to_pylist():
+            counts[min(int((float(v) - lo) / width), HIST_BINS - 1)] += 1
+        p["histogram"] = {"min": _num(lo), "width": _num(width), "counts": counts}
+        return p
+    if pa.types.is_temporal(t) and n > nulls:
+        mm = pc.min_max(col).as_py()
+        p.update(kind="date", min=str(mm["min"]), max=str(mm["max"]))
+    else:
+        p["kind"] = "text"
+    vc = pc.value_counts(col.drop_null()).to_pylist()
+    vc.sort(key=lambda x: (-x["counts"], str(x["values"])))
+    p["top"] = [[str(x["values"]), x["counts"]] for x in vc[:TOP_VALUES]]
+    return p
+
+
+def profile_version(folder, schema):
+    return {table: {c: profile_column(pq.read_table(folder / f"{table}.parquet", columns=[c]).column(c).combine_chunks())
+                    for c, _ in cols} for table, cols in schema.items()}
+
+
+def example(pr):
+    """프로필에서 고른 실제 값 하나: 숫자는 가운데 값, 날짜는 처음 날, 글자는 가장 자주 나오는 값."""
+    if pr.get("kind") == "number":
+        return str(pr["median"])
+    if pr.get("kind") == "date":
+        return pr["min"]
+    return pr["top"][0][0] if pr.get("top") else ""
+
+
+def column_entry(docs, table, c, t, spec, sources, pr):
+    e = {"name": c, "type": t, "description": describe(docs, table, c), "sources": sources,
+         "label": spec["label"], "help": spec["help"], "unit": spec["unit"], "source_ref": spec["source_ref"],
+         "example": example(pr)}
+    if "values" in spec:
+        e["values"] = spec["values"]
+    return e
+
+
+def static_summary(catalog, m):
+    """JavaScript를 돌리지 않는 도구(글만 읽는 에이전트, 검색엔진)용 평범한 HTML. index.html의 <main>에 들어가고,
+    JavaScript가 돌면 포털 화면이 덮어쓴다. catalog와 공개 manifest의 값만 쓴다(비공개 컬럼은 이름과 이유만)."""
+    h = [f"<h1>{escape(catalog['title'])}</h1>", f"<p>{escape(catalog['description'])}</p>",
+         f"<p>최신 버전 <b>{escape(catalog['latest'])}</b> (만든 시각 {escape(m['created_at'])}). "
+         "버전 폴더의 파일은 한 번 올리면 바뀌지 않습니다. 기계가 읽는 목록은 "
+         '<a href="catalog.json">catalog.json</a>, 최신 버전 주소는 <a href="latest.json">latest.json</a>, '
+         '출처와 이용조건은 <a href="NOTICE.md">NOTICE.md</a>입니다. 이 페이지는 JavaScript가 돌면 표 탐색·SQL 편집기 화면으로 바뀝니다.</p>',
+         "<p>모든 표는 통계청 행정동 코드 8자리(dong_id)로 dong_profile에 이어집니다. 같은 이름의 동이 있으므로(신사동: 강남구·관악구) "
+         "동 이름으로 표를 잇지 마세요.</p>"]
+    for d in catalog["datasets"]:
+        files = [x for x in d["distributions"] if x["version"] == catalog["latest"]]
+        grain = re.sub(r", [\d,]+행$", "", d["grain"].removeprefix("한 행 = "))  # index.html grainText와 같은 규칙
+        h.append(f'<section><h2>{escape(d["title"])} ({escape(d["identifier"])})</h2><p>이 표의 한 줄은 {escape(grain)}입니다.</p>')
+        h.append("<ul>" + "".join(f'<li><a href="{escape(x["url"])}">{escape(x["url"])}</a> ({x["format"]}, {x["rows"]}행, '
+                                  f'{x["bytes"]}바이트, sha256 {x["sha256"]})</li>' for x in files) + "</ul>")
+        key = ", ".join(d["primary_key"]) or "없음(거래 고유 키가 없다. 동·호를 주지 않음)"
+        h.append(f"<p>한 줄을 구분하는 값(키): {escape(key)}</p>")
+        h.append("<p>쓰기 전에 알아 둘 것:</p><ul>" + "".join(f"<li>{escape(n['text'])}</li>" for n in d["notes"]) + "</ul>")
+        h.append("<table><tr><th>컬럼</th><th>한글 이름</th><th>단위</th><th>타입</th><th>설명</th><th>코드 값</th></tr>")
+        for c in d["columns"]:
+            vals = "; ".join(f"{k} = {v}" for k, v in c.get("values", {}).items())
+            h.append(f"<tr><td>{escape(c['name'])}</td><td>{escape(c['label'])}</td><td>{escape(c['unit'])}</td>"
+                     f"<td>{escape(c['type'])}</td><td>{escape(c['help'])}</td><td>{escape(vals)}</td></tr>")
+        h.append("</table>")
+        if d["excluded_columns"]:
+            h.append(f'<p>공개하지 않는 컬럼(이용조건, 값 없음). {escape(EXCLUDED_TERMS)}</p><ul class="excluded">' + "".join(
+                f"<li>{escape(c)}: {escape(r)}</li>" for c, r in d["excluded_columns"].items()) + "</ul>")
+        h.append("</section>")
+    h.append(f'<p>설명의 근거로 적은 파일(data_contract.md, decisions.md 등)은 코드 레포 <a href="{REPOSITORY}">{REPOSITORY}</a>에 있습니다.</p>')
+    return "\n".join(h)
+
+
+def site_files(out, cfg, contract):
+    """--out의 공개 버전 폴더 전체로 index.html, catalog.json, latest.json, NOTICE.md, sql.html, profiles/를 다시 쓴다."""
+    versions = sorted(p.name for p in out.iterdir() if p.is_dir() and VERSION_RE.match(p.name))
+    if not versions:
+        raise SystemExit(f"{out}에 공개 버전 폴더가 없습니다")
+    manifests = {v: json.loads((out / v / "manifest.json").read_text(encoding="utf-8")) for v in versions}
+    latest = versions[-1]
+    m = manifests[latest]
+    docs = contract_docs()
+
+    write_text(out / "latest.json", dumps({"version": latest, "manifest": f"{latest}/manifest.json"}))
+
+    profiles = {v: profile_version(out / v, manifests[v]["schema"]) for v in versions}
+    (out / "profiles").mkdir(exist_ok=True)
+    for v in versions:
+        write_text(out / "profiles" / f"{v}.json", dumps(profiles[v]))
+
+    datasets = []
+    for table in contract:
+        datasets.append({
+            "identifier": table,
+            "title": TITLES[table],
+            "grain": docs[table]["grain"],
+            "notes": cfg["table_notes"][table],
+            "primary_key": KEYS[table],
+            "columns": [column_entry(docs, table, c, t, cfg["tables"][table][c], m["column_sources"][table][c],
+                                     profiles[latest][table][c]) for c, t in m["schema"][table]],
+            "excluded_columns": m["excluded_columns"][table],
+            "distributions": [{"version": v, "format": ext, "url": f"{v}/{table}.{ext}",
+                               **manifests[v]["files"][f"{table}.{ext}"]}
+                              for v in reversed(versions) for ext in ("parquet", "csv")],
+        })
+    catalog = {
+        "title": "서울 행정동 주거 지표",
+        "description": "서울 426개 행정동의 전월세 시세, 출근 이동 시간, 가장 가까운 역, 생활 편의 업소 수. 공공데이터를 행정동 기준으로 맞춘 결과",
+        "latest": latest,
+        "versions": [{"version": v, "manifest": f"{v}/manifest.json", "created_at": manifests[v]["created_at"],
+                      "sources": manifests[v]["sources"]} for v in reversed(versions)],
+        "datasets": datasets,
+        "relations": RELATIONS,
+        "profiles": {v: f"profiles/{v}.json" for v in reversed(versions)},
+        "licenses": m["licenses"],
+        "terms_checked_date": m["terms_checked_date"],
+        "notice": "NOTICE.md",
+        "legal_note": cfg["note"],
+        "repository": REPOSITORY,
+        "excluded_terms": EXCLUDED_TERMS,
+    }
+    write_text(out / "catalog.json", dumps(catalog))
+
+    notice = ["# 출처와 이용조건", "",
+              f"확인 날짜: {cfg['checked_date']}. {cfg['note']}. 공공기관이 이 데이터를 후원하거나 보증하지 않는다.", ""]
+    for key, s in sorted(m["licenses"].items()):
+        notice += [f"## {s['name']}", f"- 이용조건: {s['license']}"]
+        notice += [f"- 출처 문구: {s['attribution']}"] if s["attribution"] else []
+        notice += [f"- 링크: {u}" for u in s["urls"]] + [""]
+    notice += ["## 공개하지 않는 컬럼", "", EXCLUDED_TERMS + ".", ""]
+    notice += [f"- {t}.{c}: {r}" for t, cols in m["excluded_columns"].items() for c, r in cols.items()]
+    write_text(out / "NOTICE.md", "\n".join(notice) + "\n")
+
+    if not SITE_HTML.exists():
+        raise SystemExit(f"{SITE_HTML}이 없습니다")
+    html = SITE_HTML.read_text(encoding="utf-8")
+    if html.count(SUMMARY_MARK) != 1:
+        raise SystemExit(f"{SITE_HTML}에 {SUMMARY_MARK}가 정확히 한 번 있어야 합니다")
+    write_text(out / "index.html", html.replace(SUMMARY_MARK, static_summary(catalog, m)))
+    write_text(out / "sql.html", '<!doctype html><meta charset="utf-8"><title>SQL 편집기로 이동</title>'
+               '<script>location.replace("index.html#/sql")</script><a href="index.html#/sql">SQL 편집기로 이동</a>\n')
+    write_text(out / ".nojekyll", "")  # Pages가 Jekyll로 NOTICE.md 등을 바꾸지 않고 파일 그대로 내보내게
+    # git이 줄바꿈을 바꾸지 않게. Git for Windows 기본 core.autocrlf=true는 CSV의 CRLF를 LF로 커밋해
+    # 공개 파일 sha256이 manifest와 달라진다(2026-11-22 첫 푸시에서 실제로 일어남)
+    write_text(out / ".gitattributes", "* -text\n")
+
+
+def publish(version, out, cfg=None):
+    cfg = cfg or json.loads(PUBLIC_COLUMNS.read_text(encoding="utf-8"))
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    check_public_columns(cfg, contract)
+    created = publish_version(version, out, cfg, contract)
+    site_files(out, cfg, contract)
+    return created
+
+
+def tree_hashes(root):
+    return {str(p.relative_to(root)).replace("\\", "/"): sha256(p) for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def selftest(version):
+    cfg = json.loads(PUBLIC_COLUMNS.read_text(encoding="utf-8"))
+    contract = json.loads(CONTRACT.read_text(encoding="utf-8"))
+    with tempfile.TemporaryDirectory() as d:
+        a, b = Path(d) / "a", Path(d) / "b"
+        assert publish(version, a) and publish(version, b)
+        ha, hb = tree_hashes(a), tree_hashes(b)
+        assert ha == hb, "두 번 만든 결과의 바이트가 다릅니다"
+        print(f"1. 두 번 만든 결과가 같다: 파일 {len(ha)}개")
+
+        m = json.loads((a / version / "manifest.json").read_text(encoding="utf-8"))
+        for name, info in m["files"].items():
+            assert sha256(a / version / name) == info["sha256"], name
+        print(f"2. 공개 manifest sha256 = 실제 파일 ({len(m['files'])}개)")
+        prof = json.loads((a / "profiles" / f"{version}.json").read_text(encoding="utf-8"))
+        for table, cols in m["schema"].items():
+            assert [c for c, _ in cols] == list(prof[table]) or sorted(c for c, _ in cols) == sorted(prof[table]), table
+            for c, pr in prof[table].items():
+                assert pr["rows"] == m["files"][f"{table}.parquet"]["rows"], (table, c)
+                assert "histogram" not in pr or sum(pr["histogram"]["counts"]) == pr["rows"] - pr["nulls"], (table, c)
+        print("2b. 프로필이 공개 컬럼마다 있고 행 수·히스토그램 합이 맞다")
+
+        cat = json.loads((a / "catalog.json").read_text(encoding="utf-8"))
+        n_vals = 0
+        for ds in cat["datasets"]:
+            for c in ds["columns"]:
+                assert c["label"] and c["help"] and c["source_ref"], (ds["identifier"], c["name"])
+                if "values" not in c:
+                    continue
+                col = pq.read_table(a / version / f"{ds['identifier']}.parquet", columns=[c["name"]]).column(0)
+                seen = {str(v).lower() for v in pc.unique(col.drop_null()).to_pylist()}
+                keys = {k.lower() for k in c["values"]}
+                assert keys <= seen, f"{ds['identifier']}.{c['name']}: 이 버전에 없는 코드를 풀이합니다 {sorted(keys - seen)}"
+                assert seen <= keys, f"{ds['identifier']}.{c['name']}: 풀이가 빠진 코드 {sorted(seen - keys)}"
+                n_vals += 1
+            assert ds["notes"], ds["identifier"]
+            assert ds["grain"].count("(") == ds["grain"].count(")"), f"{ds['identifier']} grain 괄호가 잘렸습니다: {ds['grain']}"
+            k = ds["primary_key"]
+            if k:
+                t = pq.read_table(a / version / f"{ds['identifier']}.parquet", columns=k)
+                assert all(t.column(x).null_count == 0 for x in k), (ds["identifier"], k)
+                assert t.group_by(k).aggregate([]).num_rows == t.num_rows, f"{ds['identifier']} 키 {k}가 겹칩니다"
+        print(f"2c. 공개 컬럼 {sum(len(ds['columns']) for ds in cat['datasets'])}개 모두 한글 이름·설명·근거가 있고, "
+              f"코드 풀이 {n_vals}개가 이 버전 실제 값과 빠짐없이 맞고, 표 키가 비지 않고 겹치지 않는다")
+
+        page = (a / "index.html").read_text(encoding="utf-8")
+        start, end = page.index('<main id="main">'), page.index("</main>")
+        summary = page[start:end]
+        assert SUMMARY_MARK not in page
+        for name in m["files"]:
+            if name.endswith((".parquet", ".csv")):
+                assert f'href="{version}/{name}"' in summary, f"정적 요약에 {name} 링크가 없습니다"
+        listed = re.findall(r'<ul class="excluded">.*?</ul>', summary, flags=re.S)
+        rest = re.sub(r'<ul class="excluded">.*?</ul>', "", summary, flags=re.S)
+        for ds in cat["datasets"]:
+            for c in ds["excluded_columns"]:
+                assert c in "".join(listed), c
+                assert not re.search(rf"\b{re.escape(c)}\b", rest), f"정적 요약에 비공개 컬럼 {c}가 목록 밖에 나옵니다"
+        print("2d. index.html 정적 요약에 공개 파일 링크가 모두 있고, 비공개 컬럼은 이름·이유 목록에만 나온다")
+
+        n = 0
+        for table, cols in cfg["tables"].items():
+            gone = {c for c, v in cols.items() if not v["public"]}
+            pcols = set(pq.read_schema(a / version / f"{table}.parquet").names)
+            with open(a / version / f"{table}.csv", encoding="utf-8-sig", newline="") as f:
+                ccols = set(next(csv.reader(f)))
+            assert not (gone & pcols) and not (gone & ccols), (table, gone & (pcols | ccols))
+            assert pcols == ccols == {c for c, v in cols.items() if v["public"]}, table
+            keep = [c for c, _ in contract[table] if cols[c]["public"]]
+            assert pq.read_table(a / version / f"{table}.parquet").equals(
+                pq.read_table(PRODUCT / version / f"{table}.parquet", columns=keep)), f"{table}.parquet 값·타입이 원본과 다릅니다"
+            n += len(gone)
+        print(f"3. 제외 컬럼 {n}개가 parquet·csv 어디에도 없고, 남은 parquet 값·타입은 원본과 같다")
+
+        assert not publish(version, a), "같은 내용인데 새로 만들었다고 했습니다"
+        victim = a / version / "dong_profile.csv"
+        victim.write_bytes(victim.read_bytes() + b"x")
+        try:
+            publish(version, a)
+            raise AssertionError("바뀐 공개 버전을 덮어썼습니다")
+        except SystemExit as err:
+            assert "불변" in str(err), err
+        print("4. 같은 내용 재실행은 그대로, 바이트가 다른 기존 공개 버전은 실패")
+
+        all_cols = copy.deepcopy(cfg)  # 모든 컬럼 공개로 돌리면 CSV가 원본과 바이트까지 같아야 한다(값 표기를 바꾸지 않음)
+        for cols in all_cols["tables"].values():
+            for v in cols.values():
+                v["public"] = True
+        full = Path(d) / "full"
+        publish_version(version, full, all_cols, contract)
+        orig = json.loads((PRODUCT / version / "manifest.json").read_text(encoding="utf-8"))["files"]
+        for table in contract:
+            assert sha256(full / version / f"{table}.csv") == orig[f"{table}.csv"]["sha256"], table
+        print("5. 모든 컬럼을 공개로 두면 CSV가 원본과 같은 바이트")
+
+    check_public_columns(cfg, contract)
+    for mutate, word in [(lambda c: c["tables"]["dong_profile"]["dong_id"].update(public=False), "키·이름"),
+                         (lambda c: c["tables"]["dong_profile"].pop("laundry"), "계약과 다릅니다"),
+                         (lambda c: c["tables"]["rent_listing"].update(extra={"public": True, "sources": [], "reason": ""}),
+                          "계약과 다릅니다"),
+                         (lambda c: c["tables"]["commute_od"]["avg_minutes"].pop("help"), "쉬운 말 사전"),
+                         (lambda c: c["table_notes"].pop("commute_od"), "table_notes")]:
+        bad = copy.deepcopy(cfg)
+        mutate(bad)
+        try:
+            check_public_columns(bad, contract)
+            raise AssertionError(f"잘못된 public_columns.json이 통과했습니다: {word}")
+        except SystemExit as err:
+            assert word in str(err), err
+    print("6. public_columns.json = 계약 컬럼 집합, 키 제외·컬럼 빠짐·남음·사전 빠짐·notes 빠짐은 실패")
+
+    docs = contract_docs()
+    for table, cols in contract.items():
+        for c, _ in cols:
+            describe(docs, table, c)
+    print("7. 모든 컬럼의 뜻이 data_contract.md 3절에 있다")
+    print("selftest 통과")
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument("--version")
+    p.add_argument("--out", type=Path)
+    p.add_argument("--selftest", action="store_true")
+    a = p.parse_args()
+    if a.selftest:
+        return selftest(a.version or sorted(x.parent.name for x in PRODUCT.glob("v*/manifest.json"))[-1])
+    if not (a.version and a.out):
+        p.error("--version과 --out이 필요합니다")
+    created = publish(a.version, a.out.resolve())
+    print(f"{a.version}: {'새로 만듦' if created else '이미 같은 내용이 있어 그대로 둠'} -> {a.out.resolve()}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

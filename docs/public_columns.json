@@ -1,0 +1,839 @@
+{
+  "checked_date": "2026-11-22",
+  "decision": "결정 113",
+  "note": "법률 검토 아님. 근거는 docs/data_contract.md 5절",
+  "sources": {
+    "molit_rent": {
+      "name": "국토교통부 전월세 실거래가 (오피스텔, 연립다세대)",
+      "license": "공공데이터포털 이용허락범위 제한 없음",
+      "urls": [
+        "https://www.data.go.kr/data/15126475/openapi.do",
+        "https://www.data.go.kr/data/15126473/openapi.do"
+      ],
+      "attribution": "국토교통부 전월세 실거래가 자료(공공데이터포털)"
+    },
+    "seoul_living": {
+      "name": "서울 생활이동 (서울특별시·KT)",
+      "license": "공공데이터포털 15087677: 제3자 권리 포함 저작권 표시, 공공누리 제1유형. 같은 계열 수도권 생활이동: 가공한 통계·지표 이용 허용(출처 표시), 원본 유상 재배포 금지",
+      "urls": [
+        "https://data.seoul.go.kr/dataVisual/seoul/seoulLivingMigration.do",
+        "https://www.data.go.kr/data/15087677/fileData.do",
+        "https://data.seoul.go.kr/dataList/OA-22657/F/1/datasetView.do"
+      ],
+      "attribution": "공공누리 제1유형에 따라 서울특별시 '서울 생활이동' 데이터 이용. 출처: 서울특별시·KT, 서울시 통신데이터"
+    },
+    "seoul_metro_congestion": {
+      "name": "서울교통공사 지하철 혼잡도 정보",
+      "license": "공공데이터포털 15071311 이용허락범위 제한 없음. 열린데이터광장 OA-12928은 2026-10-22 공공누리 3유형, 2026-11-22 이용허락범위 제한 없음",
+      "urls": [
+        "https://data.seoul.go.kr/dataList/OA-12928/F/1/datasetView.do",
+        "https://www.data.go.kr/data/15071311/fileData.do"
+      ],
+      "attribution": "서울교통공사 지하철 혼잡도 정보"
+    },
+    "seoul_station_master": {
+      "name": "서울시 역사마스터 정보",
+      "license": "공공누리 제1유형(2026-10-22). 2026-11-22 열린데이터광장 표시는 이용허락범위 제한 없음",
+      "urls": [
+        "https://data.seoul.go.kr/dataList/OA-21232/F/1/datasetView.do"
+      ],
+      "attribution": "공공누리 제1유형에 따라 서울특별시 '서울시 역사마스터 정보' 이용"
+    },
+    "sbiz_store": {
+      "name": "소상공인시장진흥공단 상가(상권)정보",
+      "license": "공공데이터포털 이용허락범위 제한 없음",
+      "urls": [
+        "https://www.data.go.kr/data/15083033/fileData.do"
+      ],
+      "attribution": "소상공인시장진흥공단 상가(상권)정보(공공데이터포털)"
+    },
+    "sgis_boundary": {
+      "name": "통계청 SGIS 센서스용 행정구역경계(읍면동) 2025-06-30",
+      "license": "SGIS 통합 이용약관 제15조: 사전 승낙 없는 복사·복제·변경·타인 제공 불가, 영리행위 불가",
+      "urls": [
+        "https://sgis.mods.go.kr/view/member/clause",
+        "https://sgis.mods.go.kr/jsp/member/copyright.jsp"
+      ],
+      "attribution": null
+    },
+    "kostat_admin_code": {
+      "name": "통계청 한국행정구역분류 (행정동 코드·이름)",
+      "license": "공개된 분류 코드",
+      "urls": [],
+      "attribution": "통계청 한국행정구역분류"
+    },
+    "derived_location": {
+      "name": "우리 계산: 도형으로 위치만 정한 결과 (동 배정, 대표점 거리, 행정안전부 코드 대응)",
+      "license": "SGIS 정보를 그대로 주지 않는 계산 결과로 판단(법률 검토 아님)",
+      "urls": [],
+      "attribution": "계산 방법: data_contract.md 2·3절"
+    }
+  },
+  "tables": {
+    "dong_profile": {
+      "dong_id": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 코드(통계청)",
+        "unit": "",
+        "help": "통계청 행정동 코드 8자리. 모든 표를 잇는 키다. 앞 5자리는 구 코드(sgg_cd)와 같다. 엑셀에서는 글자로 열어야 한다.",
+        "source_ref": "data_contract.md 2절; 426행 모두 left(dong_id,5) = sgg_cd (2026-11-22 공개 파일 질의)"
+      },
+      "mois_dong_cd": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "키. 상가 업소 다수결로 만든 행정안전부 코드 대응(결정 13)",
+        "key": true,
+        "label": "동 코드(행정안전부)",
+        "unit": "",
+        "help": "행정안전부 행정동 코드 8자리. 통계청 코드와 체계가 달라 앞 5자리가 같아도 다른 구다(행정안전부 11230 = 동대문구, 통계청 11230 = 강남구). 다른 시스템과 맞출 때만 쓰고, 용신동처럼 나뉘는 동은 dong_mois_map을 쓴다.",
+        "source_ref": "data_contract.md 2절; decisions.md 결정 25; sgg_cd = '11230' 동의 mois_dong_cd 앞 5자리는 모두 11680 (2026-11-22 공개 파일 질의); 앞 5자리 대응은 sgg_cd 근거와 같음"
+      },
+      "dong_nm": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 이름",
+        "unit": "",
+        "help": "통계청 2025 행정동 이름. 신사동이 강남구와 관악구에 하나씩 있어 이름만으로는 동을 가를 수 없다.",
+        "source_ref": "dong_nm = '신사동' 2행 (2026-11-22 공개 파일 질의)"
+      },
+      "sgg_cd": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "구 코드(통계청)",
+        "unit": "",
+        "help": "통계청 시군구 코드 5자리. 강남구는 11230이다. 행정안전부식 코드는 체계가 달라 11230이 동대문구다. 두 코드를 섞지 말고, 글자로 비교한다. 구 이름은 코드 값 풀이에 있다.",
+        "source_ref": "data_contract.md 2절; CLAUDE.md 7절(시군구 코드 체계); 구 이름: 소상공인 상가(상권)정보 2026-06-30 판의 시군구명을 dong_profile.mois_dong_cd 앞 5자리로 이음(25개 구 1:1, 2026-11-22 확인)",
+        "values": {
+          "11010": "종로구",
+          "11020": "중구",
+          "11030": "용산구",
+          "11040": "성동구",
+          "11050": "광진구",
+          "11060": "동대문구",
+          "11070": "중랑구",
+          "11080": "성북구",
+          "11090": "강북구",
+          "11100": "도봉구",
+          "11110": "노원구",
+          "11120": "은평구",
+          "11130": "서대문구",
+          "11140": "마포구",
+          "11150": "양천구",
+          "11160": "강서구",
+          "11170": "구로구",
+          "11180": "금천구",
+          "11190": "영등포구",
+          "11200": "동작구",
+          "11210": "관악구",
+          "11220": "서초구",
+          "11230": "강남구",
+          "11240": "송파구",
+          "11250": "강동구"
+        }
+      },
+      "area_km2": {
+        "public": false,
+        "sources": [
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      },
+      "boundary_base_date": {
+        "public": true,
+        "sources": [
+          "sgis_boundary"
+        ],
+        "reason": "경계 판의 기준일(메타데이터). 도형에서 잰 값이 아님",
+        "label": "경계 기준일",
+        "unit": "",
+        "help": "동 경계를 정한 통계청 경계의 기준일. 동 이름과 코드는 이 날짜 기준이다.",
+        "source_ref": "data_contract.md 2절"
+      },
+      "monthly_deals": {
+        "public": true,
+        "sources": [
+          "molit_rent",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 집계",
+        "label": "월세 계약 수(건)",
+        "unit": "건",
+        "help": "기간 안 신규 월세 계약 수. 기간은 홈 화면 '신선도' 표의 전월세 계약월(rent_months)이다. 오피스텔과 연립다세대를 합쳤고 다가구 원룸은 빠진다. 계약이 없으면 0이 아니라 비어 있다. 신규(새로 맺은) 계약만 센다. 갱신 계약은 빼서, 지금 새로 구하는 사람이 받을 수 있는 가격에 가깝게 했다.",
+        "source_ref": "data_contract.md 3절 dong_profile; data_contract.md 6절 2; warehouse/dbt/models/mart/dong_profile.sql 17행(left join); 비어 있는 15곳 = 품질 지표 dongs_without_monthly_rent_deal 15; question.md 2절(신규 계약만)"
+      },
+      "monthly_median_deposit_10k_won": {
+        "public": true,
+        "sources": [
+          "molit_rent",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 집계",
+        "label": "월세 보증금 중앙값(만원)",
+        "unit": "만원",
+        "help": "기간 안 신규 월세 계약의 보증금을 크기순으로 세웠을 때 가운데 값. 면적은 거르지 않았다. 계약이 없으면 비어 있다. 계약 수가 적은 동은 값이 크게 흔들리니 계약 수와 함께 본다(이 버전에서 월세 5건 미만 14곳, 전세 5건 미만 29곳).",
+        "source_ref": "data_contract.md 3절 dong_profile; warehouse/dbt/models/mart/dong_rent_summary.sql(percentile_cont 0.5); 5건 미만 동 수는 2026-11-22 공개 파일 질의"
+      },
+      "monthly_median_rent_10k_won": {
+        "public": true,
+        "sources": [
+          "molit_rent",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 집계",
+        "label": "월세 중앙값(만원)",
+        "unit": "만원",
+        "help": "기간 안 신규 월세 계약의 월세를 크기순으로 세웠을 때 가운데 값. 짝수면 가운데 두 값의 평균이다. 평균보다 큰 값 몇 개에 덜 흔들린다. 오피스텔·연립다세대를 합쳤고 면적은 거르지 않았다. 계약이 없으면 비어 있다. 계약 수가 적은 동은 값이 크게 흔들리니 계약 수와 함께 본다(이 버전에서 월세 5건 미만 14곳, 전세 5건 미만 29곳).",
+        "source_ref": "data_contract.md 3절 dong_profile; warehouse/dbt/models/mart/dong_rent_summary.sql(percentile_cont 0.5); 5건 미만 동 수는 2026-11-22 공개 파일 질의"
+      },
+      "jeonse_deals": {
+        "public": true,
+        "sources": [
+          "molit_rent",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 집계",
+        "label": "전세 계약 수(건)",
+        "unit": "건",
+        "help": "기간 안 신규 전세 계약(월세 0) 수. 오피스텔·연립다세대만 센다. 계약이 없으면 0이 아니라 비어 있다. 신규(새로 맺은) 계약만 센다. 갱신 계약은 빼서, 지금 새로 구하는 사람이 받을 수 있는 가격에 가깝게 했다.",
+        "source_ref": "data_contract.md 3절 dong_profile; warehouse/dbt/models/mart/dong_profile.sql 18행(left join); question.md 2절(신규 계약만)"
+      },
+      "jeonse_median_deposit_10k_won": {
+        "public": true,
+        "sources": [
+          "molit_rent",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 집계",
+        "label": "전세 보증금 중앙값(만원)",
+        "unit": "만원",
+        "help": "기간 안 신규 전세 계약의 보증금 가운데 값. 계약이 없으면 비어 있다. 계약 수가 적은 동은 값이 크게 흔들리니 계약 수와 함께 본다(이 버전에서 월세 5건 미만 14곳, 전세 5건 미만 29곳).",
+        "source_ref": "data_contract.md 3절 dong_profile; warehouse/dbt/models/mart/dong_rent_summary.sql; 5건 미만 동 수는 2026-11-22 공개 파일 질의"
+      },
+      "nearest_station_nm": {
+        "public": true,
+        "sources": [
+          "seoul_station_master",
+          "derived_location"
+        ],
+        "reason": "공공누리 1유형 원천의 역 이름",
+        "label": "가장 가까운 역",
+        "unit": "",
+        "help": "동 안쪽 대표점(동 도형 안에 반드시 들어가는 점. 무게중심은 동 밖에 떨어지는 동이 있어 쓰지 않음)에서 직선으로 가장 가까운 지하철역(모든 노선). 이름은 서울시 역사마스터 표기다.",
+        "source_ref": "data_contract.md 3절 dong_profile; decisions.md 결정 16"
+      },
+      "nearest_station_route": {
+        "public": true,
+        "sources": [
+          "seoul_station_master",
+          "derived_location"
+        ],
+        "reason": "공공누리 1유형 원천의 호선",
+        "label": "그 역의 노선",
+        "unit": "",
+        "help": "가장 가까운 역의 노선 이름(역사마스터 표기).",
+        "source_ref": "data_contract.md 3절 dong_profile"
+      },
+      "nearest_station_distance_m": {
+        "public": true,
+        "sources": [
+          "seoul_station_master",
+          "derived_location"
+        ],
+        "reason": "대표점에서 역까지 우리 계산 거리",
+        "label": "가장 가까운 역까지 직선거리(m)",
+        "unit": "m",
+        "help": "동 안쪽 대표점(동 도형 안에 반드시 들어가는 점. 무게중심은 동 밖에 떨어지는 동이 있어 쓰지 않음)에서 그 역까지 곧게 잰 거리. 걷는 길 거리가 아니다.",
+        "source_ref": "data_contract.md 3절 dong_profile; data_contract.md 2절(거리는 m)"
+      },
+      "nearest_congestion_station_nm": {
+        "public": false,
+        "sources": [
+          "seoul_metro_congestion",
+          "seoul_station_master"
+        ],
+        "reason": "혼잡도. 결정 113 1차 제외(OA-12928 3유형 근거). 6a에서 다시 판정"
+      },
+      "nearest_congestion_station_route": {
+        "public": false,
+        "sources": [
+          "seoul_metro_congestion",
+          "seoul_station_master"
+        ],
+        "reason": "혼잡도. 결정 113 1차 제외(OA-12928 3유형 근거). 6a에서 다시 판정"
+      },
+      "nearest_congestion_station_distance_m": {
+        "public": false,
+        "sources": [
+          "seoul_metro_congestion",
+          "seoul_station_master",
+          "derived_location"
+        ],
+        "reason": "혼잡도. 결정 113 1차 제외(OA-12928 3유형 근거). 6a에서 다시 판정"
+      },
+      "am_peak_congestion": {
+        "public": false,
+        "sources": [
+          "seoul_metro_congestion"
+        ],
+        "reason": "혼잡도. 결정 113 1차 제외(OA-12928 3유형 근거). 6a에서 다시 판정"
+      },
+      "convenience_store": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 업소 수",
+        "label": "편의점 수(곳)",
+        "unit": "곳",
+        "help": "동 경계 안 편의점 수. 소상공인시장진흥공단 상가(상권)정보의 업종 소분류 코드 G20405로 셌다. 기준 시점은 홈 화면 '신선도' 표의 상가정보 수집일(store_collected_date)이다.",
+        "source_ref": "question.md 2절 편의(56행); transform/sbiz_store.py 29행"
+      },
+      "supermarket": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 업소 수",
+        "label": "슈퍼마켓 수(곳)",
+        "unit": "곳",
+        "help": "동 경계 안 슈퍼마켓(상가정보 업종 소분류 코드 G20404) 수.",
+        "source_ref": "question.md 57행; transform/sbiz_store.py 29행"
+      },
+      "pharmacy": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 업소 수",
+        "label": "약국 수(곳)",
+        "unit": "곳",
+        "help": "동 경계 안 약국(상가정보 업종 소분류 코드 G21501) 수.",
+        "source_ref": "question.md 58행; transform/sbiz_store.py 29행"
+      },
+      "internal_pediatric_clinic": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 업소 수",
+        "label": "내과·소아과 의원 수(곳)",
+        "unit": "곳",
+        "help": "동 경계 안 내과·소아과 의원(상가정보 업종 소분류 코드 Q10201) 수.",
+        "source_ref": "question.md 59행; transform/sbiz_store.py 29행"
+      },
+      "laundry": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 동별 업소 수",
+        "label": "세탁소·빨래방 수(곳)",
+        "unit": "곳",
+        "help": "동 경계 안 세탁소(상가정보 업종 소분류 코드 S20901)와 셀프 빨래방(S20902)을 더한 수.",
+        "source_ref": "question.md 60행; data_contract.md 3절; transform/sbiz_store.py 29행"
+      },
+      "convenience_store_per_km2": {
+        "public": false,
+        "sources": [
+          "sbiz_store",
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      },
+      "supermarket_per_km2": {
+        "public": false,
+        "sources": [
+          "sbiz_store",
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      },
+      "pharmacy_per_km2": {
+        "public": false,
+        "sources": [
+          "sbiz_store",
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      },
+      "internal_pediatric_clinic_per_km2": {
+        "public": false,
+        "sources": [
+          "sbiz_store",
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      },
+      "laundry_per_km2": {
+        "public": false,
+        "sources": [
+          "sbiz_store",
+          "sgis_boundary"
+        ],
+        "reason": "SGIS 도형을 직접 잰 값. 약관 제15조(타인 제공 불가). 6b에서 면적 원천을 바꾸면 공개"
+      }
+    },
+    "commute_od": {
+      "origin_dong_id": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code",
+          "seoul_living"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "출발 동 코드",
+        "unit": "",
+        "help": "출근하는 사람이 사는 동(밤에 주로 머무는 곳)의 통계청 동 코드 8자리. dong_profile.dong_id와 이어 동 이름을 붙인다.",
+        "source_ref": "data_contract.md 3절 commute_od; docs/seoul_living_mobility_manual.md 야간상주지(63행)"
+      },
+      "dest_dong_id": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code",
+          "seoul_living"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "직장 동 코드",
+        "unit": "",
+        "help": "출근하는 사람이 낮에 주로 머무는 동(직장)의 통계청 동 코드 8자리.",
+        "source_ref": "data_contract.md 3절 commute_od; docs/seoul_living_mobility_manual.md 주간상주지"
+      },
+      "avg_minutes_age20_34": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "20~34세 평균 이동 시간(분)",
+        "unit": "분",
+        "help": "평일 아침 7~9시대에 직장 동에 도착한 20~34세의 이동 시간 평균. 사람 수로 가중했다. 머문 곳 사이 시간이라 가까운 동일수록 실제보다 길다. 대중교통 길찾기 시간이 아니다. 20~34세 이동이 모두 3명 이하로 가려진 경로는 비어 있다.",
+        "source_ref": "question.md 3절 출퇴근 시간; data_contract.md 6절 1, 4; 비어 있는 48,450행은 모두 population_age20_34 = 0 (2026-11-22 공개 파일 질의)"
+      },
+      "population_age20_34": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "20~34세 이동인구 합(명)",
+        "unit": "회(6개월 이동 횟수 합)",
+        "help": "평균을 낼 때 쓴 20~34세 이동인구를 더한 값. 이동인구 값은 사람 수가 아니라 이동 횟수를 더한 값이다. 원천이 한 달의 같은 요일(예: 그달 모든 월요일)을 더해 주고, 이 표는 그것을 최근 6개 대상월의 평일(월~금), 도착 7·8·9시, 성별을 모두 더했다. 그래서 30이나 10은 약 6개월 동안 더한 이동 횟수다. KT 휴대폰 신호로 잡은 이동을 KT 점유율 등으로 나눠 전체 인구로 키운 추정치라 소수점이 있다. 3명 이하로 가려진 이동은 더하지 않았다.",
+        "source_ref": "docs/seoul_living_mobility_manual.md 46행, 123~126행(보정계수), 161행(월 단위 요일별 합산); spark_sql/living/30_commute.sql; warehouse/dbt/models/mart/commute_od.sql 15~21행; data_contract.md 6절 4"
+      },
+      "avg_minutes_all_ages": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "전체 나이 평균 이동 시간(분)",
+        "unit": "분",
+        "help": "avg_minutes_age20_34와 같은 방법으로 낸 모든 나이의 평균. 240분이 넘는 원천 행은 이상값으로 빼고 계산했다.",
+        "source_ref": "question.md 3절 출퇴근 시간(240분 초과 격리); data_contract.md 6절 1"
+      },
+      "population_all_ages": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "전체 나이 이동인구 합(명)",
+        "unit": "회(6개월 이동 횟수 합)",
+        "help": "평균을 낼 때 쓴 모든 나이의 이동인구 합. 이동인구 값은 사람 수가 아니라 이동 횟수를 더한 값이다. 원천이 한 달의 같은 요일(예: 그달 모든 월요일)을 더해 주고, 이 표는 그것을 최근 6개 대상월의 평일(월~금), 도착 7·8·9시, 성별을 모두 더했다. 그래서 30이나 10은 약 6개월 동안 더한 이동 횟수다. KT 휴대폰 신호로 잡은 이동을 KT 점유율 등으로 나눠 전체 인구로 키운 추정치라 소수점이 있다. 10 미만인 쌍은 평균이 크게 흔들린다.",
+        "source_ref": "docs/seoul_living_mobility_manual.md 46행, 123~126행(보정계수), 161행(월 단위 요일별 합산); spark_sql/living/30_commute.sql; warehouse/dbt/models/mart/commute_od.sql 15~21행; data_contract.md 6절 4"
+      },
+      "avg_minutes": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "권장 평균 이동 시간(분)",
+        "unit": "분",
+        "help": "20~34세 이동인구가 30 이상이면 20~34세 값, 아니면 전체 나이 값이다. 어느 쪽인지는 basis에 있다. 30보다 적으면 20~34세 평균이 크게 흔들려 정한 기준이다.",
+        "source_ref": "data_contract.md 3절 commute_od; decisions.md 결정 22 끝에 덧붙인 문단(30명 기준, 246행)"
+      },
+      "basis": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "권장 값의 기준",
+        "unit": "",
+        "help": "avg_minutes가 어느 나이 값을 썼는지 알려 준다.",
+        "source_ref": "data_contract.md 3절 commute_od",
+        "values": {
+          "age20_34": "20~34세 값을 씀(20~34세 30 이상)",
+          "all_ages": "전체 나이 값으로 대신함(20~34세 30 미만)"
+        }
+      },
+      "copied_from_2021_split_dong": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "2021년 값 복사 여부",
+        "unit": "",
+        "help": "2021년 뒤 나뉜 동(상일1·2동, 오류2동·항동)은 생활이동에 따로 값이 없어 2021년 동의 값을 복사했다. 그런 행이면 true다.",
+        "source_ref": "data_contract.md 3절 commute_od; CLAUDE.md 7절(2021년 코드)",
+        "values": {
+          "true": "2021년 동의 값을 복사한 행",
+          "false": "원천 값으로 계산한 행"
+        }
+      },
+      "distance_km": {
+        "public": true,
+        "sources": [
+          "derived_location"
+        ],
+        "reason": "대표점 사이 우리 계산 거리",
+        "label": "두 동 사이 직선거리(km)",
+        "unit": "km",
+        "help": "두 동의 안쪽 대표점(동 도형 안에 반드시 들어가는 점. 무게중심은 동 밖에 떨어지는 동이 있어 쓰지 않음) 사이를 곧게 잰 거리. 실제 길 거리가 아니다. 가까운 동의 이동 시간이 길게 나오는 약점을 메우려 준다. 권장: 시간 한도 이하 또는 3km 이내.",
+        "source_ref": "data_contract.md 3절 commute_od; decisions.md 결정 16(대표점), 결정 23"
+      },
+      "target_months": {
+        "public": true,
+        "sources": [
+          "seoul_living"
+        ],
+        "reason": "여러 달·요일·시간대를 묶은 가공 지표(출처·저작권 표시)",
+        "label": "값을 낸 대상 달",
+        "unit": "",
+        "help": "이 경로가 나온 생활이동 대상연월(YYYYMM)을 쉼표로 이은 글자. 최근 6개 대상연월 안에서 나온 달만 적는다. 기간 전체는 홈 화면 '신선도' 표의 생활이동 대상월(commute_months)에 있다.",
+        "source_ref": "data_contract.md 3절 commute_od; decisions.md 결정 36"
+      }
+    },
+    "rent_listing": {
+      "dong_id": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code",
+          "derived_location"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 코드(통계청)",
+        "unit": "",
+        "help": "계약한 집이 있는 땅(필지: 지번 하나로 나뉜 땅 한 덩어리)이 속한 통계청 행정동 코드 8자리. dong_profile과 이을 때 쓴다.",
+        "source_ref": "data_contract.md 3절 rent_listing"
+      },
+      "mois_dong_cd": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "키. 행정안전부 코드 대응(결정 13)",
+        "key": true,
+        "label": "동 코드(행정안전부)",
+        "unit": "",
+        "help": "그 동의 대표 행정안전부 코드.",
+        "source_ref": "data_contract.md 3절 rent_listing; dong_profile.mois_dong_cd"
+      },
+      "dong_nm": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code",
+          "derived_location"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 이름",
+        "unit": "",
+        "help": "그 동의 통계청 이름. 같은 이름이 있으니 표를 이을 때는 dong_id를 쓴다.",
+        "source_ref": "dong_nm = '신사동' 2곳 (2026-11-22 공개 파일 질의)"
+      },
+      "source_type": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "주택 종류",
+        "unit": "",
+        "help": "어느 실거래가 자료에서 왔는지.",
+        "source_ref": "data_contract.md 3절 rent_listing",
+        "values": {
+          "offi": "오피스텔",
+          "rh": "연립다세대"
+        }
+      },
+      "house_type": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "연립다세대 세부 유형",
+        "unit": "",
+        "help": "연립다세대 계약의 주택 유형(원천 값 그대로). 오피스텔 계약은 비어 있다.",
+        "source_ref": "data_contract.md 3절 rent_listing; source_type = 'offi' 26,241행 모두 비어 있음 (2026-11-22 공개 파일 질의)",
+        "values": {
+          "다세대": "다세대주택",
+          "연립": "연립주택",
+          "연립다세대": "원천에 '연립다세대'로 적힌 행. 연립인지 다세대인지는 원천에 따로 없다"
+        }
+      },
+      "lease_type": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "전세·월세 구분",
+        "unit": "",
+        "help": "월세가 0보다 크면 월세, 0이면 전세다. 전세를 월세로 바꿔 계산하지 않았다.",
+        "source_ref": "data_contract.md 3절 rent_listing; question.md 2절",
+        "values": {
+          "월세": "월세가 0보다 큰 계약",
+          "전세": "월세가 0인 계약"
+        }
+      },
+      "deal_ymd": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "계약년월(YYYYMM)",
+        "unit": "",
+        "help": "계약한 달을 글자 6자리로 적은 값. 신규(새로 맺은) 계약만 센다. 갱신 계약은 빼서, 지금 새로 구하는 사람이 받을 수 있는 가격에 가깝게 했다. 이 표의 기간은 홈 화면 '신선도' 표의 전월세 계약월(rent_months)이다. 최근 달은 신고가 덜 들어와 건수가 적을 수 있다.",
+        "source_ref": "data_contract.md 3절 rent_listing; data_contract.md 6절 5; question.md 2절; warehouse/dbt/models/mart/rent_listing.sql(contract_type = '신규')"
+      },
+      "deal_date": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "계약일",
+        "unit": "",
+        "help": "계약한 날짜.",
+        "source_ref": "data_contract.md 3절 rent_listing"
+      },
+      "deposit_10k_won": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "보증금(만원)",
+        "unit": "만원",
+        "help": "계약 보증금. 단위는 만원이다(예: 3000 = 3천만 원).",
+        "source_ref": "data_contract.md 3절 rent_listing; data_contract.md 2절(금액 단위 만원)"
+      },
+      "monthly_rent_10k_won": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "월세(만원)",
+        "unit": "만원",
+        "help": "한 달 월세. 단위는 만원이고 전세는 0이다.",
+        "source_ref": "data_contract.md 3절 rent_listing; question.md 2절"
+      },
+      "excl_area_m2": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "전용면적(㎡)",
+        "unit": "㎡",
+        "help": "집 안에서 혼자 쓰는 면적(제곱미터).",
+        "source_ref": "data_contract.md 3절 rent_listing; data_contract.md 2절"
+      },
+      "floor": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "층",
+        "unit": "층",
+        "help": "계약한 집의 층. 지하는 음수다.",
+        "source_ref": "data_contract.md 3절 rent_listing"
+      },
+      "build_year": {
+        "public": true,
+        "sources": [
+          "molit_rent"
+        ],
+        "reason": "제한 없음 원천의 계약 항목",
+        "label": "건축년도",
+        "unit": "년",
+        "help": "건물을 지은 해. 일부 계약은 비어 있다.",
+        "source_ref": "data_contract.md 3절 rent_listing; 이 버전 스키마 화면의 비어 있음 비율"
+      }
+    },
+    "dong_mois_map": {
+      "mois_dong_cd": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "키. 행정안전부 행정동 코드",
+        "key": true,
+        "label": "동 코드(행정안전부)",
+        "unit": "",
+        "help": "행정안전부가 쓰는 행정동 코드 8자리. 이 표의 키다. 행정안전부 코드를 쓰는 시스템과 맞출 때 이 표로 통계청 dong_id를 찾는다.",
+        "source_ref": "data_contract.md 3절 dong_mois_map"
+      },
+      "dong_id": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code",
+          "derived_location"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 코드(통계청)",
+        "unit": "",
+        "help": "그 행정안전부 코드가 속한 통계청 2025 행정동 코드 8자리. 용신동(11060810)만 두 행에 나온다.",
+        "source_ref": "data_contract.md 3절 dong_mois_map; decisions.md 결정 25"
+      },
+      "dong_nm": {
+        "public": true,
+        "sources": [
+          "kostat_admin_code"
+        ],
+        "reason": "키·이름 컬럼. 공개된 행정구역 분류 코드",
+        "key": true,
+        "label": "동 이름",
+        "unit": "",
+        "help": "통계청 2025 행정동 이름. 같은 이름의 동이 있어(신사동: 강남구·관악구) 이름으로 표를 잇지 않는다.",
+        "source_ref": "dong_profile에서 dong_nm = '신사동'이 2행(11210680, 11230510), 2026-11-22 공개 파일 질의"
+      },
+      "is_primary": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "우리 계산 대응의 대표 여부",
+        "label": "대표 코드 여부",
+        "unit": "",
+        "help": "그 동의 대표 행정안전부 코드인지. 대표 코드는 dong_profile.mois_dong_cd와 같다.",
+        "source_ref": "data_contract.md 3절 dong_mois_map; decisions.md 결정 25",
+        "values": {
+          "true": "그 동의 대표 코드",
+          "false": "대표가 아닌 추가 코드(이 버전은 용신동의 11230533 하나)"
+        }
+      },
+      "stores": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 업소 수",
+        "label": "근거 업소 수(곳)",
+        "unit": "곳",
+        "help": "그 동 경계 안 상가 업소(전체 업종) 가운데 이 행정안전부 코드를 가진 업소 수. 대응을 정한 근거다.",
+        "source_ref": "data_contract.md 3절 dong_mois_map; data_contract.md 7절 2026-11-13"
+      },
+      "share": {
+        "public": true,
+        "sources": [
+          "sbiz_store",
+          "derived_location"
+        ],
+        "reason": "제한 없음 원천의 업소 비율",
+        "label": "근거 업소 비율(0~1)",
+        "unit": "비율",
+        "help": "그 동 안 업소 가운데 이 코드를 가진 업소의 비율. 1이면 모두 이 코드다. 둘로 나뉘는 동은 용신동뿐이다(0.548, 0.452).",
+        "source_ref": "data_contract.md 3절 dong_mois_map 아래 문단"
+      }
+    }
+  },
+  "table_notes": {
+    "commute_od": [
+      {
+        "text": "이동 시간은 머문 곳 사이 시간이라 가까운 동일수록 실제보다 길게 나온다. 같은 동 안 이동 426쌍의 평균은 31.3분이지만 가장 긴 곳은 159.9분이고 역삼1동 → 역삼1동도 156.9분이다. 대중교통 길찾기 시간이 아니고 수단 구분도 없다. 시간 한도 이하 또는 직선거리 3km 이내를 함께 쓰기를 권한다.",
+        "source_ref": "data_contract.md 6절 1; decisions.md 결정 23; 역삼1동 자기 쌍 값은 2026-11-22 공개 파일 질의"
+      },
+      {
+        "text": "이동인구 3명 이하는 원천에서 가려져 평균에서 빠진다. 20~34세가 모두 가려진 경로는 avg_minutes_age20_34가 비어 있고, avg_minutes는 전체 나이 값으로 대신한다.",
+        "source_ref": "data_contract.md 6절 4; data_contract.md 3절 commute_od(basis)"
+      },
+      {
+        "text": "이동인구가 아주 적은 쌍은 평균이 크게 흔들린다. 전체 나이 이동인구가 10 미만인 쌍이 9,761개이고, 직선거리 10km 이상인데 10분 미만인 158쌍은 모두 전체 나이 값(basis = all_ages)이며 이동인구가 67 이하다. population_* 컬럼을 함께 보고 인원이 적은 쌍은 빼고 쓰기를 권한다.",
+        "source_ref": "v2026.11.16 commute_od.parquet에서 직접 셈(2026-11-22)"
+      },
+      {
+        "text": "평일 아침 7~9시대에 직장 동에 도착한 출근 방향만 있다. 퇴근 방향 시간은 없다.",
+        "source_ref": "question.md 3절 출퇴근 시간(대상 행)"
+      }
+    ],
+    "rent_listing": [
+      {
+        "text": "'최대 6개월'은 상한이다. 실제 계약월은 버전마다 다르고 홈 화면 '신선도' 표의 전월세 계약월(rent_months)에 있다(v2026.11.16은 202606~202610, 5개월).",
+        "source_ref": "data_contract.md 3절 rent_listing; v2026.11.16 manifest.json rent_months"
+      },
+      {
+        "text": "신규(새로 맺은) 계약만 센다. 갱신 계약은 빼서, 지금 새로 구하는 사람이 받을 수 있는 가격에 가깝게 했다.",
+        "source_ref": "question.md 2절; warehouse/dbt/models/mart/rent_listing.sql"
+      },
+      {
+        "text": "오피스텔과 연립다세대만 있다. 단독·다가구(원룸 포함) 전월세는 지번이 없어 빠졌다.",
+        "source_ref": "data_contract.md 6절 2; question.md 2절"
+      },
+      {
+        "text": "최근 달은 신고가 다 들어오지 않아 건수가 적을 수 있다(계약 뒤 30일 안 신고).",
+        "source_ref": "data_contract.md 6절 5; CLAUDE.md 5절 데이터 소스 표"
+      }
+    ],
+    "dong_profile": [
+      {
+        "text": "전월세 지표는 오피스텔·연립다세대만 센다. 다가구 원룸이 많은 동은 주거비가 덜 드러날 수 있다.",
+        "source_ref": "data_contract.md 6절 2; question.md 2절"
+      },
+      {
+        "text": "최근 달 전월세는 신고가 덜 들어와 계약 수가 적게 잡힐 수 있다.",
+        "source_ref": "data_contract.md 6절 5"
+      },
+      {
+        "text": "계약이 없는 동은 계약 수와 중앙값이 0이 아니라 비어 있다.",
+        "source_ref": "warehouse/dbt/models/mart/dong_profile.sql 17~18행(left join); 품질 지표 dongs_without_monthly_rent_deal"
+      },
+      {
+        "text": "계약 수가 적은 동은 중앙값이 크게 흔들린다(이 버전에서 월세 5건 미만 14곳, 전세 5건 미만 29곳). 계약 수 컬럼을 함께 본다.",
+        "source_ref": "2026-11-22 공개 파일 질의"
+      }
+    ],
+    "dong_mois_map": [
+      {
+        "text": "이 대응표는 상가정보 업소의 코드 표기로 만든 것이다. 행정안전부 공식 대응표와 대조하지 않았다.",
+        "source_ref": "data_contract.md 6절 6; decisions.md 결정 25"
+      }
+    ]
+  }
+}

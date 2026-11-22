@@ -10,6 +10,9 @@
 
 이 질문에 답할 수 있도록, 위치 기준과 갱신 주기가 서로 다른 공공데이터 여러 종을 **2025년 행정동 하나의 기준**으로 맞추고, 부동산 플랫폼이 가져다 쓸 수 있는 **데이터 상품**(행정동 지표 파일 + 데이터 계약)으로 내보낸다. 질문 정의는 [docs/question.md](docs/question.md), 설계 결정은 [docs/decisions.md](docs/decisions.md)에 있다.
 
+**공개 데이터 포털:** https://sozerong.github.io/home_in_seoul-data/ . 표 목록, 컬럼마다 한글 이름·단위·설명, 값 분포, 파일 내려받기, 브라우저 안 SQL 편집기, 처음 온 사람 안내(`#/help`)가 있다. 서버 없이 정적 파일이고, JavaScript를 돌리지 않는 도구도 같은 주소에서 표·파일 링크·컬럼 사전을 읽는다(결정 113~116).
+![공개 데이터 포털 첫 화면 (v2026.11.16, 2026-11-22 로컬 빌드를 headless Chrome으로 찍음)](docs/img/portal.png)
+
 ## 구조
 
 ![아키텍처: 원천 7종, Docker Compose 안의 Airflow 지휘 컨테이너와 작업별 계산 컨테이너(spark-job, duckdb-job, agent-job), 저장소, 외부 연동](docs/img/architecture.png)
@@ -162,6 +165,17 @@ python -m warehouse.export_product
 ```
 모델 사이의 관계 그림은 `dbt docs generate` 후 `dbt docs serve`로 볼 수 있다.
 결과: `product\vYYYY.MM.DD\` (파일 설명은 [docs/data_contract.md](docs/data_contract.md)).
+
+공개 사이트로 내보내기(결정 113, [docs/handoff_pages.md](docs/handoff_pages.md)). 공개할 컬럼과 이용조건은 [docs/public_columns.json](docs/public_columns.json) 하나로 정하고, 이용조건 근거는 [docs/data_contract.md](docs/data_contract.md) 5절에 있다. 데이터 레포(공개, GitHub Pages는 main 브랜치 루트)를 받아 둔 폴더를 `--out`으로 준다:
+```
+python -m warehouse.publish_site --selftest
+python -m warehouse.publish_site --version vYYYY.MM.DD --out ..\home_in_seoul-data
+cd ..\home_in_seoul-data
+git add -A
+git commit -m "vYYYY.MM.DD 공개"
+git push
+```
+사이트 파일(index.html 포털과 정적 요약, catalog.json, profiles/, latest.json, NOTICE.md, sql.html)은 매번 다시 만들고, 컬럼 사전과 표마다 "쓰기 전에 알아 둘 것"은 [docs/public_columns.json](docs/public_columns.json)에서 온다(결정 115). 한 번 공개한 버전 폴더는 바꾸지 않는다. 같은 버전을 다시 돌렸을 때 내용이 다르면 아무것도 쓰지 않고 실패한다. 이 순서를 몇 번 돌린 뒤 Airflow 태스크로 옮길지 다시 본다.
 
 ### 6. 운영 대시보드
 ```
