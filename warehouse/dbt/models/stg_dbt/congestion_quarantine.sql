@@ -7,8 +7,7 @@ where cardinality(r.reasons) > 0
 union all
 select c.collected_date, c.source_file, c.row_no, array['CV5']::text[],
        jsonb_build_object('DOW_SE', c.raw -> 'DOW_SE', 'LINE', c.raw -> 'LINE', 'STTN_NO', c.raw -> 'STTN_NO',
-                          'DPTRE_STTN', c.raw -> 'DPTRE_STTN', 'UP_DOWN_SE', c.raw -> 'UP_DOWN_SE', c.key, c.raw -> c.key)
-       || case when c.raw ? 'STTN_NM' then jsonb_build_object('STTN_NM', c.raw -> 'STTN_NM') else '{}'::jsonb end,  -- 2026-11-14부터 역 이름 키가 STTN_NM(결정 64 별칭)
+                          'DPTRE_STTN', c.raw -> 'DPTRE_STTN', 'UP_DOWN_SE', c.raw -> 'UP_DOWN_SE', c.key, c.raw -> c.key),
        now()
 from {{ ref('congestion_cells') }} c
 where (c.number is null or c.number not between 0 and 300)
